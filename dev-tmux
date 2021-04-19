@@ -1,0 +1,5 @@
+#! /bin/sh
+tmux new-session -d -s jless
+tmux split-window -t jless -h
+tmux split-window -t jless -v
+tmux attach-session -t jless
