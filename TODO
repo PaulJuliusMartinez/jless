@@ -1,14 +1,14 @@
 jless:
 
 Building Blocks:
-- Blocking input on SIGWINCH or STDIN input
-  - Put terminal in raw mode
-  - Create pipe for signal handler -> main thread
-  - Register signal handler
-    - Write to pipe in signal handler
-  - Select syscall between stdin and pipe
-  - Print out what happens
-    - Handle special control character/sequences
++ Blocking input on SIGWINCH or STDIN input
+  + Put terminal in raw mode
+  + Create pipe for signal handler -> main thread
+  + Register signal handler
+    + Write to pipe in signal handler
+  + Select syscall between stdin and pipe
+  + Print out what happens
+    + Handle special control character/sequences
 
 JSON Input:
 - Read from file or STDIN
