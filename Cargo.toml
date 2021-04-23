@@ -8,3 +8,6 @@ edition = "2018"
 termion = "*"
 signal-hook = "0.3.8"
 libc = "0.2"
+structopt = "0.3"
+isatty = "0.1"
+serde_json = { version = "1.0", features = ["preserve_order", "arbitrary_precision"] }

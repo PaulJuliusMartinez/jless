@@ -11,7 +11,7 @@ Building Blocks:
     + Handle special control character/sequences
 
 JSON Input:
-- Read from file or STDIN
++ Read from file or STDIN
 - Format JSON as single line
 - Store slices with JSON nodes
 
