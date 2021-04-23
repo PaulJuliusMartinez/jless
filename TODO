@@ -27,3 +27,35 @@ Other features:
 Paging:
 - Print out more lines when scrolling down
 - Reprint stuff when going back up
+
+
+Operations:
+- h/j/k/l/arrow keys: navigate tree / expand collapse nodes
+- i: toggle inline view for arrays and objects
+- /: text search forwards
+- ?: text search backwards
+- *: find next occurrence of key
+- #: find prev occurrence of key
+- 0: focus first element in array/object
+- $: focus last element in array/object
+- x: hide key (in all paths?)
+
+// Not super sure about these
+- e: expand (explode?) current node completely
+- E: expand (explode?) self and all siblings
+- c: collapse current node completely
+- C: collapse self and siblings
+
+// Are these relative to current selected node?
+- 1: collapse everything at depth > 1
+- 2: collapse everything at depth > 2 (and expand before)
+- 3: collapse everything at depth > 3 (and expand before)
+- ...
+
+- </>: decrease/increase indent
+
+
+- g: top of the file
+- G: "bottom" of the file (last node)
+
+
