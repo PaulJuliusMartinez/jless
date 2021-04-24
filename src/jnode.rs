@@ -337,11 +337,34 @@ fn move_down<'a, 'b>(focus: &'a mut Focus<'b>) {
 }
 
 // Rules:
-// - If a primitive, go to parent
-// - If collapsed or inlined, go to parent
+// - If a primitive, go to parent, unless already topmost node
+// - If collapsed or inlined, go to parent, unless already topmost node
 // - Otherwise, collapse yourself
-fn move_left(_focus: &mut Focus) {
-    unimplemented!();
+fn move_left<'a, 'b>(focus: &'a mut Focus<'b>) {
+    let current_node = focus.current_node();
+
+    let mut pop_if_not_top_level = || {
+        if focus.0.len() > 1 {
+            focus.0.pop();
+        }
+    };
+
+    match &current_node.value {
+        JValue::Primitive(_) => {
+            pop_if_not_top_level();
+        }
+        JValue::Container(_, cs) => match cs.get() {
+            ContainerState::Inlined => {
+                pop_if_not_top_level();
+            }
+            ContainerState::Collapsed => {
+                pop_if_not_top_level();
+            }
+            ContainerState::Expanded => {
+                current_node.collapse();
+            }
+        },
+    }
 }
 
 // Rules:
@@ -521,6 +544,36 @@ mod tests {
         // Focused on a primitive, going more right doesn't do anything.
         perform_action(&mut focus, Action::Right);
         assert_focus_indexes(&focus, &[0, 0, 0]);
+    }
+
+    #[test]
+    fn test_movement_left() {
+        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let mut focus: Focus = construct_focus(&top_level, &[0, 1, 1]);
+
+        // Exit inner node
+        perform_action(&mut focus, Action::Left);
+        assert_focus_indexes(&focus, &[0, 1]);
+        assert_container_state(&top_level[0][1], ContainerState::Expanded);
+
+        // Collapse inner node
+        perform_action(&mut focus, Action::Left);
+        assert_focus_indexes(&focus, &[0, 1]);
+        assert_container_state(&top_level[0][1], ContainerState::Collapsed);
+
+        // Exit inner node to outer node
+        perform_action(&mut focus, Action::Left);
+        assert_focus_indexes(&focus, &[0]);
+        assert_container_state(&top_level[0], ContainerState::Expanded);
+
+        // Collapse outer node
+        perform_action(&mut focus, Action::Left);
+        assert_focus_indexes(&focus, &[0]);
+        assert_container_state(&top_level[0], ContainerState::Collapsed);
+
+        // At top left, can't go anywhere.
+        perform_action(&mut focus, Action::Left);
+        assert_focus_indexes(&focus, &[0]);
     }
 
     fn assert_focus_indexes(focus: &Focus, indexes: &[usize]) {
