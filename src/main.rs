@@ -10,6 +10,8 @@ mod input;
 mod jnode;
 mod render;
 
+use input::TuiEvent::KeyEvent;
+
 #[derive(Debug, StructOpt)]
 #[structopt(name = "jless", about = "A pager for JSON data")]
 struct Opt {
@@ -30,17 +32,32 @@ fn main() {
     };
 
     let json = jnode::parse_json(json_string).unwrap();
+    let mut focus = jnode::Focus(vec![(&json, 0)]);
 
-    render::render(&json);
+    render::render(&json, &focus);
 
     let mut _stdout = io::stdout().into_raw_mode().unwrap();
 
     for event in input::get_input() {
-        println!("Got: {:?}\r", event);
+        let event = event.unwrap();
+        let action = match event {
+            KeyEvent(Key::Up) | KeyEvent(Key::Char('k')) => Some(jnode::Action::Up),
+            KeyEvent(Key::Down) | KeyEvent(Key::Char('j')) => Some(jnode::Action::Down),
+            KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(jnode::Action::Left),
+            KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(jnode::Action::Right),
+            KeyEvent(Key::Ctrl('c')) => {
+                println!("Typed C-c, exiting\r");
+                break;
+            }
+            _ => {
+                println!("Got: {:?}\r", event);
+                None
+            }
+        };
 
-        if let Ok(input::TuiEvent::KeyEvent(Key::Ctrl('c'))) = event {
-            println!("Typed C-c, exiting\r");
-            break;
+        if let Some(action) = action {
+            jnode::perform_action(&mut focus, action);
+            render::render(&json, &focus);
         }
     }
 }

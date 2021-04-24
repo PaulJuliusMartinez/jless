@@ -176,7 +176,7 @@ impl JValue {
 }
 
 // TODO: Make this type way nicer to work with.
-pub struct Focus<'a>(Vec<(&'a JNode, usize)>);
+pub struct Focus<'a>(pub Vec<(&'a JNode, usize)>);
 
 impl<'a> Focus<'a> {
     pub fn indexes(&self) -> Vec<usize> {

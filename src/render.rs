@@ -1,12 +1,12 @@
 use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
 
-pub fn render(root: &JNode) {
+pub fn render(root: &JNode, focus: &Focus) {
     print!("\x1b[2J");
-    pretty_print(root, 0);
+    pretty_print(root, 1, Some(focus), 0);
     print!("\r\n");
 }
 
-fn pretty_print(node: &JNode, depth: usize) {
+fn pretty_print(node: &JNode, depth: usize, focus: Option<&Focus>, focus_index: usize) {
     match &node.value {
         JValue::Primitive(p) => pretty_print_primitive(p),
         JValue::Container(c, s) => match s.get() {
@@ -19,7 +19,7 @@ fn pretty_print(node: &JNode, depth: usize) {
                 print!("{} (imagine this is inlined) {}", left, right);
             }
             ContainerState::Expanded => {
-                pretty_print_container(&c, depth);
+                pretty_print_container(&c, depth, focus, focus_index);
             }
         },
     }
@@ -36,7 +36,7 @@ fn pretty_print_primitive(p: &JPrimitive) {
     }
 }
 
-fn pretty_print_container(c: &JContainer, depth: usize) {
+fn pretty_print_container(c: &JContainer, depth: usize, focus: Option<&Focus>, focus_index: usize) {
     let (left, right) = c.characters();
 
     match c {
@@ -47,12 +47,12 @@ fn pretty_print_container(c: &JContainer, depth: usize) {
                 if i > 0 {
                     print!(",\r\n");
                 }
-                indent(depth + 1);
-                pretty_print(val, depth + 1);
+                indent_container_elem(depth, focus, focus_index, i);
+                pretty_print_container_elem(val, depth + 1, focus, focus_index, i);
             }
-            print!("\n");
+            print!("\r\n");
 
-            indent(depth);
+            indent(depth - 1);
             print!("{}", right);
         }
         JContainer::Object(kvp) => {
@@ -62,24 +62,64 @@ fn pretty_print_container(c: &JContainer, depth: usize) {
                 if i > 0 {
                     print!(",\r\n");
                 }
-                indent(depth + 1);
+                indent_container_elem(depth, focus, focus_index, i);
                 print!("\"{}\": ", k);
-                pretty_print(val, depth + 1);
+                pretty_print_container_elem(val, depth + 1, focus, focus_index, i);
             }
             print!("\r\n");
 
-            indent(depth);
+            indent(depth - 1);
             print!("{}", right);
         }
         JContainer::TopLevel(j) => {
-            for val in j.iter() {
-                indent(depth);
-                pretty_print(val, depth);
+            for (i, val) in j.iter().enumerate() {
+                indent_container_elem(depth, focus, focus_index, i);
+                pretty_print_container_elem(val, depth + 1, focus, focus_index, i);
             }
         }
     }
 }
 
+fn pretty_print_container_elem(
+    node: &JNode,
+    depth: usize,
+    focus: Option<&Focus>,
+    focus_index: usize,
+    elem_index: usize,
+) {
+    if let Some(f) = focus {
+        let focused_index = f.0[focus_index].1;
+        if focused_index == elem_index && focus_index < f.0.len() - 1 {
+            pretty_print(node, depth, focus, focus_index + 1);
+        } else {
+            pretty_print(node, depth, None, 0);
+        }
+    } else {
+        pretty_print(node, depth, focus, 0);
+    }
+}
+
+fn indent_container_elem(
+    depth: usize,
+    focus: Option<&Focus>,
+    focus_index: usize,
+    elem_index: usize,
+) {
+    if let Some(f) = focus {
+        let at_focus_depth = f.0.len() - 1 == focus_index;
+        let elem_index_matches = f.0[focus_index].1 == elem_index;
+
+        if at_focus_depth && elem_index_matches {
+            print!("* ");
+            indent(depth - 1);
+        } else {
+            indent(depth);
+        }
+    } else {
+        indent(depth);
+    }
+}
+
 fn indent(depth: usize) {
-    print!("{:n$}", "", n = depth * 2);
+    print!("{:n$}", "", n = (depth + 1) * 2);
 }
