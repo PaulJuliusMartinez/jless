@@ -8,6 +8,7 @@ use termion::raw::IntoRawMode;
 
 mod input;
 mod jnode;
+mod render;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "jless", about = "A pager for JSON data")]
@@ -28,7 +29,9 @@ fn main() {
         }
     };
 
-    let json = dbg!(jnode::parse_json(json_string).unwrap());
+    let json = jnode::parse_json(json_string).unwrap();
+
+    render::render(&json);
 
     let mut _stdout = io::stdout().into_raw_mode().unwrap();
 

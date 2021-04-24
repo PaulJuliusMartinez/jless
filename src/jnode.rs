@@ -12,9 +12,9 @@ pub enum ContainerState {
 
 #[derive(Debug)]
 pub struct JNode {
-    value: JValue,
-    start_index: usize,
-    end_index: usize,
+    pub value: JValue,
+    pub start_index: usize,
+    pub end_index: usize,
 }
 
 impl JNode {
@@ -98,6 +98,16 @@ pub enum JContainer {
     // Special node to represent the root of the document which
     // may consist of multiple JSON objects concatenated.
     TopLevel(Vec<JNode>),
+}
+
+impl JContainer {
+    pub fn characters(&self) -> (char, char) {
+        match self {
+            JContainer::Array(_) => ('[', ']'),
+            JContainer::Object(_) => ('{', '}'),
+            JContainer::TopLevel(_) => ('<', '>'),
+        }
+    }
 }
 
 impl Index<usize> for JContainer {
