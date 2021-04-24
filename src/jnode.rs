@@ -1,7 +1,9 @@
 use serde_json::value::{Number, Value};
 
+use std::ops::{Index, IndexMut};
+
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum NodeState {
+pub enum ContainerState {
     Expanded,
     Inlined,
     Collapsed,
@@ -12,7 +14,6 @@ pub struct JNode {
     value: JValue,
     start_index: usize,
     end_index: usize,
-    state: NodeState,
 }
 
 impl JNode {
@@ -37,45 +38,60 @@ impl JNode {
         self.value.is_empty()
     }
 
-    fn is_expanded(&self) -> bool {
-        self.state == NodeState::Expanded
+    fn collapse(&mut self) {
+        self.set_container_state(ContainerState::Collapsed)
+    }
+
+    fn inline(&mut self) {
+        self.set_container_state(ContainerState::Inlined)
+    }
+
+    fn expand(&mut self) {
+        self.set_container_state(ContainerState::Expanded)
+    }
+
+    fn set_container_state(&mut self, new_state: ContainerState) {
+        match self.value {
+            JValue::Container(_, ref mut state) => *state = new_state,
+            _ => panic!("cannot set_container_state on primitive JNode"),
+        }
     }
 }
 
-impl std::ops::Index<usize> for JNode {
+impl Index<usize> for JNode {
     type Output = JNode;
 
     fn index(&self, index: usize) -> &Self::Output {
-        debug_assert!(self.is_container(), "cannot index into primitive JNode");
-
         match &self.value {
-            JValue::Array(v) => &v[index],
-            JValue::Object(kvp) => &kvp[index].1,
-            JValue::TopLevel(j) => &j[index],
+            JValue::Container(c, _) => &c[index],
             _ => panic!("JValue::index(i) called on a primitive"),
         }
     }
 }
 
-impl std::ops::IndexMut<usize> for JNode {
+impl IndexMut<usize> for JNode {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
-        debug_assert!(self.is_container(), "cannot index into primitive JNode");
-
         match &mut self.value {
-            JValue::Array(v) => &mut v[index],
-            JValue::Object(kvp) => &mut kvp[index].1,
-            JValue::TopLevel(j) => &mut j[index],
+            JValue::Container(c, _) => &mut c[index],
             _ => panic!("JValue::index(i) called on a primitive"),
         }
     }
 }
 
+// "Primitive" Values (cannot be drilled into)
 #[derive(Debug)]
-pub enum JValue {
+pub enum JPrimitive {
     Null,
     Bool(bool),
     Number(Number),
     String(String),
+    EmptyArray,
+    EmptyObject,
+}
+
+// "Container" Values (contain additional nodes)
+#[derive(Debug)]
+pub enum JContainer {
     Array(Vec<JNode>),
     Object(Vec<(String, JNode)>),
     // Special node to represent the root of the document which
@@ -83,10 +99,48 @@ pub enum JValue {
     TopLevel(Vec<JNode>),
 }
 
+impl Index<usize> for JContainer {
+    type Output = JNode;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        match &self {
+            JContainer::Array(v) => &v[index],
+            JContainer::Object(kvp) => &kvp[index].1,
+            JContainer::TopLevel(j) => &j[index],
+        }
+    }
+}
+
+impl IndexMut<usize> for JContainer {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        match self {
+            JContainer::Array(v) => &mut v[index],
+            JContainer::Object(kvp) => &mut kvp[index].1,
+            JContainer::TopLevel(j) => &mut j[index],
+        }
+    }
+}
+
+impl JContainer {
+    fn len(&self) -> usize {
+        match self {
+            JContainer::Array(v) => v.len(),
+            JContainer::Object(obj) => obj.len(),
+            JContainer::TopLevel(j) => j.len(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum JValue {
+    Primitive(JPrimitive),
+    Container(JContainer, ContainerState),
+}
+
 impl JValue {
     fn is_primitive(&self) -> bool {
         match self {
-            JValue::Null | JValue::Bool(_) | JValue::Number(_) | JValue::String(_) => true,
+            JValue::Primitive(_) => true,
             _ => false,
         }
     }
@@ -96,28 +150,21 @@ impl JValue {
     }
 
     fn len(&self) -> usize {
-        debug_assert!(
-            self.is_container(),
-            "cannot call .len on a primitive JValue"
-        );
-
         match self {
-            JValue::Array(v) => v.len(),
-            JValue::Object(kvp) => kvp.len(),
-            JValue::TopLevel(j) => j.len(),
-            _ => panic!("JValue::len called on a primitive"),
+            JValue::Container(c, _) => c.len(),
+            _ => panic!("cannot call .len on a primitive JValue"),
         }
     }
 
     fn is_empty(&self) -> bool {
-        debug_assert!(
-            self.is_container(),
-            "cannot call .is_empty on a primitive JValue"
-        );
-        self.len() == 0
+        match self {
+            JValue::Container(c, _) => c.len() == 0,
+            _ => panic!("cannot call .is_empty on a primitive JValue"),
+        }
     }
 }
 
+// TODO: Make this type way nicer to work with.
 pub struct Focus<'a>(Vec<(&'a JNode, usize)>);
 
 impl<'a> Focus<'a> {
@@ -129,35 +176,47 @@ impl<'a> Focus<'a> {
 pub fn parse_json(json: String) -> serde_json::Result<JNode> {
     let serde_value = serde_json::from_str(&json)?;
 
-    let top_level = JValue::TopLevel(vec![convert_to_jnode(serde_value)]);
+    let top_level = JContainer::TopLevel(vec![convert_to_jnode(serde_value)]);
 
     Ok(JNode {
-        value: top_level,
+        value: JValue::Container(top_level, ContainerState::Expanded),
         start_index: 0,
         end_index: 0,
-        state: NodeState::Expanded,
     })
 }
 
 fn convert_to_jnode(serde_value: Value) -> JNode {
+    let expanded = ContainerState::Expanded;
     let value = match serde_value {
-        Value::Null => JValue::Null,
-        Value::Bool(b) => JValue::Bool(b),
-        Value::Number(n) => JValue::Number(n),
-        Value::String(s) => JValue::String(s),
-        Value::Array(vs) => JValue::Array(vs.into_iter().map(convert_to_jnode).collect()),
-        Value::Object(obj) => JValue::Object(
-            obj.into_iter()
-                .map(|(k, val)| (k, convert_to_jnode(val)))
-                .collect(),
-        ),
+        Value::Null => JValue::Primitive(JPrimitive::Null),
+        Value::Bool(b) => JValue::Primitive(JPrimitive::Bool(b)),
+        Value::Number(n) => JValue::Primitive(JPrimitive::Number(n)),
+        Value::String(s) => JValue::Primitive(JPrimitive::String(s)),
+        Value::Array(vs) => {
+            if vs.len() == 0 {
+                JValue::Primitive(JPrimitive::EmptyArray)
+            } else {
+                let jnodes = vs.into_iter().map(convert_to_jnode).collect();
+                JValue::Container(JContainer::Array(jnodes), expanded)
+            }
+        }
+        Value::Object(obj) => {
+            if obj.len() == 0 {
+                JValue::Primitive(JPrimitive::EmptyObject)
+            } else {
+                let key_value_pairs = obj
+                    .into_iter()
+                    .map(|(k, val)| (k, convert_to_jnode(val)))
+                    .collect();
+                JValue::Container(JContainer::Object(key_value_pairs), expanded)
+            }
+        }
     };
 
     JNode {
         value,
         start_index: 0,
         end_index: 0,
-        state: NodeState::Expanded,
     }
 }
 
@@ -223,9 +282,9 @@ fn move_up(focus: &mut Focus) {
     *index -= 1;
     let mut curr_node = &parent[*index];
 
-    while curr_node.is_container() && curr_node.is_expanded() && !curr_node.is_empty() {
-        let last_child_index = curr_node.len() - 1;
-        let next = &curr_node[last_child_index];
+    while let JValue::Container(container, ContainerState::Expanded) = &curr_node.value {
+        let last_child_index = container.len() - 1;
+        let next = &container[last_child_index];
         focus.0.push((curr_node, last_child_index));
         curr_node = next;
     }
@@ -248,7 +307,7 @@ fn move_down(focus: &mut Focus) {
     let current_node = &parent_node[*index];
     let mut depth_index = focus.0.len() - 1;
 
-    if current_node.is_container() && current_node.is_expanded() && !current_node.is_empty() {
+    if let JValue::Container(_, ContainerState::Expanded) = &current_node.value {
         focus.0.push((current_node, 0));
     } else {
         while depth_index > 0 {
@@ -308,7 +367,7 @@ mod tests {
     #[test]
     fn test_movement_down_skips_collapsed() {
         let mut top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        top_level[0][0].state = NodeState::Collapsed;
+        top_level[0][0].collapse();
         let mut focus: Focus = Focus(vec![(&top_level, 0)]);
 
         assert_movements(
@@ -364,7 +423,7 @@ mod tests {
     #[test]
     fn test_movement_up_skips_collapsed() {
         let mut top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        top_level[0][0].state = NodeState::Collapsed;
+        top_level[0][0].collapse();
         let mut focus: Focus = construct_focus(&top_level, &[0, 1, 0]);
 
         assert_movements(
