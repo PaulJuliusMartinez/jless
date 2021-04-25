@@ -1,7 +1,7 @@
 use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
 
 pub fn render(root: &JNode, focus: &Focus) {
-    print!("\x1b[2J");
+    print!("\x1b[2J\x1b[0;0H");
     pretty_print(root, 1, Some(focus), 0);
     print!("\r\n");
 }
