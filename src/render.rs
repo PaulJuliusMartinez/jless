@@ -8,15 +8,14 @@ pub fn render(root: &JNode, focus: &Focus) {
 
 fn pretty_print(node: &JNode, depth: usize, focus: Option<&Focus>, focus_index: usize) {
     match &node.value {
-        JValue::Primitive(p) => pretty_print_primitive(p),
+        JValue::Primitive(p) => print_primitive(p),
         JValue::Container(c, s) => match s.get() {
             ContainerState::Collapsed => {
                 let (left, right) = c.characters();
                 print!("{} ... {}", left, right);
             }
             ContainerState::Inlined => {
-                let (left, right) = c.characters();
-                print!("{} (imagine this is inlined) {}", left, right);
+                print_inlined_container(&c);
             }
             ContainerState::Expanded => {
                 pretty_print_container(&c, depth, focus, focus_index);
@@ -25,7 +24,22 @@ fn pretty_print(node: &JNode, depth: usize, focus: Option<&Focus>, focus_index: 
     }
 }
 
-fn pretty_print_primitive(p: &JPrimitive) {
+fn print_inline(node: &JNode) {
+    match &node.value {
+        JValue::Primitive(p) => print_primitive(p),
+        JValue::Container(c, s) => match s.get() {
+            ContainerState::Collapsed => {
+                let (left, right) = c.characters();
+                print!("{} ... {}", left, right);
+            }
+            _ => {
+                print_inlined_container(&c);
+            }
+        },
+    }
+}
+
+fn print_primitive(p: &JPrimitive) {
     match p {
         JPrimitive::Null => print!("null"),
         JPrimitive::Bool(b) => print!("{}", b),
@@ -75,6 +89,39 @@ fn pretty_print_container(c: &JContainer, depth: usize, focus: Option<&Focus>, f
             for (i, val) in j.iter().enumerate() {
                 indent_container_elem(depth, focus, focus_index, i);
                 pretty_print_container_elem(val, depth + 1, focus, focus_index, i);
+            }
+        }
+    }
+}
+
+fn print_inlined_container(c: &JContainer) {
+    let (left, right) = c.characters();
+
+    match c {
+        JContainer::Array(v) => {
+            print!("{}", left);
+            for (i, val) in v.iter().enumerate() {
+                if i > 0 {
+                    print!(", ");
+                }
+                print_inline(val);
+            }
+            print!("{}", right);
+        }
+        JContainer::Object(kvp) => {
+            print!("{}", left);
+            for (i, (k, val)) in kvp.iter().enumerate() {
+                if i > 0 {
+                    print!(", ");
+                }
+                print!("\"{}\": ", k);
+                print_inline(val);
+            }
+            print!("{}", right);
+        }
+        JContainer::TopLevel(j) => {
+            for val in j.iter() {
+                print_inline(val);
             }
         }
     }

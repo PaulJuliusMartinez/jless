@@ -242,7 +242,7 @@ pub enum Action {
     Down,
     Left,
     Right,
-    // ToggleInline,
+    ToggleInline,
     // FirstElem,
     // LastElem,
     // NextOccurrenceOfKey
@@ -259,6 +259,7 @@ pub fn perform_action<'a, 'b>(focus: &'a mut Focus<'b>, action: Action) {
         Action::Down => move_down(focus),
         Action::Left => move_left(focus),
         Action::Right => move_right(focus),
+        Action::ToggleInline => toggle_inline(focus),
         _ => {}
     }
 
@@ -394,6 +395,24 @@ fn move_right<'a, 'b>(focus: &'a mut Focus<'b>) {
                 ContainerState::Expanded => {
                     focus.0.push((current_node, 0));
                 }
+            }
+        }
+    }
+}
+
+fn toggle_inline(focus: &mut Focus) {
+    let current_node = focus.current_node();
+
+    match &current_node.value {
+        JValue::Primitive(_) => {
+            // TODO: display a message to user that primitives
+            // cannot be inlined.
+        }
+        JValue::Container(_, ref cs) => {
+            if cs.get() == ContainerState::Inlined {
+                cs.set(ContainerState::Expanded);
+            } else {
+                cs.set(ContainerState::Inlined);
             }
         }
     }
@@ -584,6 +603,22 @@ mod tests {
         // At top left, can't go anywhere.
         perform_action(&mut focus, Action::Left);
         assert_focus_indexes(&focus, &[0]);
+    }
+
+    #[test]
+    fn test_toggle_inline() {
+        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let mut focus: Focus = construct_focus(&top_level, &[0]);
+
+        perform_action(&mut focus, Action::ToggleInline);
+        assert_container_state(&top_level[0], ContainerState::Inlined);
+
+        perform_action(&mut focus, Action::ToggleInline);
+        assert_container_state(&top_level[0], ContainerState::Expanded);
+
+        perform_action(&mut focus, Action::Right);
+        perform_action(&mut focus, Action::ToggleInline);
+        assert_container_state(&top_level[0][0], ContainerState::Inlined);
     }
 
     fn assert_focus_indexes(focus: &Focus, indexes: &[usize]) {
