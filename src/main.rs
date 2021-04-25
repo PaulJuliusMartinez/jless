@@ -46,6 +46,8 @@ fn main() {
             KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(jnode::Action::Left),
             KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(jnode::Action::Right),
             KeyEvent(Key::Char('i')) => Some(jnode::Action::ToggleInline),
+            KeyEvent(Key::Char('0')) => Some(jnode::Action::FocusFirstElem),
+            KeyEvent(Key::Char('$')) => Some(jnode::Action::FocusLastElem),
             KeyEvent(Key::Ctrl('c')) => {
                 println!("Typed C-c, exiting\r");
                 break;

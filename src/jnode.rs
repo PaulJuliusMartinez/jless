@@ -243,8 +243,8 @@ pub enum Action {
     Left,
     Right,
     ToggleInline,
-    // FirstElem,
-    // LastElem,
+    FocusFirstElem,
+    FocusLastElem,
     // NextOccurrenceOfKey
     // PrevOccurrenceOfKey
     // TopOfTree,
@@ -260,6 +260,8 @@ pub fn perform_action<'a, 'b>(focus: &'a mut Focus<'b>, action: Action) {
         Action::Left => move_left(focus),
         Action::Right => move_right(focus),
         Action::ToggleInline => toggle_inline(focus),
+        Action::FocusFirstElem => focus_first_elem(focus),
+        Action::FocusLastElem => focus_last_elem(focus),
         _ => {}
     }
 
@@ -416,6 +418,16 @@ fn toggle_inline(focus: &mut Focus) {
             }
         }
     }
+}
+
+fn focus_first_elem(focus: &mut Focus) {
+    let (node, ref mut index) = focus.0.last_mut().unwrap();
+    *index = 0;
+}
+
+fn focus_last_elem(focus: &mut Focus) {
+    let (node, ref mut index) = focus.0.last_mut().unwrap();
+    *index = node.len() - 1;
 }
 
 #[cfg(test)]
@@ -619,6 +631,27 @@ mod tests {
         perform_action(&mut focus, Action::Right);
         perform_action(&mut focus, Action::ToggleInline);
         assert_container_state(&top_level[0][0], ContainerState::Inlined);
+    }
+
+    #[test]
+    fn test_focus_first_and_last() {
+        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let mut focus: Focus = construct_focus(&top_level, &[0, 0, 1]);
+
+        assert_movements(
+            &mut focus,
+            vec![
+                (Action::FocusFirstElem, vec![0, 0, 0].as_slice()),
+                (Action::FocusFirstElem, vec![0, 0, 0].as_slice()),
+                (Action::FocusLastElem, vec![0, 0, 2].as_slice()),
+                (Action::FocusLastElem, vec![0, 0, 2].as_slice()),
+                (Action::Left, vec![0, 0].as_slice()),
+                (Action::FocusLastElem, vec![0, 1].as_slice()),
+                (Action::Right, vec![0, 1, 0].as_slice()),
+                (Action::FocusLastElem, vec![0, 1, 2].as_slice()),
+            ]
+            .as_slice(),
+        );
     }
 
     fn assert_focus_indexes(focus: &Focus, indexes: &[usize]) {

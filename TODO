@@ -33,8 +33,8 @@ Operations:
 + h/j/k/l/arrow keys: navigate tree / expand collapse nodes
 
 + i: toggle inline view for arrays and objects
-- 0: focus first element in array/object
-- $: focus last element in array/object
++ 0: focus first element in array/object
++ $: focus last element in array/object
 
 - /: text search forwards
 - ?: text search backwards
