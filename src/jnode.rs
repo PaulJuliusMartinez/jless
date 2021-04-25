@@ -26,7 +26,7 @@ impl JNode {
         self.value.is_container()
     }
 
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         debug_assert!(self.is_container(), "cannot call .len on a primitive JNode");
         self.value.len()
     }
@@ -133,7 +133,7 @@ impl IndexMut<usize> for JContainer {
 }
 
 impl JContainer {
-    fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         match self {
             JContainer::Array(v) => v.len(),
             JContainer::Object(obj) => obj.len(),
@@ -315,8 +315,7 @@ fn move_up(focus: &mut Focus) {
 
 // Rules:
 // - If current node is primitive, go to next sibling
-// - If current node is collapsed, go to next sibling
-// - If current node is empty, go to next sibling
+// - If current node is inlined/collapsed, go to next sibling
 // - Otherwise, go to first child
 //
 // - When going to next sibling, if current node is the

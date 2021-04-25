@@ -3,6 +3,7 @@ use std::io;
 use std::io::Read;
 use std::path::PathBuf;
 use structopt::StructOpt;
+use termion::cursor::DetectCursorPos;
 use termion::event::Key;
 use termion::raw::IntoRawMode;
 
@@ -34,15 +35,26 @@ fn main() {
     let json = jnode::parse_json(json_string).unwrap();
     let mut focus = jnode::Focus(vec![(&json, 0)]);
 
-    render::render(&json, &focus);
+    let start_line = render::OutputLineRef {
+        root: &json,
+        path: vec![0],
+        side: render::OutputSide::Start,
+    };
 
-    let mut _stdout = io::stdout().into_raw_mode().unwrap();
+    let (width, height) = termion::terminal_size().unwrap();
+    render::render_screen(&json, &focus, &start_line, height);
+
+    let mut stdout = io::stdout().into_raw_mode().unwrap();
 
     for event in input::get_input() {
         let event = event.unwrap();
         let action = match event {
-            KeyEvent(Key::Up) | KeyEvent(Key::Char('k')) => Some(jnode::Action::Up),
-            KeyEvent(Key::Down) | KeyEvent(Key::Char('j')) => Some(jnode::Action::Down),
+            KeyEvent(Key::Up) | KeyEvent(Key::Char('k')) | KeyEvent(Key::Ctrl('p')) => {
+                Some(jnode::Action::Up)
+            }
+            KeyEvent(Key::Down) | KeyEvent(Key::Char('j')) | KeyEvent(Key::Ctrl('n')) => {
+                Some(jnode::Action::Down)
+            }
             KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(jnode::Action::Left),
             KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(jnode::Action::Right),
             KeyEvent(Key::Char('i')) => Some(jnode::Action::ToggleInline),
@@ -60,7 +72,7 @@ fn main() {
 
         if let Some(action) = action {
             jnode::perform_action(&mut focus, action);
-            render::render(&json, &focus);
+            render::render_screen(&json, &focus, &start_line, height);
         }
     }
 }

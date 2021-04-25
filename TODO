@@ -36,11 +36,18 @@ Operations:
 + 0: focus first element in array/object
 + $: focus last element in array/object
 
+- g: top of the file
+- G: "bottom" of the file (last node)
+
+
 - /: text search forwards
 - ?: text search backwards
 - *: find next occurrence of key
 - #: find prev occurrence of key
 - x: hide key (in all paths?)
+
+- C-y scroll up
+- C-e scroll down
 
 // Not super sure about these
 - e: expand (explode?) current node completely
@@ -57,7 +64,5 @@ Operations:
 - </>: decrease/increase indent
 
 
-- g: top of the file
-- G: "bottom" of the file (last node)
 
 
