@@ -10,7 +10,7 @@ use termion::raw::IntoRawMode;
 
 mod input;
 mod jnode;
-// mod render;
+mod render;
 
 use input::TuiEvent::KeyEvent;
 
@@ -36,14 +36,14 @@ fn main() {
     let json = jnode::parse_json(json_string).unwrap();
     let mut focus = jnode::Focus(vec![(Rc::clone(&json), 0)]);
 
-    // let start_line = render::OutputLineRef {
-    //     root: &json,
-    //     path: vec![0],
-    //     side: render::OutputSide::Start,
-    // };
+    let start_line = render::OutputLineRef {
+        root: Rc::clone(&json),
+        path: vec![0],
+        side: render::OutputSide::Start,
+    };
 
     let (width, height) = termion::terminal_size().unwrap();
-    // render::render_screen(&json, &focus, &start_line, height);
+    render::render_screen(&json, &focus, &start_line, height);
 
     let mut stdout = io::stdout().into_raw_mode().unwrap();
 
@@ -73,7 +73,7 @@ fn main() {
 
         if let Some(action) = action {
             jnode::perform_action(&mut focus, action);
-            // render::render_screen(&json, &focus, &start_line, height);
+            render::render_screen(&json, &focus, &start_line, height);
         }
     }
 }

@@ -1,9 +1,10 @@
 use std::io::Write;
+use std::rc::Rc;
 use termion::color;
 use termion::color::{AnsiValue, Fg, Reset};
 use termion::{clear, cursor};
 
-use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
+use super::jnode::{ContainerState, Focus, JContainer, JNodeRef, JPrimitive, JValue};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OutputSide {
@@ -12,13 +13,13 @@ pub enum OutputSide {
 }
 
 #[derive(Debug, Clone)]
-pub struct OutputLineRef<'a> {
-    pub root: &'a JNode,
+pub struct OutputLineRef {
+    pub root: JNodeRef,
     pub path: Vec<usize>,
     pub side: OutputSide,
 }
 
-impl<'a> OutputLineRef<'a> {
+impl OutputLineRef {
     // Moves the line ref to the next line in the output.
     // Returns whether or not the line was already the last line in the structure.
     //
@@ -34,15 +35,17 @@ impl<'a> OutputLineRef<'a> {
     // - If already on the End side of the root, don't do anything (but return false);
     fn next(&mut self) -> bool {
         let at_child_of_root = self.path.len() == 1;
-        let at_last_child_of_root = at_child_of_root && self.path[0] == self.root.len() - 1;
+        let at_last_child_of_root =
+            at_child_of_root && self.path[0] == self.root.borrow().len() - 1;
         let at_end = self.side == OutputSide::End;
 
-        let mut parent = self.root;
-        let mut current_node = self.root;
+        let mut parent = Rc::clone(&self.root);
+        let mut current_node = Rc::clone(&self.root);
         let mut last_index = 0;
         for index in self.path.iter() {
+            let next = Rc::clone(&current_node.borrow()[*index]);
             parent = current_node;
-            current_node = &current_node[*index];
+            current_node = next;
             last_index = *index;
         }
 
@@ -53,7 +56,7 @@ impl<'a> OutputLineRef<'a> {
                 return false;
             }
 
-            match &current_node.value {
+            match &current_node.borrow().value {
                 JValue::Primitive(_) => return false,
                 JValue::Container(_, cs) => {
                     if cs.get() != ContainerState::Expanded {
@@ -63,7 +66,7 @@ impl<'a> OutputLineRef<'a> {
             }
         }
 
-        match &current_node.value {
+        match &current_node.borrow().value {
             JValue::Container(_, cs) if cs.get() == ContainerState::Expanded && !at_end => {
                 // Go to first current node if it's expanded.
                 self.path.push(0);
@@ -71,7 +74,7 @@ impl<'a> OutputLineRef<'a> {
             }
             _ => {
                 // Otherwise go to next sibling.
-                if last_index == parent.len() - 1 {
+                if last_index == parent.borrow().len() - 1 {
                     // But if already last sibling, go to End of parent.
                     self.path.pop();
                     self.side = OutputSide::End;
@@ -107,12 +110,13 @@ impl<'a> OutputLineRef<'a> {
         // screen_width: u16,
     ) {
         // This value is ignored, but Rust doesn't know it's guaranteed to be set in the loop.
-        let mut parent = self.root;
-        let mut current_node = self.root;
+        let mut parent = Rc::clone(&self.root);
+        let mut current_node = Rc::clone(&self.root);
         let mut last_index = 0;
         for index in self.path.iter() {
+            let next = Rc::clone(&current_node.borrow()[*index]);
             parent = current_node;
-            current_node = &current_node[*index];
+            current_node = next;
             last_index = *index;
         }
 
@@ -121,7 +125,7 @@ impl<'a> OutputLineRef<'a> {
 
         let mut print_trailing_comma = true;
 
-        if let JValue::Container(c, _) = &parent.value {
+        if let JValue::Container(c, _) = &parent.borrow().value {
             if c.len() - 1 == last_index {
                 print_trailing_comma = false;
             }
@@ -137,7 +141,7 @@ impl<'a> OutputLineRef<'a> {
             panic!("Parent was not container.");
         }
 
-        match &current_node.value {
+        match &current_node.borrow().value {
             JValue::Primitive(p) => print_primitive(p),
             JValue::Container(c, cs) => match cs.get() {
                 ContainerState::Collapsed => {
@@ -184,10 +188,10 @@ impl<'a> OutputLineRef<'a> {
     }
 }
 
-pub fn render_screen<'a, 'b, 'c, 'd>(
-    root: &'a JNode,
-    focus: &'b Focus,
-    start_line: &'c OutputLineRef<'d>,
+pub fn render_screen(
+    root: &JNodeRef,
+    focus: &Focus,
+    start_line: &OutputLineRef,
     screen_height: u16,
 ) {
     let mut lines_printed: u16 = 0;
@@ -233,7 +237,7 @@ pub fn render_screen<'a, 'b, 'c, 'd>(
 // }
 
 // pub fn scroll_screen(
-//     root: &JNode,
+//     root: &JNodeRef,
 //     focus: &mut Focus,
 //     current_start_line: &OutputLineRef,
 //     direction: ScrollDirection,
@@ -246,14 +250,14 @@ pub fn render_screen<'a, 'b, 'c, 'd>(
 // BASIC PRINTING IMPLEMENTATION BELOW
 //
 
-pub fn render(root: &JNode, focus: &Focus) {
+pub fn render(root: &JNodeRef, focus: &Focus) {
     print!("\x1b[2J\x1b[0;0H");
     pretty_print(root, 1, Some(focus), 0);
     print!("\r\n");
 }
 
-fn pretty_print(node: &JNode, depth: usize, focus: Option<&Focus>, focus_index: usize) {
-    match &node.value {
+fn pretty_print(node: &JNodeRef, depth: usize, focus: Option<&Focus>, focus_index: usize) {
+    match &node.borrow().value {
         JValue::Primitive(p) => print_primitive(p),
         JValue::Container(c, s) => match s.get() {
             ContainerState::Collapsed => {
@@ -270,8 +274,8 @@ fn pretty_print(node: &JNode, depth: usize, focus: Option<&Focus>, focus_index: 
     }
 }
 
-fn print_inline(node: &JNode) {
-    match &node.value {
+fn print_inline(node: &JNodeRef) {
+    match &node.borrow().value {
         JValue::Primitive(p) => print_primitive(p),
         JValue::Container(c, s) => match s.get() {
             ContainerState::Collapsed => {
@@ -378,7 +382,7 @@ fn print_inlined_container(c: &JContainer) {
 }
 
 fn pretty_print_container_elem(
-    node: &JNode,
+    node: &JNodeRef,
     depth: usize,
     focus: Option<&Focus>,
     focus_index: usize,
