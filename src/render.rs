@@ -1,4 +1,6 @@
 use std::io::Write;
+use termion::color;
+use termion::color::{AnsiValue, Fg, Reset};
 use termion::{clear, cursor};
 
 use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
@@ -128,7 +130,7 @@ impl<'a> OutputLineRef<'a> {
                 // Only print the object key if you printing the start of the current node.
                 if self.side == OutputSide::Start {
                     let (key, _) = &kvp[last_index];
-                    print!("\"{}\": ", key);
+                    print!("{}\"{}\"{}: ", Fg(color::LightBlue), key, Fg(color::Reset));
                 }
             }
         } else {
@@ -285,10 +287,14 @@ fn print_inline(node: &JNode) {
 
 fn print_primitive(p: &JPrimitive) {
     match p {
-        JPrimitive::Null => print!("null"),
-        JPrimitive::Bool(b) => print!("{}", b),
-        JPrimitive::Number(n) => print!("{}", n),
-        JPrimitive::String(s) => print!("\"{}\"", s),
+        // Print in gray
+        JPrimitive::Null => print!("{}null{}", Fg(AnsiValue::grayscale(12)), Fg(color::Reset)),
+        // Print in yellow
+        JPrimitive::Bool(b) => print!("{}{}{}", Fg(color::Yellow), b, Fg(color::Reset)),
+        // Print in purple
+        JPrimitive::Number(n) => print!("{}{}{}", Fg(color::Magenta), n, Fg(color::Reset)),
+        // Print in green
+        JPrimitive::String(s) => print!("{}\"{}\"{}", Fg(color::Green), s, Fg(color::Reset)),
         JPrimitive::EmptyArray => print!("[]"),
         JPrimitive::EmptyObject => print!("{{}}"),
     }
@@ -358,7 +364,7 @@ fn print_inlined_container(c: &JContainer) {
                 if i > 0 {
                     print!(", ");
                 }
-                print!("\"{}\": ", k);
+                print!("{}\"{}\"{}: ", Fg(color::LightBlue), k, Fg(color::Reset));
                 print_inline(val);
             }
             print!("{}", right);
