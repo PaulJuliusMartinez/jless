@@ -20,6 +20,16 @@ pub struct JNode {
 }
 
 impl JNode {
+    fn parent(&self) -> Rc<JNode> {
+        match *self.parent.borrow() {
+            Some(ref parent_ref) => match Weak::upgrade(parent_ref) {
+                Some(parent) => parent,
+                None => panic!("Weak::upgrade on parent pointer failed."),
+            },
+            None => panic!("Called parent on root node with no parent."),
+        }
+    }
+
     fn is_primitive(&self) -> bool {
         self.value.is_primitive()
     }
@@ -57,6 +67,21 @@ impl JNode {
         match self.value {
             JValue::Container(_, ref state) => state.set(new_state),
             _ => panic!("cannot set_container_state on primitive JNode"),
+        }
+    }
+
+    fn is_collapsed(&self) -> bool {
+        self.is_container_in_state(ContainerState::Collapsed)
+    }
+
+    fn is_expanded(&self) -> bool {
+        self.is_container_in_state(ContainerState::Expanded)
+    }
+
+    fn is_container_in_state(&self, state: ContainerState) -> bool {
+        match &self.value {
+            JValue::Container(_, cs) => cs.get() == state,
+            _ => false,
         }
     }
 
@@ -180,16 +205,71 @@ impl JValue {
 }
 
 // TODO: Make this type way nicer to work with.
-pub struct Focus(pub Vec<(Rc<JNode>, usize)>);
+#[derive(Debug, Clone)]
+pub struct Focus {
+    pub indexes: Vec<usize>,
+    pub current_node: Rc<JNode>,
+}
 
 impl Focus {
-    pub fn indexes(&self) -> Vec<usize> {
-        self.0.iter().map(|(_, i)| *i).collect::<Vec<usize>>()
+    fn is_on_top_level(&self) -> bool {
+        self.indexes.len() == 1
     }
 
-    pub fn current_node(&self) -> Rc<JNode> {
-        let (parent_node, index) = self.0.last().unwrap();
-        Rc::clone(&parent_node[*index])
+    fn is_on_first_child_of_parent(&self) -> bool {
+        *self.indexes.last().unwrap() == 0
+    }
+
+    fn is_on_last_child_of_parent(&self) -> bool {
+        *self.indexes.last().unwrap() == self.current_node.parent().len() - 1
+    }
+
+    fn is_on_very_first_element(&self) -> bool {
+        self.is_on_top_level() && self.is_on_first_child_of_parent()
+    }
+
+    fn move_to_parent(&mut self) {
+        debug_assert!(!self.is_on_top_level());
+        let parent = self.current_node.parent();
+        self.indexes.pop();
+        self.current_node = parent;
+    }
+
+    fn move_to_first_sibling(&mut self) {
+        self.move_to_nth_sibling(0);
+    }
+
+    fn move_to_previous_sibling(&mut self) {
+        debug_assert!(!self.is_on_first_child_of_parent());
+        let current_index = *self.indexes.last().unwrap();
+        self.move_to_nth_sibling(current_index - 1);
+    }
+
+    fn move_to_next_sibling(&mut self) {
+        debug_assert!(!self.is_on_last_child_of_parent());
+        let current_index = *self.indexes.last().unwrap();
+        self.move_to_nth_sibling(current_index + 1);
+    }
+
+    fn move_to_last_sibling(&mut self) {
+        self.move_to_nth_sibling(self.current_node.parent().len() - 1);
+    }
+
+    fn move_to_nth_sibling(&mut self, n: usize) {
+        let parent = self.current_node.parent();
+        *self.indexes.last_mut().unwrap() = n;
+        self.current_node = Rc::clone(&parent[n]);
+    }
+
+    fn move_to_first_child(&mut self) {
+        self.indexes.push(0);
+        self.current_node = Rc::clone(&self.current_node[0]);
+    }
+
+    fn move_to_last_child(&mut self) {
+        let last_child_index = self.current_node.len() - 1;
+        self.indexes.push(last_child_index);
+        self.current_node = Rc::clone(&self.current_node[last_child_index]);
     }
 }
 
@@ -284,11 +364,18 @@ pub fn perform_action(focus: &mut Focus, action: Action) {
 
 // Make sure our focus is valid.
 fn validate_focus(focus: &Focus) -> bool {
-    assert!(focus.0.len() > 0);
+    assert!(focus.indexes.len() > 0);
 
-    for (node, index) in focus.0.iter() {
-        assert!(node.is_container());
-        assert!(*index < node.len());
+    let mut curr = Rc::clone(&focus.current_node);
+    let mut parent = focus.current_node.parent();
+
+    for (i, index) in focus.indexes.iter().rev().enumerate() {
+        assert!(Rc::ptr_eq(&parent[*index], &curr));
+
+        if i < focus.indexes.len() - 1 {
+            curr = parent;
+            parent = curr.parent();
+        }
     }
 
     true
@@ -300,30 +387,19 @@ fn validate_focus(focus: &Focus) -> bool {
 // - Otherwise, go to previous sibling (index -= 1), then go to its
 //   last child.
 fn move_up(focus: &mut Focus) {
-    let focus_length = focus.0.len();
-
-    // If we're at the very top, do nothing.
-    if focus.0.len() == 1 && focus.0[0].1 == 0 {
+    if focus.is_on_very_first_element() {
         return;
     }
 
-    if focus.0[focus_length - 1].1 == 0 {
-        focus.0.pop();
+    if focus.is_on_first_child_of_parent() {
+        focus.move_to_parent();
         return;
     }
 
-    focus.0[focus_length - 1].1 -= 1;
-    let mut curr_node = focus.current_node();
+    focus.move_to_previous_sibling();
 
-    while let JValue::Container(container, cs) = &curr_node.value {
-        if cs.get() != ContainerState::Expanded {
-            break;
-        }
-
-        let last_child_index = container.len() - 1;
-        let next = Rc::clone(&container[last_child_index]);
-        focus.0.push((curr_node, last_child_index));
-        curr_node = next;
+    while focus.current_node.is_expanded() {
+        focus.move_to_last_child();
     }
 }
 
@@ -339,57 +415,34 @@ fn move_up(focus: &mut Focus) {
 // - If actually the last node in the tree, don't modify
 //   focus
 fn move_down(focus: &mut Focus) {
-    let current_node = focus.current_node();
-    let mut depth_index = focus.0.len() - 1;
-
-    match &current_node.value {
-        JValue::Container(_, cs) if cs.get() == ContainerState::Expanded => {
-            focus.0.push((Rc::clone(&current_node), 0));
-        }
-        _ => {
-            while depth_index > 0 {
-                let (node, curr_index) = &focus.0[depth_index];
-
-                if curr_index + 1 < node.len() {
-                    focus.0.truncate(depth_index + 1);
-                    focus.0[depth_index].1 += 1;
-                    break;
-                }
-
-                depth_index -= 1;
-            }
-        }
+    if focus.current_node.is_expanded() {
+        focus.move_to_first_child();
+        return;
     }
+
+    let original_focus = focus.clone();
+    while focus.is_on_last_child_of_parent() && !focus.is_on_top_level() {
+        focus.move_to_parent()
+    }
+
+    // Don't actually move focus if focus was on very last element.
+    if focus.is_on_last_child_of_parent() && focus.is_on_top_level() {
+        focus.indexes = original_focus.indexes;
+        focus.current_node = original_focus.current_node;
+        return;
+    }
+
+    focus.move_to_next_sibling()
 }
 
 // Rules:
-// - If a primitive, go to parent, unless already topmost node
-// - If collapsed or inlined, go to parent, unless already topmost node
-// - Otherwise, collapse yourself
+// - If expanded, collapse yourself.
+// - Otherwise, go to parent, unless already on top level.
 fn move_left(focus: &mut Focus) {
-    let current_node = focus.current_node();
-
-    let mut pop_if_not_top_level = || {
-        if focus.0.len() > 1 {
-            focus.0.pop();
-        }
-    };
-
-    match &current_node.value {
-        JValue::Primitive(_) => {
-            pop_if_not_top_level();
-        }
-        JValue::Container(_, cs) => match cs.get() {
-            ContainerState::Inlined => {
-                pop_if_not_top_level();
-            }
-            ContainerState::Collapsed => {
-                pop_if_not_top_level();
-            }
-            ContainerState::Expanded => {
-                current_node.collapse();
-            }
-        },
+    if focus.current_node.is_expanded() {
+        focus.current_node.collapse();
+    } else if !focus.is_on_top_level() {
+        focus.move_to_parent();
     }
 }
 
@@ -399,26 +452,15 @@ fn move_left(focus: &mut Focus) {
 // - If collapsed, expand
 // - If expanded, go to first child
 fn move_right(focus: &mut Focus) {
-    let current_node = focus.current_node();
-
-    match &current_node.value {
-        JValue::Primitive(_) => { /* do nothing */ }
-        JValue::Container(_, cs) => {
-            match cs.get() {
-                ContainerState::Inlined => { /* do nothing */ }
-                ContainerState::Collapsed => current_node.expand(),
-                ContainerState::Expanded => {
-                    focus.0.push((Rc::clone(&current_node), 0));
-                }
-            }
-        }
+    if focus.current_node.is_expanded() {
+        focus.move_to_first_child();
+    } else if focus.current_node.is_collapsed() {
+        focus.current_node.expand();
     }
 }
 
 fn toggle_inline(focus: &mut Focus) {
-    let current_node = focus.current_node();
-
-    match &current_node.value {
+    match &focus.current_node.value {
         JValue::Primitive(_) => {
             // TODO: display a message to user that primitives
             // cannot be inlined.
@@ -434,13 +476,11 @@ fn toggle_inline(focus: &mut Focus) {
 }
 
 fn focus_first_elem(focus: &mut Focus) {
-    let (_, ref mut index) = focus.0.last_mut().unwrap();
-    *index = 0;
+    focus.move_to_first_sibling();
 }
 
 fn focus_last_elem(focus: &mut Focus) {
-    let (node, ref mut index) = focus.0.last_mut().unwrap();
-    *index = node.len() - 1;
+    focus.move_to_last_sibling();
 }
 
 #[cfg(test)]
@@ -460,7 +500,7 @@ mod tests {
     #[test]
     fn test_movement_down_simple() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        let mut focus: Focus = Focus(vec![(top_level, 0)]);
+        let mut focus = construct_focus(&top_level, vec![0]);
 
         assert_movements(
             &mut focus,
@@ -484,7 +524,7 @@ mod tests {
     fn test_movement_down_skips_collapsed() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
         top_level[0][0].collapse();
-        let mut focus: Focus = Focus(vec![(top_level, 0)]);
+        let mut focus = construct_focus(&top_level, vec![0]);
 
         assert_movements(
             &mut focus,
@@ -500,7 +540,7 @@ mod tests {
     #[test]
     fn test_movement_down_skips_empty() {
         let top_level = parse_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
-        let mut focus: Focus = Focus(vec![(top_level, 0)]);
+        let mut focus = construct_focus(&top_level, vec![0]);
 
         assert_movements(
             &mut focus,
@@ -516,7 +556,7 @@ mod tests {
     #[test]
     fn test_movement_up_simple() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        let mut focus = construct_focus(top_level, &[0, 1, 2]);
+        let mut focus = construct_focus(&top_level, vec![0, 1, 2]);
 
         assert_movements(
             &mut focus,
@@ -540,7 +580,7 @@ mod tests {
     fn test_movement_up_skips_collapsed() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
         top_level[0][0].collapse();
-        let mut focus: Focus = construct_focus(top_level, &[0, 1, 0]);
+        let mut focus = construct_focus(&top_level, vec![0, 1, 0]);
 
         assert_movements(
             &mut focus,
@@ -556,7 +596,7 @@ mod tests {
     #[test]
     fn test_movement_up_skips_empty() {
         let top_level = parse_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
-        let mut focus: Focus = construct_focus(top_level, &[0, 1, 0]);
+        let mut focus = construct_focus(&top_level, vec![0, 1, 0]);
 
         assert_movements(
             &mut focus,
@@ -574,7 +614,7 @@ mod tests {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
         top_level[0].collapse();
         top_level[0][0].collapse();
-        let mut focus: Focus = construct_focus(Rc::clone(&top_level), &[0]);
+        let mut focus = construct_focus(&top_level, vec![0]);
 
         // Expand first node, but don't enter
         perform_action(&mut focus, Action::Right);
@@ -603,7 +643,7 @@ mod tests {
     #[test]
     fn test_movement_left() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        let mut focus: Focus = construct_focus(Rc::clone(&top_level), &[0, 1, 1]);
+        let mut focus = construct_focus(&top_level, vec![0, 1, 1]);
 
         // Exit inner node
         perform_action(&mut focus, Action::Left);
@@ -633,7 +673,7 @@ mod tests {
     #[test]
     fn test_toggle_inline() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        let mut focus: Focus = construct_focus(Rc::clone(&top_level), &[0]);
+        let mut focus = construct_focus(&top_level, vec![0]);
 
         perform_action(&mut focus, Action::ToggleInline);
         assert_container_state(&top_level[0], ContainerState::Inlined);
@@ -649,7 +689,7 @@ mod tests {
     #[test]
     fn test_focus_first_and_last() {
         let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
-        let mut focus: Focus = construct_focus(top_level, &[0, 0, 1]);
+        let mut focus = construct_focus(&top_level, vec![0, 0, 1]);
 
         assert_movements(
             &mut focus,
@@ -668,36 +708,36 @@ mod tests {
     }
 
     fn assert_focus_indexes(focus: &Focus, indexes: &[usize]) {
-        assert_eq!(focus.indexes().as_slice(), indexes);
+        assert_eq!(focus.indexes.as_slice(), indexes);
     }
 
     fn assert_movements<'a>(
         focus: &'a mut Focus,
         actions_and_focuses: &'a [(Action, &'a [usize])],
     ) {
-        println!("Starting focus: {:?}", focus.indexes());
+        println!("Starting focus: {:?}", focus.indexes);
         for (action, new_focus_indexes) in actions_and_focuses.iter() {
             perform_action(focus, *action);
             println!(
                 "Performed action: {:?}, new focus: {:?}",
-                action,
-                focus.indexes()
+                action, focus.indexes
             );
-            assert_focus_indexes(focus, new_focus_indexes);
+            assert_focus_indexes(&focus, new_focus_indexes);
         }
     }
 
-    fn construct_focus(top_level: Rc<JNode>, indexes: &[usize]) -> Focus {
-        let mut curr_node = top_level;
-        let mut focus = Vec::new();
+    fn construct_focus(top_level: &Rc<JNode>, indexes: Vec<usize>) -> Focus {
+        let mut current_node = Rc::clone(top_level);
+        let last_index = *indexes.last().unwrap();
 
-        for index in indexes.iter() {
-            let next = Rc::clone(&curr_node[*index]);
-            focus.push((curr_node, *index));
-            curr_node = next;
+        for &index in indexes.iter() {
+            current_node = Rc::clone(&current_node[index]);
         }
 
-        Focus(focus)
+        Focus {
+            indexes,
+            current_node,
+        }
     }
 
     fn assert_container_state(node: &JNode, state: ContainerState) {
