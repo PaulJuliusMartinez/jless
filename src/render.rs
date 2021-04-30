@@ -4,7 +4,7 @@ use termion::color;
 use termion::color::{AnsiValue, Fg, Reset};
 use termion::{clear, cursor};
 
-use super::jnode::{ContainerState, Focus, JContainer, JNodeRef, JPrimitive, JValue};
+use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum OutputSide {
@@ -14,7 +14,7 @@ pub enum OutputSide {
 
 #[derive(Debug, Clone)]
 pub struct OutputLineRef {
-    pub root: JNodeRef,
+    pub root: Rc<JNode>,
     pub path: Vec<usize>,
     pub side: OutputSide,
 }
@@ -35,15 +35,14 @@ impl OutputLineRef {
     // - If already on the End side of the root, don't do anything (but return false);
     fn next(&mut self) -> bool {
         let at_child_of_root = self.path.len() == 1;
-        let at_last_child_of_root =
-            at_child_of_root && self.path[0] == self.root.borrow().len() - 1;
+        let at_last_child_of_root = at_child_of_root && self.path[0] == self.root.len() - 1;
         let at_end = self.side == OutputSide::End;
 
         let mut parent = Rc::clone(&self.root);
         let mut current_node = Rc::clone(&self.root);
         let mut last_index = 0;
         for index in self.path.iter() {
-            let next = Rc::clone(&current_node.borrow()[*index]);
+            let next = Rc::clone(&current_node[*index]);
             parent = current_node;
             current_node = next;
             last_index = *index;
@@ -56,7 +55,7 @@ impl OutputLineRef {
                 return false;
             }
 
-            match &current_node.borrow().value {
+            match &current_node.value {
                 JValue::Primitive(_) => return false,
                 JValue::Container(_, cs) => {
                     if cs.get() != ContainerState::Expanded {
@@ -66,7 +65,7 @@ impl OutputLineRef {
             }
         }
 
-        match &current_node.borrow().value {
+        match &current_node.value {
             JValue::Container(_, cs) if cs.get() == ContainerState::Expanded && !at_end => {
                 // Go to first current node if it's expanded.
                 self.path.push(0);
@@ -74,7 +73,7 @@ impl OutputLineRef {
             }
             _ => {
                 // Otherwise go to next sibling.
-                if last_index == parent.borrow().len() - 1 {
+                if last_index == parent.len() - 1 {
                     // But if already last sibling, go to End of parent.
                     self.path.pop();
                     self.side = OutputSide::End;
@@ -114,7 +113,7 @@ impl OutputLineRef {
         let mut current_node = Rc::clone(&self.root);
         let mut last_index = 0;
         for index in self.path.iter() {
-            let next = Rc::clone(&current_node.borrow()[*index]);
+            let next = Rc::clone(&current_node[*index]);
             parent = current_node;
             current_node = next;
             last_index = *index;
@@ -125,7 +124,7 @@ impl OutputLineRef {
 
         let mut print_trailing_comma = true;
 
-        if let JValue::Container(c, _) = &parent.borrow().value {
+        if let JValue::Container(c, _) = &parent.value {
             if c.len() - 1 == last_index {
                 print_trailing_comma = false;
             }
@@ -141,7 +140,7 @@ impl OutputLineRef {
             panic!("Parent was not container.");
         }
 
-        match &current_node.borrow().value {
+        match &current_node.value {
             JValue::Primitive(p) => print_primitive(p),
             JValue::Container(c, cs) => match cs.get() {
                 ContainerState::Collapsed => {
@@ -188,12 +187,7 @@ impl OutputLineRef {
     }
 }
 
-pub fn render_screen(
-    root: &JNodeRef,
-    focus: &Focus,
-    start_line: &OutputLineRef,
-    screen_height: u16,
-) {
+pub fn render_screen(root: &JNode, focus: &Focus, start_line: &OutputLineRef, screen_height: u16) {
     let mut lines_printed: u16 = 0;
     let mut current_line = start_line.clone();
 
@@ -250,14 +244,14 @@ pub fn render_screen(
 // BASIC PRINTING IMPLEMENTATION BELOW
 //
 
-pub fn render(root: &JNodeRef, focus: &Focus) {
+pub fn render(root: &JNode, focus: &Focus) {
     print!("\x1b[2J\x1b[0;0H");
     pretty_print(root, 1, Some(focus), 0);
     print!("\r\n");
 }
 
-fn pretty_print(node: &JNodeRef, depth: usize, focus: Option<&Focus>, focus_index: usize) {
-    match &node.borrow().value {
+fn pretty_print(node: &JNode, depth: usize, focus: Option<&Focus>, focus_index: usize) {
+    match &node.value {
         JValue::Primitive(p) => print_primitive(p),
         JValue::Container(c, s) => match s.get() {
             ContainerState::Collapsed => {
@@ -274,8 +268,8 @@ fn pretty_print(node: &JNodeRef, depth: usize, focus: Option<&Focus>, focus_inde
     }
 }
 
-fn print_inline(node: &JNodeRef) {
-    match &node.borrow().value {
+fn print_inline(node: &JNode) {
+    match &node.value {
         JValue::Primitive(p) => print_primitive(p),
         JValue::Container(c, s) => match s.get() {
             ContainerState::Collapsed => {
@@ -382,7 +376,7 @@ fn print_inlined_container(c: &JContainer) {
 }
 
 fn pretty_print_container_elem(
-    node: &JNodeRef,
+    node: &JNode,
     depth: usize,
     focus: Option<&Focus>,
     focus_index: usize,
