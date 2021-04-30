@@ -1,7 +1,7 @@
 use std::io::Write;
 use std::rc::Rc;
 use termion::color;
-use termion::color::{AnsiValue, Fg, Reset};
+use termion::color::{AnsiValue, Bg, Fg, Reset};
 use termion::{clear, cursor};
 
 use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
@@ -104,7 +104,7 @@ impl OutputLineRef {
     fn print(
         &self,
         line_number: u16,
-        // focus: &Focus,
+        focus: &Focus,
         // depth_modification: usize,
         // screen_width: u16,
     ) {
@@ -118,6 +118,8 @@ impl OutputLineRef {
             current_node = next;
             last_index = *index;
         }
+
+        let printing_focused_line = self.path == focus.indexes;
 
         let depth = self.path.len() as u16 - 1;
         Self::position_cursor(depth, line_number);
@@ -133,7 +135,18 @@ impl OutputLineRef {
                 // Only print the object key if you printing the start of the current node.
                 if self.side == OutputSide::Start {
                     let (key, _) = &kvp[last_index];
-                    print!("{}\"{}\"{}: ", Fg(color::LightBlue), key, Fg(color::Reset));
+                    if printing_focused_line {
+                        print!(
+                            "{}{}\"{}\"{}{}: ",
+                            Bg(color::LightWhite),
+                            Fg(color::Blue),
+                            key,
+                            Bg(color::Reset),
+                            Fg(color::Reset)
+                        );
+                    } else {
+                        print!("{}\"{}\"{}: ", Fg(color::LightBlue), key, Fg(color::Reset));
+                    }
                 }
             }
         } else {
@@ -199,7 +212,7 @@ pub fn render_screen(root: &JNode, focus: &Focus, start_line: &OutputLineRef, sc
             "Current Line: {:?}, {:?}",
             current_line.path, current_line.side
         );
-        current_line.print(lines_printed);
+        current_line.print(lines_printed, focus);
         lines_printed += 1;
 
         let more_lines = current_line.next();
@@ -383,8 +396,8 @@ fn pretty_print_container_elem(
     elem_index: usize,
 ) {
     if let Some(f) = focus {
-        let focused_index = f.0[focus_index].1;
-        if focused_index == elem_index && focus_index < f.0.len() - 1 {
+        let focused_index = f.indexes[focus_index];
+        if focused_index == elem_index && focus_index < f.indexes.len() - 1 {
             pretty_print(node, depth, focus, focus_index + 1);
         } else {
             pretty_print(node, depth, None, 0);
@@ -401,8 +414,8 @@ fn indent_container_elem(
     elem_index: usize,
 ) {
     if let Some(f) = focus {
-        let at_focus_depth = f.0.len() - 1 == focus_index;
-        let elem_index_matches = f.0[focus_index].1 == elem_index;
+        let at_focus_depth = f.indexes.len() - 1 == focus_index;
+        let elem_index_matches = f.indexes[focus_index] == elem_index;
 
         if at_focus_depth && elem_index_matches {
             print!("* ");

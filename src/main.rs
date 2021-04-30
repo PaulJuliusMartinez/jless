@@ -34,7 +34,11 @@ fn main() {
     };
 
     let json = jnode::parse_json(json_string).unwrap();
-    let mut focus = jnode::Focus(vec![(Rc::clone(&json), 0)]);
+    let mut focus = jnode::Focus {
+        indexes: vec![0],
+        parent_node: Rc::clone(&json),
+        current_node: Rc::clone(&json[0]),
+    };
 
     let start_line = render::OutputLineRef {
         root: Rc::clone(&json),
