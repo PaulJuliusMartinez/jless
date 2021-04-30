@@ -1,6 +1,7 @@
 use serde_json::value::{Number, Value};
 
 use std::cell::{Cell, RefCell};
+use std::mem;
 use std::ops::Index;
 use std::rc::{Rc, Weak};
 
@@ -208,6 +209,7 @@ impl JValue {
 #[derive(Debug, Clone)]
 pub struct Focus {
     pub indexes: Vec<usize>,
+    pub parent_node: Rc<JNode>,
     pub current_node: Rc<JNode>,
 }
 
@@ -221,7 +223,7 @@ impl Focus {
     }
 
     fn is_on_last_child_of_parent(&self) -> bool {
-        *self.indexes.last().unwrap() == self.current_node.parent().len() - 1
+        *self.indexes.last().unwrap() == self.parent_node.len() - 1
     }
 
     fn is_on_very_first_element(&self) -> bool {
@@ -230,8 +232,10 @@ impl Focus {
 
     fn move_to_parent(&mut self) {
         debug_assert!(!self.is_on_top_level());
-        let parent = self.current_node.parent();
         self.indexes.pop();
+
+        let grandparent = self.parent_node.parent();
+        let parent = mem::replace(&mut self.parent_node, grandparent);
         self.current_node = parent;
     }
 
@@ -252,24 +256,29 @@ impl Focus {
     }
 
     fn move_to_last_sibling(&mut self) {
-        self.move_to_nth_sibling(self.current_node.parent().len() - 1);
+        self.move_to_nth_sibling(self.parent_node.len() - 1);
     }
 
     fn move_to_nth_sibling(&mut self, n: usize) {
-        let parent = self.current_node.parent();
         *self.indexes.last_mut().unwrap() = n;
-        self.current_node = Rc::clone(&parent[n]);
+        self.current_node = Rc::clone(&self.parent_node[n]);
     }
 
     fn move_to_first_child(&mut self) {
         self.indexes.push(0);
-        self.current_node = Rc::clone(&self.current_node[0]);
+
+        let new_current = Rc::clone(&self.current_node[0]);
+        let parent = mem::replace(&mut self.current_node, new_current);
+        self.parent_node = parent;
     }
 
     fn move_to_last_child(&mut self) {
         let last_child_index = self.current_node.len() - 1;
         self.indexes.push(last_child_index);
-        self.current_node = Rc::clone(&self.current_node[last_child_index]);
+
+        let new_current = Rc::clone(&self.current_node[last_child_index]);
+        let parent = mem::replace(&mut self.current_node, new_current);
+        self.parent_node = parent;
     }
 }
 
@@ -366,6 +375,11 @@ pub fn perform_action(focus: &mut Focus, action: Action) {
 fn validate_focus(focus: &Focus) -> bool {
     assert!(focus.indexes.len() > 0);
 
+    assert!(Rc::ptr_eq(
+        &focus.parent_node[*focus.indexes.last().unwrap()],
+        &focus.current_node
+    ));
+
     let mut curr = Rc::clone(&focus.current_node);
     let mut parent = focus.current_node.parent();
 
@@ -427,8 +441,7 @@ fn move_down(focus: &mut Focus) {
 
     // Don't actually move focus if focus was on very last element.
     if focus.is_on_last_child_of_parent() && focus.is_on_top_level() {
-        focus.indexes = original_focus.indexes;
-        focus.current_node = original_focus.current_node;
+        *focus = original_focus;
         return;
     }
 
@@ -728,7 +741,6 @@ mod tests {
 
     fn construct_focus(top_level: &Rc<JNode>, indexes: Vec<usize>) -> Focus {
         let mut current_node = Rc::clone(top_level);
-        let last_index = *indexes.last().unwrap();
 
         for &index in indexes.iter() {
             current_node = Rc::clone(&current_node[index]);
@@ -736,6 +748,7 @@ mod tests {
 
         Focus {
             indexes,
+            parent_node: current_node.parent(),
             current_node,
         }
     }
