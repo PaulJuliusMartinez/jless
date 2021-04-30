@@ -303,7 +303,7 @@ fn move_up(focus: &mut Focus) {
     let focus_length = focus.0.len();
 
     // If we're at the very top, do nothing.
-    if focus_length == 1 && focus.0[0].1 == 0 {
+    if focus.0.len() == 1 && focus.0[0].1 == 0 {
         return;
     }
 
@@ -315,21 +315,13 @@ fn move_up(focus: &mut Focus) {
     focus.0[focus_length - 1].1 -= 1;
     let mut curr_node = focus.current_node();
 
-    loop {
-        let last_child_index;
-        let next;
-
-        if let JValue::Container(container, cs) = &curr_node.value {
-            if cs.get() != ContainerState::Expanded {
-                break;
-            }
-
-            last_child_index = container.len() - 1;
-            next = Rc::clone(&container[last_child_index]);
-        } else {
+    while let JValue::Container(container, cs) = &curr_node.value {
+        if cs.get() != ContainerState::Expanded {
             break;
         }
 
+        let last_child_index = container.len() - 1;
+        let next = Rc::clone(&container[last_child_index]);
         focus.0.push((curr_node, last_child_index));
         curr_node = next;
     }
@@ -367,7 +359,7 @@ fn move_down(focus: &mut Focus) {
                 depth_index -= 1;
             }
         }
-    };
+    }
 }
 
 // Rules:
@@ -398,7 +390,7 @@ fn move_left(focus: &mut Focus) {
                 current_node.collapse();
             }
         },
-    };
+    }
 }
 
 // Rules:
@@ -420,7 +412,7 @@ fn move_right(focus: &mut Focus) {
                 }
             }
         }
-    };
+    }
 }
 
 fn toggle_inline(focus: &mut Focus) {
@@ -438,11 +430,11 @@ fn toggle_inline(focus: &mut Focus) {
                 cs.set(ContainerState::Inlined);
             }
         }
-    };
+    }
 }
 
 fn focus_first_elem(focus: &mut Focus) {
-    let (node, ref mut index) = focus.0.last_mut().unwrap();
+    let (_, ref mut index) = focus.0.last_mut().unwrap();
     *index = 0;
 }
 
