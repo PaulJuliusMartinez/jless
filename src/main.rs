@@ -25,7 +25,7 @@ struct Opt {
 fn main() {
     let opt = Opt::from_args();
 
-    let json_string = match get_json_string(&opt) {
+    let json_string = match get_json_input(&opt) {
         Ok(json_string) => json_string,
         Err(err) => {
             println!("Unable to get input: {}", err);
@@ -40,14 +40,10 @@ fn main() {
         current_node: Rc::clone(&json[0]),
     };
 
-    let start_line = render::OutputLineRef {
-        root: Rc::clone(&json),
-        path: vec![0],
-        side: render::OutputSide::Start,
-    };
-
     let (width, height) = termion::terminal_size().unwrap();
-    render::render_screen(&json, &focus, &start_line, height);
+    let mut viewer = render::JsonViewer::new(&json, width, height);
+
+    viewer.render();
 
     let mut stdout = io::stdout().into_raw_mode().unwrap();
 
@@ -77,12 +73,13 @@ fn main() {
 
         if let Some(action) = action {
             jnode::perform_action(&mut focus, action);
-            render::render_screen(&json, &focus, &start_line, height);
+            viewer.change_focus(&focus);
+            viewer.render();
         }
     }
 }
 
-fn get_json_string(opt: &Opt) -> io::Result<String> {
+fn get_json_input(opt: &Opt) -> io::Result<String> {
     let mut json_string = String::new();
 
     match &opt.input {

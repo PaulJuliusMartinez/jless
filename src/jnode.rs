@@ -75,7 +75,7 @@ impl JNode {
         self.is_container_in_state(ContainerState::Collapsed)
     }
 
-    fn is_expanded(&self) -> bool {
+    pub fn is_expanded(&self) -> bool {
         self.is_container_in_state(ContainerState::Expanded)
     }
 
