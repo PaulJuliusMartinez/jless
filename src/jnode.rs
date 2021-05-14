@@ -282,10 +282,18 @@ impl Focus {
     }
 }
 
-pub fn parse_json(json: String) -> serde_json::Result<Rc<JNode>> {
-    let serde_value = serde_json::from_str(&json)?;
+pub fn parse_top_level_json(json: String) -> serde_json::Result<Rc<JNode>> {
+    let elems = vec![parse_json(json)?];
+    Ok(construct_top_level_json(elems))
+}
 
-    let top_level = JContainer::TopLevel(vec![convert_to_jnode(serde_value)]);
+fn parse_json(json: String) -> serde_json::Result<Rc<JNode>> {
+    let serde_value = serde_json::from_str(&json)?;
+    Ok(convert_to_jnode(serde_value))
+}
+
+fn construct_top_level_json(nodes: Vec<Rc<JNode>>) -> Rc<JNode> {
+    let top_level = JContainer::TopLevel(nodes);
 
     let top_level = Rc::new(JNode {
         value: JValue::Container(top_level, Cell::new(ContainerState::Expanded)),
@@ -296,7 +304,7 @@ pub fn parse_json(json: String) -> serde_json::Result<Rc<JNode>> {
 
     JNode::set_parent_on_children(&top_level);
 
-    Ok(top_level)
+    top_level
 }
 
 fn convert_to_jnode(serde_value: Value) -> Rc<JNode> {
@@ -348,10 +356,10 @@ pub enum Action {
     ToggleInline,
     FocusFirstElem,
     FocusLastElem,
+    FocusTop,
+    FocusBottom,
     // NextOccurrenceOfKey
     // PrevOccurrenceOfKey
-    // TopOfTree,
-    // BottomOfTree,
 }
 
 pub fn perform_action(focus: &mut Focus, action: Action) {
@@ -365,6 +373,8 @@ pub fn perform_action(focus: &mut Focus, action: Action) {
         Action::ToggleInline => toggle_inline(focus),
         Action::FocusFirstElem => focus_first_elem(focus),
         Action::FocusLastElem => focus_last_elem(focus),
+        Action::FocusTop => focus_top(focus),
+        Action::FocusBottom => focus_bottom(focus),
         _ => {}
     }
 
@@ -496,6 +506,25 @@ fn focus_last_elem(focus: &mut Focus) {
     focus.move_to_last_sibling();
 }
 
+fn focus_top(focus: &mut Focus) {
+    while !focus.is_on_top_level() {
+        focus.move_to_parent();
+    }
+    focus.move_to_first_sibling();
+}
+
+fn focus_bottom(focus: &mut Focus) {
+    while !focus.is_on_top_level() {
+        focus.move_to_parent();
+    }
+    focus.move_to_last_sibling();
+
+    // Keep moving to last child if current thing is expanded.
+    while focus.current_node.is_expanded() {
+        focus.move_to_last_child();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -512,7 +541,7 @@ mod tests {
 
     #[test]
     fn test_movement_down_simple() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0]);
 
         assert_movements(
@@ -535,7 +564,7 @@ mod tests {
 
     #[test]
     fn test_movement_down_skips_collapsed() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         top_level[0][0].collapse();
         let mut focus = construct_focus(&top_level, vec![0]);
 
@@ -552,7 +581,7 @@ mod tests {
 
     #[test]
     fn test_movement_down_skips_empty() {
-        let top_level = parse_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0]);
 
         assert_movements(
@@ -568,7 +597,7 @@ mod tests {
 
     #[test]
     fn test_movement_up_simple() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0, 1, 2]);
 
         assert_movements(
@@ -591,7 +620,7 @@ mod tests {
 
     #[test]
     fn test_movement_up_skips_collapsed() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         top_level[0][0].collapse();
         let mut focus = construct_focus(&top_level, vec![0, 1, 0]);
 
@@ -608,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_movement_up_skips_empty() {
-        let top_level = parse_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0, 1, 0]);
 
         assert_movements(
@@ -624,7 +653,7 @@ mod tests {
 
     #[test]
     fn test_movement_right() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         top_level[0].collapse();
         top_level[0][0].collapse();
         let mut focus = construct_focus(&top_level, vec![0]);
@@ -655,7 +684,7 @@ mod tests {
 
     #[test]
     fn test_movement_left() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0, 1, 1]);
 
         // Exit inner node
@@ -685,7 +714,7 @@ mod tests {
 
     #[test]
     fn test_toggle_inline() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0]);
 
         perform_action(&mut focus, Action::ToggleInline);
@@ -701,7 +730,7 @@ mod tests {
 
     #[test]
     fn test_focus_first_and_last() {
-        let top_level = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let top_level = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
         let mut focus = construct_focus(&top_level, vec![0, 0, 1]);
 
         assert_movements(
@@ -718,6 +747,28 @@ mod tests {
             ]
             .as_slice(),
         );
+    }
+
+    #[test]
+    fn test_focus_top_and_bottom() {
+        let first_obj = parse_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let second_obj = parse_json(SIMPLE_OBJ_WITH_EMPTY.to_owned()).unwrap();
+        let top_level = construct_top_level_json(vec![first_obj, second_obj]);
+
+        let mut focus = construct_focus(&top_level, vec![1, 1, 2]);
+        perform_action(&mut focus, Action::FocusTop);
+        assert_focus_indexes(&focus, &[0]);
+
+        let mut focus = construct_focus(&top_level, vec![0, 1, 2]);
+        perform_action(&mut focus, Action::FocusBottom);
+        assert_focus_indexes(&focus, &[1, 1, 2]);
+
+        // Collapse the last node and ensure FocusBottom doesn't focus into it.
+        top_level[1][1].collapse();
+
+        let mut focus = construct_focus(&top_level, vec![0, 0, 1]);
+        perform_action(&mut focus, Action::FocusBottom);
+        assert_focus_indexes(&focus, &[1, 1]);
     }
 
     fn assert_focus_indexes(focus: &Focus, indexes: &[usize]) {

@@ -33,7 +33,7 @@ fn main() {
         }
     };
 
-    let json = jnode::parse_json(json_string).unwrap();
+    let json = jnode::parse_top_level_json(json_string).unwrap();
     let mut focus = jnode::Focus {
         indexes: vec![0],
         parent_node: Rc::clone(&json),
@@ -61,6 +61,8 @@ fn main() {
             KeyEvent(Key::Char('i')) => Some(jnode::Action::ToggleInline),
             KeyEvent(Key::Char('0')) => Some(jnode::Action::FocusFirstElem),
             KeyEvent(Key::Char('$')) => Some(jnode::Action::FocusLastElem),
+            KeyEvent(Key::Char('g')) => Some(jnode::Action::FocusTop),
+            KeyEvent(Key::Char('G')) => Some(jnode::Action::FocusBottom),
             KeyEvent(Key::Ctrl('c')) => {
                 println!("Typed C-c, exiting\r");
                 break;
