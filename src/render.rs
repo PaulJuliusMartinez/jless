@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
-use std::io::Write;
+use std::fmt::Write;
+use std::io::Write as IoWrite;
 use std::rc::Rc;
 use termion::color;
-use termion::color::{AnsiValue, Bg, Fg, Reset};
+use termion::color::{AnsiValue, Bg, Fg};
 use termion::{clear, cursor};
 
 use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
@@ -195,13 +196,16 @@ impl JsonViewer {
 
         eprintln!("Rendering screen!");
 
+        let mut buf =
+            String::with_capacity((self.screen_width as usize) * (self.screen_height as usize));
+
         // Print lines to fill the screen
         while lines_printed < self.screen_height {
             eprintln!(
                 "Current Line: {:?}, {:?}",
                 current_line.path, current_line.side
             );
-            current_line.print(lines_printed, lines_printed == self.focused_index);
+            current_line.print(&mut buf, lines_printed, lines_printed == self.focused_index);
             lines_printed += 1;
 
             let more_lines = current_line.next();
@@ -213,17 +217,19 @@ impl JsonViewer {
 
         // Print end of file marker
         if lines_printed < self.screen_height {
-            OutputLineRef::print_eof_marker(lines_printed);
+            OutputLineRef::print_eof_marker(&mut buf, lines_printed);
             lines_printed += 1;
         }
 
         // Fill up remaining screen space with ~.
         while lines_printed < self.screen_height {
-            OutputLineRef::print_past_end_of_file(lines_printed);
+            OutputLineRef::print_past_end_of_file(&mut buf, lines_printed);
             lines_printed += 1;
         }
 
-        std::io::stdout().flush().unwrap();
+        let mut stdout = std::io::stdout();
+        stdout.write_all(buf.as_bytes());
+        stdout.flush().unwrap();
     }
 }
 
@@ -407,6 +413,7 @@ impl OutputLineRef {
     // indentation level = 2 * (path.len - 1)
     fn print(
         &self,
+        output: &mut impl Write,
         line_number: u16,
         mut is_line_focused: bool,
         // depth_modification: usize,
@@ -424,7 +431,7 @@ impl OutputLineRef {
         }
 
         let depth = self.path.len() as u16 - 1;
-        Self::position_cursor(depth, line_number);
+        Self::position_cursor(output, depth, line_number);
 
         let mut print_trailing_comma = true;
 
@@ -438,17 +445,24 @@ impl OutputLineRef {
                 if self.side == OutputSide::Start {
                     let (key, _) = &kvp[last_index];
                     if is_line_focused {
-                        print!(
+                        write!(
+                            output,
                             "{}{}\"{}\"{}{}: ",
                             Bg(color::LightWhite),
                             Fg(color::Blue),
                             key,
                             Bg(color::Reset),
-                            Fg(color::Reset)
+                            Fg(color::Reset),
                         );
                         is_line_focused = false;
                     } else {
-                        print!("{}\"{}\"{}: ", Fg(color::LightBlue), key, Fg(color::Reset));
+                        write!(
+                            output,
+                            "{}\"{}\"{}: ",
+                            Fg(color::LightBlue),
+                            key,
+                            Fg(color::Reset)
+                        );
                     }
                 }
             }
@@ -459,61 +473,63 @@ impl OutputLineRef {
         match &current_node.value {
             JValue::Primitive(p) => {
                 if is_line_focused {
-                    print!("* ");
+                    output.write_str("* ");
                 }
-                print_primitive(p);
+                print_primitive(p, output);
             }
             JValue::Container(c, cs) => match cs.get() {
                 ContainerState::Collapsed => {
                     if is_line_focused {
-                        print!("* ");
+                        output.write_str("* ");
                     }
                     let (left, right) = c.characters();
-                    print!("{} ... {}", left, right);
+                    write!(output, "{} ... {}", left, right);
                 }
                 ContainerState::Inlined => {
                     if is_line_focused {
-                        print!("* ");
+                        output.write_str("* ");
                     }
-                    print_inlined_container(c);
+                    print_inlined_container(c, output);
                 }
                 ContainerState::Expanded => {
                     let (left, right) = c.characters();
                     match self.side {
                         OutputSide::Start => {
                             if is_line_focused {
-                                print!("* ");
+                                output.write_str("* ");
                             }
-                            print!("{}", left);
+                            output.write_char(left);
                             print_trailing_comma = false;
                         }
-                        OutputSide::End => print!("{}", right),
+                        OutputSide::End => {
+                            output.write_char(right);
+                        }
                     }
                 }
             },
         }
 
         if print_trailing_comma {
-            print!(",");
+            output.write_str(",");
         }
     }
 
-    fn print_eof_marker(line_number: u16) {
-        Self::position_cursor(0, line_number);
-        print!("(END)");
+    fn print_eof_marker(output: &mut impl Write, line_number: u16) {
+        Self::position_cursor(output, 0, line_number);
+        output.write_str("(END)");
     }
 
-    fn print_past_end_of_file(line_number: u16) {
-        Self::position_cursor(0, line_number);
-        print!("~");
+    fn print_past_end_of_file(output: &mut impl Write, line_number: u16) {
+        Self::position_cursor(output, 0, line_number);
+        output.write_char('~');
     }
 
-    fn position_cursor(depth: u16, line_number: u16) {
+    fn position_cursor(output: &mut impl Write, depth: u16, line_number: u16) {
         // Terminal coordinates are 1 based.
         let x = 1 + 2 * depth;
         let y = line_number + 1;
         // Position cursor and clear line.
-        print!("{}{}", cursor::Goto(x, y), clear::CurrentLine);
+        write!(output, "{}{}", cursor::Goto(x, y), clear::CurrentLine);
     }
 }
 
@@ -533,64 +549,77 @@ impl OutputLineRef {
 //     current_start_line.clone()
 // }
 
-fn print_inline(node: &JNode) {
+fn print_inline(node: &JNode, output: &mut impl Write) {
     match &node.value {
-        JValue::Primitive(p) => print_primitive(p),
+        JValue::Primitive(p) => print_primitive(p, output),
         JValue::Container(c, s) => match s.get() {
             ContainerState::Collapsed => {
                 let (left, right) = c.characters();
-                print!("{} ... {}", left, right);
+                write!(output, "{} ... {}", left, right);
             }
             _ => {
-                print_inlined_container(&c);
+                print_inlined_container(&c, output);
             }
         },
     }
 }
 
-fn print_primitive(p: &JPrimitive) {
+fn print_primitive(p: &JPrimitive, output: &mut impl Write) {
     match p {
         // Print in gray
-        JPrimitive::Null => print!("{}null{}", Fg(AnsiValue::grayscale(12)), Fg(color::Reset)),
+        JPrimitive::Null => write!(
+            output,
+            "{}null{}",
+            Fg(AnsiValue::grayscale(12)),
+            Fg(color::Reset)
+        ),
         // Print in yellow
-        JPrimitive::Bool(b) => print!("{}{}{}", Fg(color::Yellow), b, Fg(color::Reset)),
+        JPrimitive::Bool(b) => write!(output, "{}{}{}", Fg(color::Yellow), b, Fg(color::Reset)),
         // Print in purple
-        JPrimitive::Number(n) => print!("{}{}{}", Fg(color::Magenta), n, Fg(color::Reset)),
+        JPrimitive::Number(n) => write!(output, "{}{}{}", Fg(color::Magenta), n, Fg(color::Reset)),
         // Print in green
-        JPrimitive::String(s) => print!("{}\"{}\"{}", Fg(color::Green), s, Fg(color::Reset)),
-        JPrimitive::EmptyArray => print!("[]"),
-        JPrimitive::EmptyObject => print!("{{}}"),
-    }
+        JPrimitive::String(s) => {
+            write!(output, "{}\"{}\"{}", Fg(color::Green), s, Fg(color::Reset))
+        }
+        JPrimitive::EmptyArray => output.write_str("[]"),
+        JPrimitive::EmptyObject => output.write_str("{}"),
+    };
 }
 
-fn print_inlined_container(c: &JContainer) {
+fn print_inlined_container(c: &JContainer, output: &mut impl Write) {
     let (left, right) = c.characters();
 
     match c {
         JContainer::Array(v) => {
-            print!("{}", left);
+            output.write_char(left);
             for (i, val) in v.iter().enumerate() {
                 if i > 0 {
-                    print!(", ");
+                    output.write_str(", ");
                 }
-                print_inline(val);
+                print_inline(val, output);
             }
-            print!("{}", right);
+            output.write_char(right);
         }
         JContainer::Object(kvp) => {
-            print!("{}", left);
+            output.write_char(left);
             for (i, (k, val)) in kvp.iter().enumerate() {
                 if i > 0 {
-                    print!(", ");
+                    output.write_str(", ");
                 }
-                print!("{}\"{}\"{}: ", Fg(color::LightBlue), k, Fg(color::Reset));
-                print_inline(val);
+                write!(
+                    output,
+                    "{}\"{}\"{}: ",
+                    Fg(color::LightBlue),
+                    k,
+                    Fg(color::Reset)
+                );
+                print_inline(val, output);
             }
-            print!("{}", right);
+            output.write_char(right);
         }
         JContainer::TopLevel(j) => {
             for val in j.iter() {
-                print_inline(val);
+                print_inline(val, output);
             }
         }
     }
