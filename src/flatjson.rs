@@ -248,46 +248,64 @@ mod tests {
     use super::*;
 
     const OBJECT_1: &'static str = r#"{
-        "a": 2,
-        "b": [
-            4,
-            "5"
+        "1": 1,
+        "2": [
+            3,
+            "4"
         ],
-        "c": {
-            "d": null,
-            "e": true,
-            "f": 9
+        "6": {
+            "7": null,
+            "8": true,
+            "9": 9
         },
-        "g": 11
+        "11": 11
     }"#;
 
     #[test]
     fn test_flatten_json() {
         let fj = parse_top_level_json(OBJECT_1.to_owned()).unwrap();
 
-        assert_prev_siblings(
+        assert_flat_json_indexes(
+            "parent",
+            &fj,
+            vec![NIL, 0, 0, 2, 2, 0, 0, 6, 6, 6, 0, 0, NIL],
+            |elem| elem.parent,
+        );
+
+        assert_flat_json_indexes(
+            "prev_sibling",
             &fj,
             vec![NIL, NIL, 1, NIL, 3, NIL, 2, NIL, 7, 8, NIL, 6, NIL],
-        )
+            |elem| elem.prev_sibling,
+        );
+
+        assert_flat_json_indexes(
+            "next_sibling",
+            &fj,
+            vec![NIL, 2, 6, 4, NIL, NIL, 11, 8, 9, NIL, NIL, NIL, NIL],
+            |elem| elem.next_sibling,
+        );
     }
 
-    fn assert_prev_siblings<T: Into<OptionIndex> + Debug + Copy>(
+    fn assert_flat_json_indexes<T: Into<OptionIndex> + Debug + Copy>(
+        field: &'static str,
         fj: &FlatJson,
-        prev_siblings: Vec<T>,
+        indexes: Vec<T>,
+        accessor_fn: fn(&Row) -> OptionIndex,
     ) {
         assert_eq!(
             fj.0.len(),
-            prev_siblings.len(),
-            "length of prev_siblings is incorrect"
+            indexes.len(),
+            "length of flat json and indexes don't match",
         );
 
-        for (i, (elem, expected_prev_sibling)) in fj.0.iter().zip(prev_siblings.iter()).enumerate()
-        {
+        for (i, (elem, expected_index)) in fj.0.iter().zip(indexes.iter()).enumerate() {
             assert_eq!(
-                Into::<OptionIndex>::into(*expected_prev_sibling),
-                elem.prev_sibling,
-                "incorrect prev_sibling at index {}",
-                i
+                Into::<OptionIndex>::into(*expected_index),
+                accessor_fn(elem),
+                "incorrect {} at index {}",
+                field,
+                i,
             );
         }
     }
