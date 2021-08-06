@@ -8,6 +8,9 @@ use termion::cursor::DetectCursorPos;
 use termion::event::Key;
 use termion::raw::IntoRawMode;
 
+mod flatjson;
+mod viewer;
+
 mod input;
 mod jnode;
 mod render;
