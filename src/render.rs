@@ -8,6 +8,20 @@ use termion::{clear, cursor};
 
 use super::jnode::{ContainerState, Focus, JContainer, JNode, JPrimitive, JValue};
 
+// Implement this next time?
+
+// struct TTYWriter {}
+// impl TTYWriter {
+//     fn height() -> u16;
+//     fn width() -> u16;
+//     fn position_cursor(row: u16, col: u16) -> std::io::Result<()>;
+//     fn write(s: &str) -> std::io::Result<()>;
+//     fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()>;
+//     fn write_char(c: char) -> std::io::Result<()>;
+//     fn clear_line() -> std::io::Result<()>;
+//     fn set_color() -> std::io::Result<()>;
+// }
+
 // Output line     0
 // Output line     1
 // Output line     2
@@ -621,6 +635,41 @@ fn print_inlined_container(c: &JContainer, output: &mut impl Write) {
             for val in j.iter() {
                 print_inline(val, output);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::jnode::parse_top_level_json;
+
+    const SIMPLE_OBJ: &'static str = r#"{
+        "a": { "aa": 1, "ab": 2, "ac": 3 },
+        "z": [1, 2, 3]
+    }"#;
+
+    #[test]
+    #[ignore]
+    fn test_output_line_ref_print_simple() {
+        let json = parse_top_level_json(SIMPLE_OBJ.to_owned()).unwrap();
+        let line_ref = construct_line_ref(&json, vec![0], true);
+
+        let mut output = String::new();
+        line_ref.print(&mut output, 0, false);
+
+        assert_eq!("{", &output);
+    }
+
+    fn construct_line_ref(root: &Rc<JNode>, path: Vec<usize>, is_start: bool) -> OutputLineRef {
+        OutputLineRef {
+            root: Rc::clone(root),
+            path,
+            side: if is_start {
+                OutputSide::Start
+            } else {
+                OutputSide::End
+            },
         }
     }
 }
