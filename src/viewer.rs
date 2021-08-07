@@ -100,16 +100,17 @@ impl JsonViewer {
     }
 
     fn move_left(&mut self) {
-        let focused_row = &mut self.flatjson[self.focused_row];
-        if focused_row.is_container() && !focused_row.is_collapsed() {
+        if self.flatjson[self.focused_row].is_container()
+            && self.flatjson[self.focused_row].is_expanded()
+        {
             self.flatjson.collapse(self.focused_row);
-            if focused_row.is_closing_of_container() {
-                self.focused_row = focused_row.pair_index().unwrap();
+            if self.flatjson[self.focused_row].is_closing_of_container() {
+                self.focused_row = self.flatjson[self.focused_row].pair_index().unwrap();
             }
             return;
         }
 
-        if let OptionIndex::Index(parent) = focused_row.parent {
+        if let OptionIndex::Index(parent) = self.flatjson[self.focused_row].parent {
             self.focused_row = parent;
         }
     }
