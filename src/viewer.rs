@@ -1,4 +1,4 @@
-use super::flatjson::{parse_top_level_json, FlatJson, Index, OptionIndex};
+use super::flatjson::{FlatJson, Index, OptionIndex};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum Mode {
@@ -15,7 +15,12 @@ pub struct JsonViewer {
     focused_row: Index,
 
     height: u16,
-    scrolloff: u16,
+    // We call this scrolloff_setting, to differentiate between
+    // what it's set to, and what the scrolloff functionally is
+    // if it's set to value >= height / 2.
+    //
+    // Access the functional value via .scrolloff().
+    scrolloff_setting: u16,
     mode: Mode,
 }
 
@@ -26,7 +31,7 @@ impl JsonViewer {
             top_row: 0,
             focused_row: 0,
             height: DEFAULT_HEIGHT,
-            scrolloff: DEFAULT_SCROLLOFF,
+            scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
         }
     }
@@ -34,10 +39,10 @@ impl JsonViewer {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
-    Up(usize),
-    Down(usize),
-    Left,
-    Right,
+    MoveUp(usize),
+    MoveDown(usize),
+    MoveLeft,
+    MoveRight,
 
     ToggleCollapsed,
 
@@ -54,17 +59,40 @@ pub enum Action {
 
 impl JsonViewer {
     fn perform_action(&mut self, action: Action) {
+        let track_window = JsonViewer::should_refocus_window(&action);
+
         match action {
-            Action::Up(n) => self.move_up(n),
-            Action::Down(n) => self.move_down(n),
-            Action::Left => self.move_left(),
-            Action::Right => self.move_right(),
-            Action::ToggleMode => self.toggle_mode(),
+            Action::MoveUp(n) => self.move_up(n),
+            Action::MoveDown(n) => self.move_down(n),
+            Action::MoveLeft => self.move_left(),
+            Action::MoveRight => self.move_right(),
+            Action::ScrollUp(n) => self.scroll_up(n),
+            Action::ScrollDown(n) => self.scroll_down(n),
+            Action::ToggleMode => {
+                // TODO: custom window management here
+                self.toggle_mode();
+            }
             _ => {}
         }
 
-        self.ensure_focused_row_is_visible();
+        if track_window {
+            self.ensure_focused_row_is_visible();
+        }
     }
+
+    fn should_refocus_window(action: &Action) -> bool {
+        match action {
+            Action::MoveUp(_) => true,
+            Action::MoveDown(_) => true,
+            Action::MoveLeft => true,
+            Action::MoveRight => true,
+            Action::ScrollUp(_) => false,
+            Action::ScrollDown(_) => false,
+            Action::ToggleMode => false,
+            _ => false,
+        }
+    }
+
     fn move_up(&mut self, rows: usize) {
         let mut row = self.focused_row;
 
@@ -143,6 +171,29 @@ impl JsonViewer {
         }
     }
 
+    fn scroll_up(&mut self, rows: usize) {
+        self.top_row = self.count_n_lines_before(self.top_row, rows, self.mode);
+        let max_focused_row = self.count_n_lines_past(
+            self.top_row,
+            (self.height - self.scrolloff() - 1) as usize,
+            self.mode,
+        );
+
+        if self.focused_row > max_focused_row {
+            self.focused_row = max_focused_row;
+        }
+    }
+
+    fn scroll_down(&mut self, rows: usize) {
+        self.top_row = self.count_n_lines_past(self.top_row, rows, self.mode);
+        let first_focusable_row =
+            self.count_n_lines_past(self.top_row, self.scrolloff() as usize, self.mode);
+
+        if self.focused_row < first_focusable_row {
+            self.focused_row = first_focusable_row;
+        }
+    }
+
     fn toggle_collapsed(&mut self) {
         let focused_row = &mut self.flatjson[self.focused_row];
         if focused_row.is_primitive() {
@@ -169,6 +220,10 @@ impl JsonViewer {
         }
     }
 
+    fn scrolloff(&self) -> u16 {
+        self.scrolloff_setting.min((self.height - 1) / 2)
+    }
+
     // This is called after moving the cursor up or down (or other operations that
     // change where the focused row is) and makes sure that it isn't within SCROLLOFF
     // lines of the top or bottom of the screen.
@@ -179,7 +234,7 @@ impl JsonViewer {
         //   15        7              7             7
         //   15        8              7             7
         //   16        8              7             8
-        let scrolloff = self.scrolloff.min((self.height - 1) / 2);
+        let scrolloff = self.scrolloff();
         let max_visible = self.height - scrolloff - 1;
 
         let num_visible_before_focused = self.count_visible_rows_before(
@@ -190,18 +245,9 @@ impl JsonViewer {
             self.mode,
         );
 
-        println!(
-            "top_row: {}, focused_row: {}, mode: {:?}",
-            self.top_row, self.focused_row, self.mode
-        );
-        println!("height: {}, scrolloff: {}, actual scrolloff: {}, max_visible: {}, num_visible_before_focused: {}", self.height, self.scrolloff, scrolloff, max_visible, num_visible_before_focused);
-
         if num_visible_before_focused < scrolloff {
-            self.top_row = self.count_n_lines_up_from(
-                self.top_row,
-                scrolloff - num_visible_before_focused,
-                self.mode,
-            )
+            self.top_row =
+                self.count_n_lines_before(self.focused_row, scrolloff as usize, self.mode)
         } else if num_visible_before_focused > max_visible {
             let last_line = match self.mode {
                 Mode::Line => self.flatjson.last_visible_index(),
@@ -218,15 +264,15 @@ impl JsonViewer {
                 "lines_visible_before_eof: {}, bottom_padding: {}",
                 lines_visible_before_eof, bottom_padding
             );
-            self.top_row = self.count_n_lines_up_from(
+            self.top_row = self.count_n_lines_before(
                 self.focused_row,
-                self.height - bottom_padding - 1,
+                (self.height - bottom_padding - 1) as usize,
                 self.mode,
             )
         }
     }
 
-    fn count_n_lines_up_from(&self, mut start: Index, mut lines: u16, mode: Mode) -> Index {
+    fn count_n_lines_before(&self, mut start: Index, mut lines: usize, mode: Mode) -> Index {
         while lines != 0 && start != 0 {
             start = match mode {
                 Mode::Line => self.flatjson.prev_visible_row(start).unwrap(),
@@ -234,6 +280,24 @@ impl JsonViewer {
             };
             lines -= 1;
         }
+        start
+    }
+
+    fn count_n_lines_past(&self, mut start: Index, mut lines: usize, mode: Mode) -> Index {
+        while lines != 0 {
+            let next = match self.mode {
+                Mode::Line => self.flatjson.next_visible_row(start),
+                Mode::Data => self.flatjson.next_item(start),
+            };
+
+            match next {
+                OptionIndex::Nil => break,
+                OptionIndex::Index(n) => start = n,
+            };
+
+            lines -= 1;
+        }
+
         start
     }
 
@@ -246,7 +310,6 @@ impl JsonViewer {
     // We won't count more than max lines past start. If we still haven't gotten to end,
     // we'll return max.
     fn count_visible_rows_before(&self, mut start: Index, end: Index, max: u16, mode: Mode) -> u16 {
-        debug_assert!(start <= end);
         let mut num_visible: u16 = 0;
         while start < end && num_visible < max {
             num_visible += 1;
@@ -262,6 +325,7 @@ impl JsonViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::flatjson::parse_top_level_json;
 
     const OBJECT: &'static str = r#"{
         "1": 1,
@@ -296,7 +360,7 @@ mod tests {
 
         assert_movements(
             &mut viewer,
-            vec![(Action::Down(1), 1), (Action::Down(2), 3)],
+            vec![(Action::MoveDown(1), 1), (Action::MoveDown(2), 3)],
         );
 
         viewer.flatjson.collapse(6);
@@ -305,24 +369,27 @@ mod tests {
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Down(1), 11),
-                (Action::Down(1), 12),
-                (Action::Down(1), 12),
+                (Action::MoveDown(1), 11),
+                (Action::MoveDown(1), 12),
+                (Action::MoveDown(1), 12),
             ],
         );
 
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Up(2), 6),
-                (Action::Up(1), 5),
-                (Action::Up(5), 0),
-                (Action::Up(2), 0),
+                (Action::MoveUp(2), 6),
+                (Action::MoveUp(1), 5),
+                (Action::MoveUp(5), 0),
+                (Action::MoveUp(2), 0),
             ],
         );
 
         viewer.flatjson.collapse(0);
-        assert_movements(&mut viewer, vec![(Action::Up(1), 0), (Action::Down(1), 0)]);
+        assert_movements(
+            &mut viewer,
+            vec![(Action::MoveUp(1), 0), (Action::MoveDown(1), 0)],
+        );
     }
 
     #[test]
@@ -333,9 +400,9 @@ mod tests {
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Down(1), 1),
-                (Action::Down(3), 4),
-                (Action::Down(1), 6),
+                (Action::MoveDown(1), 1),
+                (Action::MoveDown(3), 4),
+                (Action::MoveDown(1), 6),
             ],
         );
 
@@ -343,17 +410,17 @@ mod tests {
 
         assert_movements(
             &mut viewer,
-            vec![(Action::Down(1), 11), (Action::Down(1), 11)],
+            vec![(Action::MoveDown(1), 11), (Action::MoveDown(1), 11)],
         );
 
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Up(1), 6),
-                (Action::Up(3), 2),
-                (Action::Up(1), 1),
-                (Action::Up(1), 0),
-                (Action::Up(1), 0),
+                (Action::MoveUp(1), 6),
+                (Action::MoveUp(3), 2),
+                (Action::MoveUp(1), 1),
+                (Action::MoveUp(1), 0),
+                (Action::MoveUp(1), 0),
             ],
         );
     }
@@ -366,12 +433,12 @@ mod tests {
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Right, 1),
-                (Action::Right, 1),
-                (Action::Down(1), 2),
-                (Action::Right, 3),
-                (Action::Left, 2),
-                (Action::Left, 2),
+                (Action::MoveRight, 1),
+                (Action::MoveRight, 1),
+                (Action::MoveDown(1), 2),
+                (Action::MoveRight, 3),
+                (Action::MoveLeft, 2),
+                (Action::MoveLeft, 2),
             ],
         );
 
@@ -382,11 +449,11 @@ mod tests {
             &mut viewer,
             vec![
                 // Right on closing brace takes you to previous line
-                (Action::Right, 9),
-                (Action::Left, 6),
-                (Action::Down(4), 10),
+                (Action::MoveRight, 9),
+                (Action::MoveLeft, 6),
+                (Action::MoveDown(4), 10),
                 // Collapsing while on closing brace takes you to opening brace
-                (Action::Left, 6),
+                (Action::MoveLeft, 6),
             ],
         );
 
@@ -394,14 +461,18 @@ mod tests {
 
         assert_movements(
             &mut viewer,
-            vec![(Action::Left, 0), (Action::Left, 0), (Action::Down(1), 0)],
+            vec![
+                (Action::MoveLeft, 0),
+                (Action::MoveLeft, 0),
+                (Action::MoveDown(1), 0),
+            ],
         );
 
         assert!(viewer.flatjson[0].is_collapsed());
-        assert_movements(&mut viewer, vec![(Action::Right, 0)]);
+        assert_movements(&mut viewer, vec![(Action::MoveRight, 0)]);
 
         assert!(viewer.flatjson[0].is_expanded());
-        assert_movements(&mut viewer, vec![(Action::Right, 1)]);
+        assert_movements(&mut viewer, vec![(Action::MoveRight, 1)]);
     }
 
     #[test]
@@ -412,11 +483,11 @@ mod tests {
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Right, 1),
-                (Action::Right, 1),
-                (Action::Down(5), 7),
-                (Action::Left, 6),
-                (Action::Left, 6),
+                (Action::MoveRight, 1),
+                (Action::MoveRight, 1),
+                (Action::MoveDown(5), 7),
+                (Action::MoveLeft, 6),
+                (Action::MoveLeft, 6),
             ],
         );
 
@@ -425,18 +496,21 @@ mod tests {
         assert_movements(
             &mut viewer,
             vec![
-                (Action::Left, 0),
-                (Action::Right, 1),
-                (Action::Left, 0),
-                (Action::Left, 0),
+                (Action::MoveLeft, 0),
+                (Action::MoveRight, 1),
+                (Action::MoveLeft, 0),
+                (Action::MoveLeft, 0),
             ],
         );
 
         assert!(viewer.flatjson[0].is_collapsed());
-        assert_movements(&mut viewer, vec![(Action::Down(1), 0), (Action::Right, 0)]);
+        assert_movements(
+            &mut viewer,
+            vec![(Action::MoveDown(1), 0), (Action::MoveRight, 0)],
+        );
 
         assert!(viewer.flatjson[0].is_expanded());
-        assert_movements(&mut viewer, vec![(Action::Left, 0)]);
+        assert_movements(&mut viewer, vec![(Action::MoveLeft, 0)]);
     }
 
     fn assert_movements(viewer: &mut JsonViewer, actions_and_focuses: Vec<(Action, Index)>) {
@@ -455,7 +529,7 @@ mod tests {
         let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
         viewer.height = 8;
-        viewer.scrolloff = 2;
+        viewer.scrolloff_setting = 2;
 
         viewer.ensure_focused_row_is_visible();
         assert_eq!(viewer.top_row, 0);
@@ -464,9 +538,9 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Down(1), 0, 1),
-                (Action::Down(5), 1, 6),
-                (Action::Down(1), 2, 7),
+                (Action::MoveDown(1), 0, 1),
+                (Action::MoveDown(5), 1, 6),
+                (Action::MoveDown(1), 2, 7),
             ],
         );
 
@@ -474,11 +548,11 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Up(1), 2, 6),
-                (Action::Up(3), 1, 3),
-                (Action::Up(1), 0, 2),
+                (Action::MoveUp(1), 2, 6),
+                (Action::MoveUp(3), 1, 3),
+                (Action::MoveUp(1), 0, 2),
                 // Top is now top of file
-                (Action::Up(1), 0, 1),
+                (Action::MoveUp(1), 0, 1),
             ],
         );
 
@@ -487,10 +561,10 @@ mod tests {
             &mut viewer,
             vec![
                 // Move to bottom of file
-                (Action::Down(9), 5, 10),
+                (Action::MoveDown(9), 5, 10),
                 // Push past bottom
-                (Action::Down(1), 5, 11),
-                (Action::Down(1), 5, 12),
+                (Action::MoveDown(1), 5, 11),
+                (Action::MoveDown(1), 5, 12),
             ],
         );
 
@@ -501,10 +575,10 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Down(1), 8, 11),
-                (Action::Down(1), 8, 12),
-                (Action::Up(2), 8, 10),
-                (Action::Up(1), 7, 9),
+                (Action::MoveDown(1), 8, 11),
+                (Action::MoveDown(1), 8, 12),
+                (Action::MoveUp(2), 8, 10),
+                (Action::MoveUp(1), 7, 9),
             ],
         );
 
@@ -517,14 +591,14 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Down(3), 0, 6),
-                (Action::Down(1), 1, 7),
-                (Action::Down(1), 2, 8),
-                (Action::Down(1), 6, 9),
+                (Action::MoveDown(3), 0, 6),
+                (Action::MoveDown(1), 1, 7),
+                (Action::MoveDown(1), 2, 8),
+                (Action::MoveDown(1), 6, 9),
                 // Back up now
-                (Action::Up(2), 2, 7),
-                (Action::Up(1), 1, 6),
-                (Action::Up(1), 0, 2),
+                (Action::MoveUp(2), 2, 7),
+                (Action::MoveUp(1), 1, 6),
+                (Action::MoveUp(1), 0, 2),
             ],
         );
     }
@@ -534,7 +608,7 @@ mod tests {
         let fj = parse_top_level_json(DATA_OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Data);
         viewer.height = 7;
-        viewer.scrolloff = 2;
+        viewer.scrolloff_setting = 2;
 
         viewer.ensure_focused_row_is_visible();
         assert_eq!(viewer.top_row, 0);
@@ -543,9 +617,9 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Down(1), 0, 1),
-                (Action::Down(4), 1, 6),
-                (Action::Down(1), 2, 7),
+                (Action::MoveDown(1), 0, 1),
+                (Action::MoveDown(4), 1, 6),
+                (Action::MoveDown(1), 2, 7),
             ],
         );
 
@@ -553,11 +627,11 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Up(1), 2, 6),
-                (Action::Up(2), 1, 3),
-                (Action::Up(1), 0, 2),
+                (Action::MoveUp(1), 2, 6),
+                (Action::MoveUp(2), 1, 3),
+                (Action::MoveUp(1), 0, 2),
                 // Top is now top of file
-                (Action::Up(1), 0, 1),
+                (Action::MoveUp(1), 0, 1),
             ],
         );
 
@@ -566,10 +640,10 @@ mod tests {
             &mut viewer,
             vec![
                 // Move to bottom of file
-                (Action::Down(6), 3, 8),
+                (Action::MoveDown(6), 3, 8),
                 // Push past bottom
-                (Action::Down(1), 3, 9),
-                (Action::Down(1), 3, 11),
+                (Action::MoveDown(1), 3, 9),
+                (Action::MoveDown(1), 3, 11),
             ],
         );
 
@@ -580,10 +654,10 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Down(1), 6, 9),
-                (Action::Down(1), 6, 11),
-                (Action::Up(2), 6, 8),
-                (Action::Up(1), 4, 7),
+                (Action::MoveDown(1), 6, 9),
+                (Action::MoveDown(1), 6, 11),
+                (Action::MoveUp(2), 6, 8),
+                (Action::MoveUp(1), 4, 7),
             ],
         );
 
@@ -596,14 +670,59 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![
-                (Action::Down(2), 0, 2),
-                (Action::Down(1), 1, 6),
-                (Action::Down(1), 2, 7),
-                (Action::Down(1), 6, 8),
+                (Action::MoveDown(2), 0, 2),
+                (Action::MoveDown(1), 1, 6),
+                (Action::MoveDown(1), 2, 7),
+                (Action::MoveDown(1), 6, 8),
                 // Back up now
-                (Action::Up(1), 2, 7),
-                (Action::Up(1), 1, 6),
-                (Action::Up(1), 0, 2),
+                (Action::MoveUp(1), 2, 7),
+                (Action::MoveUp(1), 1, 6),
+                (Action::MoveUp(1), 0, 2),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_scroll() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+        viewer.height = 8;
+        viewer.scrolloff_setting = 2;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::ScrollDown(1), 1, 3),
+                (Action::ScrollDown(1), 2, 4),
+                (Action::ScrollDown(3), 5, 7),
+                // Can scroll so end of file is in middle of screen
+                (Action::ScrollDown(1), 6, 8),
+                (Action::ScrollDown(4), 10, 12),
+                // Can scoll past scrolloff padding
+                (Action::ScrollDown(1), 11, 12),
+                (Action::ScrollDown(1), 12, 12),
+                // Can't scroll past last line
+                (Action::ScrollDown(1), 12, 12),
+                // Can scroll one up
+                (Action::ScrollUp(1), 11, 12),
+                (Action::ScrollDown(1), 12, 12),
+                // But moving up activates scrolloff
+                (Action::MoveUp(1), 9, 11),
+            ],
+        );
+
+        viewer.top_row = 12;
+        viewer.focused_row = 12;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::ScrollUp(1), 11, 12),
+                (Action::ScrollUp(1), 10, 12),
+                (Action::ScrollUp(4), 6, 11),
+                (Action::ScrollUp(1), 5, 10),
+                // Can't scroll up past top of file
+                (Action::ScrollUp(6), 0, 5),
             ],
         );
     }
