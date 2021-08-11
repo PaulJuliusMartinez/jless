@@ -2,18 +2,16 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::PathBuf;
-use std::rc::Rc;
 use structopt::StructOpt;
 use termion::cursor::DetectCursorPos;
 use termion::event::Key;
 use termion::raw::IntoRawMode;
 
 mod flatjson;
+mod screenwriter;
 mod viewer;
 
 mod input;
-mod jnode;
-mod render;
 
 use input::TuiEvent::KeyEvent;
 
@@ -36,36 +34,38 @@ fn main() {
         }
     };
 
-    let json = jnode::parse_top_level_json(json_string).unwrap();
-    let mut focus = jnode::Focus {
-        indexes: vec![0],
-        parent_node: Rc::clone(&json),
-        current_node: Rc::clone(&json[0]),
-    };
-
-    let (width, height) = termion::terminal_size().unwrap();
-    let mut viewer = render::JsonViewer::new(&json, width, height);
-
-    viewer.render();
-
+    let json = flatjson::parse_top_level_json(json_string).unwrap();
+    let (_width, height) = termion::terminal_size().unwrap();
+    let mut viewer = viewer::JsonViewer::new(json, viewer::Mode::Data);
     let mut stdout = io::stdout().into_raw_mode().unwrap();
+    viewer.height = height;
+
+    let tty_writer = Box::new(screenwriter::AnsiTTYWriter {
+        stdout: Box::new(stdout),
+        color: true,
+    });
+    let mut screen_writer = screenwriter::ScreenWriter { tty_writer };
+    screen_writer.print_screen(&viewer);
 
     for event in input::get_input() {
         let event = event.unwrap();
         let action = match event {
             KeyEvent(Key::Up) | KeyEvent(Key::Char('k')) | KeyEvent(Key::Ctrl('p')) => {
-                Some(jnode::Action::Up)
+                Some(viewer::Action::MoveUp(1))
             }
             KeyEvent(Key::Down) | KeyEvent(Key::Char('j')) | KeyEvent(Key::Ctrl('n')) => {
-                Some(jnode::Action::Down)
+                Some(viewer::Action::MoveDown(1))
             }
-            KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(jnode::Action::Left),
-            KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(jnode::Action::Right),
-            KeyEvent(Key::Char('i')) => Some(jnode::Action::ToggleInline),
-            KeyEvent(Key::Char('0')) => Some(jnode::Action::FocusFirstElem),
-            KeyEvent(Key::Char('$')) => Some(jnode::Action::FocusLastElem),
-            KeyEvent(Key::Char('g')) => Some(jnode::Action::FocusTop),
-            KeyEvent(Key::Char('G')) => Some(jnode::Action::FocusBottom),
+            KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(viewer::Action::MoveLeft),
+            KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(viewer::Action::MoveRight),
+            // KeyEvent(Key::Char('i')) => Some(jnode::Action::ToggleInline),
+            // KeyEvent(Key::Char('0')) => Some(viewer::Action::FocusFirstElem),
+            // KeyEvent(Key::Char('$')) => Some(viewer::Action::FocusLastElem),
+            KeyEvent(Key::Char('g')) => Some(viewer::Action::FocusTop),
+            KeyEvent(Key::Char('G')) => Some(viewer::Action::FocusBottom),
+            KeyEvent(Key::Ctrl('e')) => Some(viewer::Action::ScrollDown(1)),
+            KeyEvent(Key::Ctrl('y')) => Some(viewer::Action::ScrollUp(1)),
+            KeyEvent(Key::Char('m')) => Some(viewer::Action::ToggleMode),
             KeyEvent(Key::Ctrl('c')) => {
                 println!("Typed C-c, exiting\r");
                 break;
@@ -77,9 +77,8 @@ fn main() {
         };
 
         if let Some(action) = action {
-            jnode::perform_action(&mut focus, action);
-            viewer.change_focus(&focus);
-            viewer.render();
+            viewer.perform_action(action);
+            screen_writer.print_screen(&viewer);
         }
     }
 }

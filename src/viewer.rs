@@ -10,22 +10,22 @@ const DEFAULT_SCROLLOFF: u16 = 3;
 const DEFAULT_HEIGHT: u16 = 24;
 
 pub struct JsonViewer {
-    flatjson: FlatJson,
-    top_row: Index,
-    focused_row: Index,
+    pub flatjson: FlatJson,
+    pub top_row: Index,
+    pub focused_row: Index,
 
-    height: u16,
+    pub height: u16,
     // We call this scrolloff_setting, to differentiate between
     // what it's set to, and what the scrolloff functionally is
     // if it's set to value >= height / 2.
     //
     // Access the functional value via .scrolloff().
     scrolloff_setting: u16,
-    mode: Mode,
+    pub mode: Mode,
 }
 
 impl JsonViewer {
-    fn new(flatjson: FlatJson, mode: Mode) -> JsonViewer {
+    pub fn new(flatjson: FlatJson, mode: Mode) -> JsonViewer {
         JsonViewer {
             flatjson,
             top_row: 0,
@@ -58,7 +58,7 @@ pub enum Action {
 }
 
 impl JsonViewer {
-    fn perform_action(&mut self, action: Action) {
+    pub fn perform_action(&mut self, action: Action) {
         let track_window = JsonViewer::should_refocus_window(&action);
 
         match action {
@@ -66,6 +66,8 @@ impl JsonViewer {
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
+            Action::FocusTop => self.focus_top(),
+            Action::FocusBottom => self.focus_bottom(),
             Action::ScrollUp(n) => self.scroll_up(n),
             Action::ScrollDown(n) => self.scroll_down(n),
             Action::ToggleMode => {
@@ -86,6 +88,8 @@ impl JsonViewer {
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
+            Action::FocusTop => false, // This is just top_row = focused_row = 0
+            Action::FocusBottom => true,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
@@ -171,6 +175,18 @@ impl JsonViewer {
         }
     }
 
+    fn focus_top(&mut self) {
+        self.top_row = 0;
+        self.focused_row = 0;
+    }
+
+    fn focus_bottom(&mut self) {
+        self.focused_row = match self.mode {
+            Mode::Line => self.flatjson.last_visible_index(),
+            Mode::Data => self.flatjson.last_visible_item(),
+        };
+    }
+
     fn scroll_up(&mut self, rows: usize) {
         self.top_row = self.count_n_lines_before(self.top_row, rows, self.mode);
         let max_focused_row = self.count_n_lines_past(
@@ -228,7 +244,6 @@ impl JsonViewer {
     // change where the focused row is) and makes sure that it isn't within SCROLLOFF
     // lines of the top or bottom of the screen.
     fn ensure_focused_row_is_visible(&mut self) {
-        println!("Ensuring!");
         // height; scrolloff; actual scrolloff; max_visible
         //   100       3              3            96
         //   15        7              7             7
@@ -260,10 +275,6 @@ impl JsonViewer {
                 self.mode,
             );
             let bottom_padding = scrolloff.min(lines_visible_before_eof);
-            println!(
-                "lines_visible_before_eof: {}, bottom_padding: {}",
-                lines_visible_before_eof, bottom_padding
-            );
             self.top_row = self.count_n_lines_before(
                 self.focused_row,
                 (self.height - bottom_padding - 1) as usize,
@@ -724,6 +735,25 @@ mod tests {
                 // Can't scroll up past top of file
                 (Action::ScrollUp(6), 0, 5),
             ],
+        );
+    }
+
+    #[test]
+    fn test_focus_top_and_bottom() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+        viewer.height = 8;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![(Action::FocusBottom, 5, 12), (Action::FocusTop, 0, 0)],
+        );
+
+        viewer.mode = Mode::Data;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![(Action::FocusBottom, 2, 11), (Action::FocusTop, 0, 0)],
         );
     }
 

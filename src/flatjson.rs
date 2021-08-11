@@ -174,12 +174,12 @@ pub struct Row {
     prev_sibling: OptionIndex,
     next_sibling: OptionIndex,
 
-    depth: usize,
+    pub depth: usize,
     index: Index,
     // start_index: usize
     // end_index: usize
-    key: Option<String>,
-    value: Value,
+    pub key: Option<String>,
+    pub value: Value,
 }
 
 impl Row {
@@ -223,14 +223,14 @@ impl Row {
     }
 }
 
-#[derive(Debug)]
-enum ContainerType {
+#[derive(Copy, Clone, Debug)]
+pub enum ContainerType {
     Object,
     Array,
 }
 
 #[derive(Debug)]
-enum Value {
+pub enum Value {
     Null,
     Boolean(bool),
     Number(Number),
