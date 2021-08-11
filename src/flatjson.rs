@@ -56,6 +56,21 @@ impl From<usize> for OptionIndex {
 pub struct FlatJson(Vec<Row>);
 
 impl FlatJson {
+    pub fn last_visible_index(&self) -> Index {
+        self.0.len() - 1
+    }
+
+    pub fn last_visible_item(&self) -> Index {
+        let last_index = self.0.len() - 1;
+        // If it's a primitve, we can just return the last index
+        if self.0[last_index].is_primitive() {
+            return last_index;
+        }
+        // Otherwise, it's definitely the closing brace of a container, so
+        // we can just move backwards to the last_visible_item.
+        return self.prev_item(last_index).unwrap();
+    }
+
     pub fn prev_visible_row(&self, index: Index) -> OptionIndex {
         if index == 0 {
             return OptionIndex::Nil;
