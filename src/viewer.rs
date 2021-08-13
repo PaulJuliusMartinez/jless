@@ -50,6 +50,7 @@ pub enum Action {
     FocusLastSibling,
     FocusTop,
     FocusBottom,
+    FocusMatchingPair,
 
     ScrollUp(usize),
     ScrollDown(usize),
@@ -70,6 +71,7 @@ impl JsonViewer {
             Action::FocusLastSibling => self.focus_last_sibling(),
             Action::FocusTop => self.focus_top(),
             Action::FocusBottom => self.focus_bottom(),
+            Action::FocusMatchingPair => self.focus_matching_pair(),
             Action::ScrollUp(n) => self.scroll_up(n),
             Action::ScrollDown(n) => self.scroll_down(n),
             Action::ToggleMode => {
@@ -94,6 +96,7 @@ impl JsonViewer {
             Action::FocusLastSibling => true,
             Action::FocusTop => false, // Window refocusing is handled in focus_top.
             Action::FocusBottom => true,
+            Action::FocusMatchingPair => true,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
@@ -220,6 +223,19 @@ impl JsonViewer {
             Mode::Line => self.flatjson.last_visible_index(),
             Mode::Data => self.flatjson.last_visible_item(),
         };
+    }
+
+    fn focus_matching_pair(&mut self) {
+        if self.mode == Mode::Data {
+            return;
+        }
+        match self.flatjson[self.focused_row].pair_index() {
+            // Do nothing; focused element isn't a container
+            OptionIndex::Nil => {}
+            OptionIndex::Index(matching_pair_index) => {
+                self.focused_row = matching_pair_index;
+            }
+        }
     }
 
     fn scroll_up(&mut self, rows: usize) {
@@ -830,6 +846,39 @@ mod tests {
         assert_window_tracking(
             &mut viewer,
             vec![(Action::FocusBottom, 2, 11), (Action::FocusTop, 0, 0)],
+        );
+    }
+
+    #[test]
+    fn test_focus_matching_pair() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        viewer.focused_row = 0;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusMatchingPair, 12),
+                (Action::FocusMatchingPair, 0),
+            ],
+        );
+
+        viewer.focused_row = 5;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusMatchingPair, 2),
+                (Action::FocusMatchingPair, 5),
+            ],
+        );
+
+        viewer.focused_row = 6;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusMatchingPair, 10),
+                (Action::FocusMatchingPair, 6),
+            ],
         );
     }
 

@@ -63,6 +63,7 @@ fn main() {
             KeyEvent(Key::Char('$')) => Some(viewer::Action::FocusLastSibling),
             KeyEvent(Key::Char('g')) => Some(viewer::Action::FocusTop),
             KeyEvent(Key::Char('G')) => Some(viewer::Action::FocusBottom),
+            KeyEvent(Key::Char('%')) => Some(viewer::Action::FocusMatchingPair),
             KeyEvent(Key::Ctrl('e')) => Some(viewer::Action::ScrollDown(1)),
             KeyEvent(Key::Ctrl('y')) => Some(viewer::Action::ScrollUp(1)),
             KeyEvent(Key::Char('m')) => Some(viewer::Action::ToggleMode),
