@@ -10,18 +10,27 @@ pub struct ScreenWriter {
 
 impl ScreenWriter {
     pub fn print_screen(&mut self, viewer: &JsonViewer) {
-        self.tty_writer.clear_screen();
+        match self.print_screen_no_error_handling(viewer) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error while printing to screen: {}", e);
+            }
+        }
+    }
+
+    pub fn print_screen_no_error_handling(&mut self, viewer: &JsonViewer) -> std::io::Result<()> {
+        self.tty_writer.clear_screen()?;
 
         let mut line = OptionIndex::Index(viewer.top_row);
         for row_index in 0..viewer.height {
             match line {
                 OptionIndex::Nil => {
-                    self.tty_writer.position_cursor(1, row_index + 1);
-                    write!(self.tty_writer, "~");
+                    self.tty_writer.position_cursor(1, row_index + 1)?;
+                    write!(self.tty_writer, "~")?;
                 }
                 OptionIndex::Index(index) => {
                     let row = &viewer.flatjson[index];
-                    self.print_line(viewer, row_index, row, index == viewer.focused_row);
+                    self.print_line(viewer, row_index, row, index == viewer.focused_row)?;
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
                         Mode::Data => viewer.flatjson.next_item(index),
@@ -29,19 +38,25 @@ impl ScreenWriter {
                 }
             }
         }
-        self.tty_writer.flush();
+        self.tty_writer.flush()
     }
 
-    fn print_line(&mut self, viewer: &JsonViewer, row_index: u16, row: &Row, is_focused: bool) {
+    fn print_line(
+        &mut self,
+        viewer: &JsonViewer,
+        row_index: u16,
+        row: &Row,
+        is_focused: bool,
+    ) -> std::io::Result<()> {
         let col = 2 * row.depth as u16;
-        self.tty_writer.position_cursor(col + 1, row_index + 1);
+        self.tty_writer.position_cursor(col + 1, row_index + 1)?;
 
         if is_focused {
-            write!(self.tty_writer, "* ");
+            write!(self.tty_writer, "* ")?;
         }
 
         if let Some(key) = &row.key {
-            write!(self.tty_writer, "\"{}\": ", key);
+            write!(self.tty_writer, "\"{}\": ", key)?;
         }
 
         match &row.value {
@@ -52,33 +67,32 @@ impl ScreenWriter {
             } => match container_type {
                 ContainerType::Object => {
                     if *collapsed {
-                        write!(self.tty_writer, "{{ ... }}")
+                        write!(self.tty_writer, "{{ ... }}")?
                     } else {
-                        write!(self.tty_writer, "{{")
+                        write!(self.tty_writer, "{{")?
                     }
                 }
                 ContainerType::Array => {
                     if *collapsed {
-                        write!(self.tty_writer, "[ ... ]")
+                        write!(self.tty_writer, "[ ... ]")?
                     } else {
-                        write!(self.tty_writer, "[")
+                        write!(self.tty_writer, "[")?
                     }
                 }
             },
             Value::CloseContainer { container_type, .. } => match container_type {
-                ContainerType::Object => self.tty_writer.write_char('}'),
-                ContainerType::Array => self.tty_writer.write_char(']'),
+                ContainerType::Object => self.tty_writer.write_char('}')?,
+                ContainerType::Array => self.tty_writer.write_char(']')?,
             },
-            Value::Null => write!(self.tty_writer, "null"),
+            Value::Null => write!(self.tty_writer, "null")?,
             Value::Boolean(b) => match b {
-                true => write!(self.tty_writer, "true"),
-                false => write!(self.tty_writer, "false"),
+                true => write!(self.tty_writer, "true")?,
+                false => write!(self.tty_writer, "false")?,
             },
-            Value::Number(n) => write!(self.tty_writer, "{}", n),
-            Value::String(s) => write!(self.tty_writer, "{}", s),
-            Value::EmptyObject => write!(self.tty_writer, "{{}}"),
-            Value::EmptyArray => write!(self.tty_writer, "[]"),
-            _ => std::io::Result::Ok(()),
+            Value::Number(n) => write!(self.tty_writer, "{}", n)?,
+            Value::String(s) => write!(self.tty_writer, "{}", s)?,
+            Value::EmptyObject => write!(self.tty_writer, "{{}}")?,
+            Value::EmptyArray => write!(self.tty_writer, "[]")?,
         };
 
         // The next_sibling field isn't set for CloseContainer rows, so
@@ -92,8 +106,10 @@ impl ScreenWriter {
         };
 
         if row_root.next_sibling.is_some() {
-            self.tty_writer.write_char(',');
+            self.tty_writer.write_char(',')?;
         }
+
+        Ok(())
     }
 }
 
