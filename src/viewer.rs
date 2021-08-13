@@ -13,6 +13,8 @@ pub struct JsonViewer {
     pub flatjson: FlatJson,
     pub top_row: Index,
     pub focused_row: Index,
+    // Used for Focus{Prev,Next}Sibling actions.
+    desired_depth: usize,
 
     pub height: u16,
     // We call this scrolloff_setting, to differentiate between
@@ -30,6 +32,7 @@ impl JsonViewer {
             flatjson,
             top_row: 0,
             focused_row: 0,
+            desired_depth: 0,
             height: DEFAULT_HEIGHT,
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
@@ -44,7 +47,12 @@ pub enum Action {
     MoveLeft,
     MoveRight,
 
-    ToggleCollapsed,
+    // The behavior of these is subtle and stateful. These move to the previous/next sibling of the
+    // focused element. If we are focused on the first/last child, we will move to the parent, but
+    // we will remember what depth we were at when we first performed this action, and move back
+    // to that depth the next time we can.
+    FocusPrevSibling,
+    FocusNextSibling,
 
     FocusFirstSibling,
     FocusLastSibling,
@@ -55,18 +63,22 @@ pub enum Action {
     ScrollUp(usize),
     ScrollDown(usize),
 
+    ToggleCollapsed,
     ToggleMode,
 }
 
 impl JsonViewer {
     pub fn perform_action(&mut self, action: Action) {
         let track_window = JsonViewer::should_refocus_window(&action);
+        let reset_desired_depth = JsonViewer::should_reset_desired_depth(&action);
 
         match action {
             Action::MoveUp(n) => self.move_up(n),
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
+            Action::FocusPrevSibling => self.focus_prev_sibling(),
+            Action::FocusNextSibling => self.focus_next_sibling(),
             Action::FocusFirstSibling => self.focus_first_sibling(),
             Action::FocusLastSibling => self.focus_last_sibling(),
             Action::FocusTop => self.focus_top(),
@@ -74,11 +86,15 @@ impl JsonViewer {
             Action::FocusMatchingPair => self.focus_matching_pair(),
             Action::ScrollUp(n) => self.scroll_up(n),
             Action::ScrollDown(n) => self.scroll_down(n),
+            Action::ToggleCollapsed => self.toggle_collapsed(),
             Action::ToggleMode => {
                 // TODO: custom window management here
                 self.toggle_mode();
             }
-            _ => {}
+        }
+
+        if reset_desired_depth {
+            self.desired_depth = self.flatjson[self.focused_row].depth;
         }
 
         if track_window {
@@ -92,6 +108,8 @@ impl JsonViewer {
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
+            Action::FocusPrevSibling => true,
+            Action::FocusNextSibling => true,
             Action::FocusFirstSibling => true,
             Action::FocusLastSibling => true,
             Action::FocusTop => false, // Window refocusing is handled in focus_top.
@@ -101,6 +119,17 @@ impl JsonViewer {
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
             _ => false,
+        }
+    }
+
+    fn should_reset_desired_depth(action: &Action) -> bool {
+        match action {
+            Action::FocusPrevSibling => false,
+            Action::FocusNextSibling => false,
+            Action::ScrollUp(_) => false,
+            Action::ScrollDown(_) => false,
+            Action::ToggleMode => false,
+            _ => true,
         }
     }
 
@@ -179,6 +208,47 @@ impl JsonViewer {
 
         if let OptionIndex::Index(parent) = self.flatjson[self.focused_row].parent {
             self.focused_row = parent;
+        }
+    }
+
+    fn focus_prev_sibling(&mut self) {
+        // The user is trying to move up in the file, but stay at the desired depth, so we just
+        // move up once, and then, if we're focused on a node that's nested deeper than the
+        // desired depth, move up the node's parents until we get to the right depth.
+        self.move_up(1);
+        let mut focused_row = &self.flatjson[self.focused_row];
+        while focused_row.depth > self.desired_depth {
+            self.focused_row = focused_row.parent.unwrap();
+            focused_row = &self.flatjson[self.focused_row];
+        }
+    }
+
+    fn focus_next_sibling(&mut self) {
+        // The user is trying to move down in the file, but stay at the desired depth.
+        // If we just move down once, this will accomplish what the user wants, unless
+        // they are already at the correct depth and currently focused on a opening
+        // of an expanded container. If this is the case, we just want to jump past the
+        // contents to the closing brace. If we're in Data mode, since the closing brace
+        // can't be focused, we'll still want to go past it to the next visible item.
+        let current_row = &self.flatjson[self.focused_row];
+
+        if current_row.depth == self.desired_depth
+            && current_row.is_opening_of_container()
+            && current_row.is_expanded()
+        {
+            let closing_brace = current_row.pair_index().unwrap();
+            self.focused_row = if self.mode == Mode::Data {
+                match self.flatjson.next_item(closing_brace) {
+                    // If there's no item after the closing brace, then we don't actually
+                    // want to move the focus at all.
+                    OptionIndex::Nil => self.focused_row,
+                    OptionIndex::Index(i) => i,
+                }
+            } else {
+                closing_brace
+            }
+        } else {
+            self.move_down(1);
         }
     }
 
@@ -788,6 +858,126 @@ mod tests {
                 (Action::ScrollUp(1), 5, 10),
                 // Can't scroll up past top of file
                 (Action::ScrollUp(6), 0, 5),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_focus_prev_next_sibling_line_mode() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        viewer.focused_row = 0;
+        viewer.desired_depth = 0;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusNextSibling, 12),
+                (Action::FocusNextSibling, 12),
+                (Action::FocusPrevSibling, 0),
+                (Action::FocusPrevSibling, 0),
+            ],
+        );
+
+        viewer.flatjson.collapse(0);
+        assert_movements(
+            &mut viewer,
+            vec![(Action::FocusNextSibling, 0), (Action::FocusPrevSibling, 0)],
+        );
+
+        viewer.flatjson.expand(0);
+
+        viewer.focused_row = 0;
+        viewer.desired_depth = 1;
+        assert_movements(
+            &mut viewer,
+            vec![
+                // Go all the way down
+                (Action::FocusNextSibling, 1),
+                (Action::FocusNextSibling, 2),
+                (Action::FocusNextSibling, 5),
+                (Action::FocusNextSibling, 6),
+                (Action::FocusNextSibling, 10),
+                (Action::FocusNextSibling, 11),
+                (Action::FocusNextSibling, 12),
+                (Action::FocusNextSibling, 12),
+                // And all the way back up
+                (Action::FocusPrevSibling, 11),
+                (Action::FocusPrevSibling, 10),
+                (Action::FocusPrevSibling, 6),
+                (Action::FocusPrevSibling, 5),
+                (Action::FocusPrevSibling, 2),
+                (Action::FocusPrevSibling, 1),
+                (Action::FocusPrevSibling, 0),
+                (Action::FocusPrevSibling, 0),
+            ],
+        );
+
+        viewer.focused_row = 2;
+        viewer.flatjson.collapse(2);
+        assert_movements(
+            &mut viewer,
+            vec![
+                // Skip closing brace of 2
+                (Action::FocusNextSibling, 6),
+                (Action::FocusNextSibling, 10),
+                // And all the way back up
+                (Action::FocusPrevSibling, 6),
+                (Action::FocusPrevSibling, 2),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_focus_prev_next_sibling_data_mode() {
+        let fj = parse_top_level_json(DATA_OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Data);
+
+        viewer.focused_row = 0;
+        viewer.desired_depth = 0;
+        assert_movements(
+            &mut viewer,
+            vec![(Action::FocusNextSibling, 0), (Action::FocusPrevSibling, 0)],
+        );
+
+        viewer.flatjson.collapse(0);
+        assert_movements(
+            &mut viewer,
+            vec![(Action::FocusNextSibling, 0), (Action::FocusPrevSibling, 0)],
+        );
+
+        viewer.flatjson.expand(0);
+
+        viewer.focused_row = 0;
+        viewer.desired_depth = 1;
+        assert_movements(
+            &mut viewer,
+            vec![
+                // Go all the way down
+                (Action::FocusNextSibling, 1),
+                (Action::FocusNextSibling, 2),
+                (Action::FocusNextSibling, 6),
+                (Action::FocusNextSibling, 11),
+                (Action::FocusNextSibling, 11),
+                // And all the way back up
+                (Action::FocusPrevSibling, 6),
+                (Action::FocusPrevSibling, 2),
+                (Action::FocusPrevSibling, 1),
+                (Action::FocusPrevSibling, 0),
+                (Action::FocusPrevSibling, 0),
+            ],
+        );
+
+        viewer.focused_row = 2;
+        viewer.flatjson.collapse(2);
+        assert_movements(
+            &mut viewer,
+            vec![
+                // Skip closing brace of 2
+                (Action::FocusNextSibling, 6),
+                (Action::FocusNextSibling, 11),
+                (Action::FocusPrevSibling, 6),
+                (Action::FocusPrevSibling, 2),
             ],
         );
     }

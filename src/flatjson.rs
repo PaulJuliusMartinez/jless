@@ -171,8 +171,8 @@ impl std::ops::IndexMut<usize> for FlatJson {
 pub struct Row {
     pub parent: OptionIndex,
     // Should these also be set on the CloseContainers?
-    prev_sibling: OptionIndex,
-    next_sibling: OptionIndex,
+    pub prev_sibling: OptionIndex,
+    pub next_sibling: OptionIndex,
 
     pub depth: usize,
     index: Index,

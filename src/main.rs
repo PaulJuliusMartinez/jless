@@ -58,7 +58,9 @@ fn main() {
             }
             KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(viewer::Action::MoveLeft),
             KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(viewer::Action::MoveRight),
-            // KeyEvent(Key::Char('i')) => Some(jnode::Action::ToggleInline),
+            KeyEvent(Key::Char('i')) => Some(viewer::Action::ToggleCollapsed),
+            KeyEvent(Key::Char('K')) => Some(viewer::Action::FocusPrevSibling),
+            KeyEvent(Key::Char('J')) => Some(viewer::Action::FocusNextSibling),
             KeyEvent(Key::Char('0')) => Some(viewer::Action::FocusFirstSibling),
             KeyEvent(Key::Char('$')) => Some(viewer::Action::FocusLastSibling),
             KeyEvent(Key::Char('g')) => Some(viewer::Action::FocusTop),
