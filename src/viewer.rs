@@ -299,7 +299,12 @@ impl JsonViewer {
         if self.mode == Mode::Data {
             return;
         }
-        match self.flatjson[self.focused_row].pair_index() {
+        let current_row = &self.flatjson[self.focused_row];
+        if current_row.is_collapsed() {
+            return;
+        }
+
+        match current_row.pair_index() {
             // Do nothing; focused element isn't a container
             OptionIndex::Nil => {}
             OptionIndex::Index(matching_pair_index) => {
@@ -1062,14 +1067,10 @@ mod tests {
             ],
         );
 
+        // Don't jump to closing brace if current node is collapsed.
+        viewer.flatjson.collapse(6);
         viewer.focused_row = 6;
-        assert_movements(
-            &mut viewer,
-            vec![
-                (Action::FocusMatchingPair, 10),
-                (Action::FocusMatchingPair, 6),
-            ],
-        );
+        assert_movements(&mut viewer, vec![(Action::FocusMatchingPair, 6)]);
     }
 
     fn assert_window_tracking(
