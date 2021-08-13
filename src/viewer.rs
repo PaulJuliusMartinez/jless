@@ -46,8 +46,8 @@ pub enum Action {
 
     ToggleCollapsed,
 
-    FocusFirstElem,
-    FocusLastElem,
+    FocusFirstSibling,
+    FocusLastSibling,
     FocusTop,
     FocusBottom,
 
@@ -66,6 +66,8 @@ impl JsonViewer {
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
+            Action::FocusFirstSibling => self.focus_first_sibling(),
+            Action::FocusLastSibling => self.focus_last_sibling(),
             Action::FocusTop => self.focus_top(),
             Action::FocusBottom => self.focus_bottom(),
             Action::ScrollUp(n) => self.scroll_up(n),
@@ -88,7 +90,9 @@ impl JsonViewer {
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
-            Action::FocusTop => false, // This is just top_row = focused_row = 0
+            Action::FocusFirstSibling => true,
+            Action::FocusLastSibling => true,
+            Action::FocusTop => false, // Window refocusing is handled in focus_top.
             Action::FocusBottom => true,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
@@ -172,6 +176,37 @@ impl JsonViewer {
 
         if let OptionIndex::Index(parent) = self.flatjson[self.focused_row].parent {
             self.focused_row = parent;
+        }
+    }
+
+    fn focus_first_sibling(&mut self) {
+        match &self.flatjson[self.focused_row].parent {
+            OptionIndex::Index(parent_index) => {
+                self.focused_row = self.flatjson[*parent_index].first_child().unwrap();
+            }
+            // If node has no parent, then we're at the top level and want to focus
+            // the first element, which is the top of the file.
+            OptionIndex::Nil => self.focus_top(),
+        }
+    }
+
+    fn focus_last_sibling(&mut self) {
+        match &self.flatjson[self.focused_row].parent {
+            OptionIndex::Index(parent_index) => {
+                let closing_parent_index = self.flatjson[*parent_index].pair_index().unwrap();
+                self.focused_row = self.flatjson[closing_parent_index].last_child().unwrap();
+            }
+            // If node has no parent, then we're at the top level and want to focus
+            // the last element. If this last element is a container though, we want to
+            // make sure to focus on the _start_ of the container.
+            OptionIndex::Nil => {
+                let last_index = self.flatjson.last_visible_index();
+                if self.flatjson[last_index].is_container() {
+                    self.focused_row = self.flatjson[last_index].pair_index().unwrap();
+                } else {
+                    self.focused_row = last_index;
+                }
+            }
         }
     }
 
@@ -528,9 +563,12 @@ mod tests {
         for (i, (action, expected_focused_row)) in actions_and_focuses.into_iter().enumerate() {
             viewer.perform_action(action);
             assert_eq!(
-                viewer.focused_row, expected_focused_row,
+                viewer.focused_row,
+                expected_focused_row,
                 "expected row {} to be focused after {} actions (last action: {:?})",
-                expected_focused_row, i, action,
+                expected_focused_row,
+                i + 1,
+                action,
             );
         }
     }
@@ -734,6 +772,44 @@ mod tests {
                 (Action::ScrollUp(1), 5, 10),
                 // Can't scroll up past top of file
                 (Action::ScrollUp(6), 0, 5),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_focus_first_last_sibling() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        // Check top level navigation.
+        viewer.focused_row = 0;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusFirstSibling, 0),
+                (Action::FocusLastSibling, 0),
+                (Action::FocusFirstSibling, 0),
+            ],
+        );
+
+        viewer.focused_row = 2;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusFirstSibling, 1),
+                (Action::FocusLastSibling, 11),
+                (Action::FocusFirstSibling, 1),
+            ],
+        );
+        viewer.focused_row = 2;
+        assert_movements(&mut viewer, vec![(Action::FocusLastSibling, 11)]);
+
+        viewer.focused_row = 8;
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::FocusLastSibling, 9),
+                (Action::FocusFirstSibling, 7),
             ],
         );
     }
