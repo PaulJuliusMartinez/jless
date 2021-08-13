@@ -17,6 +17,10 @@ impl OptionIndex {
         }
     }
 
+    pub fn is_some(&self) -> bool {
+        !self.is_nil()
+    }
+
     pub fn unwrap(&self) -> Index {
         match self {
             OptionIndex::Nil => panic!("Called .unwrap() on Nil OptionIndex"),

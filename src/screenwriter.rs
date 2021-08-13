@@ -21,7 +21,7 @@ impl ScreenWriter {
                 }
                 OptionIndex::Index(index) => {
                     let row = &viewer.flatjson[index];
-                    self.print_line(row_index, row, index == viewer.focused_row);
+                    self.print_line(viewer, row_index, row, index == viewer.focused_row);
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
                         Mode::Data => viewer.flatjson.next_item(index),
@@ -32,7 +32,7 @@ impl ScreenWriter {
         self.tty_writer.flush();
     }
 
-    fn print_line(&mut self, row_index: u16, row: &Row, is_focused: bool) {
+    fn print_line(&mut self, viewer: &JsonViewer, row_index: u16, row: &Row, is_focused: bool) {
         let col = 2 * row.depth as u16;
         self.tty_writer.position_cursor(col + 1, row_index + 1);
 
@@ -45,25 +45,55 @@ impl ScreenWriter {
         }
 
         match &row.value {
-            Value::OpenContainer { container_type, .. } => match container_type {
-                ContainerType::Object => self.tty_writer.write_char('{'),
-                ContainerType::Array => self.tty_writer.write_char('['),
+            Value::OpenContainer {
+                container_type,
+                collapsed,
+                ..
+            } => match container_type {
+                ContainerType::Object => {
+                    if *collapsed {
+                        write!(self.tty_writer, "{{ ... }}")
+                    } else {
+                        write!(self.tty_writer, "{{")
+                    }
+                }
+                ContainerType::Array => {
+                    if *collapsed {
+                        write!(self.tty_writer, "[ ... ]")
+                    } else {
+                        write!(self.tty_writer, "[")
+                    }
+                }
             },
             Value::CloseContainer { container_type, .. } => match container_type {
                 ContainerType::Object => self.tty_writer.write_char('}'),
                 ContainerType::Array => self.tty_writer.write_char(']'),
             },
-            Value::Null => write!(self.tty_writer, "null,"),
+            Value::Null => write!(self.tty_writer, "null"),
             Value::Boolean(b) => match b {
-                true => write!(self.tty_writer, "true,"),
-                false => write!(self.tty_writer, "false,"),
+                true => write!(self.tty_writer, "true"),
+                false => write!(self.tty_writer, "false"),
             },
-            Value::Number(n) => write!(self.tty_writer, "{},", n),
-            Value::String(s) => write!(self.tty_writer, "{},", s),
-            Value::EmptyObject => write!(self.tty_writer, "{{}},"),
-            Value::EmptyArray => write!(self.tty_writer, "[],"),
+            Value::Number(n) => write!(self.tty_writer, "{}", n),
+            Value::String(s) => write!(self.tty_writer, "{}", s),
+            Value::EmptyObject => write!(self.tty_writer, "{{}}"),
+            Value::EmptyArray => write!(self.tty_writer, "[]"),
             _ => std::io::Result::Ok(()),
         };
+
+        // The next_sibling field isn't set for CloseContainer rows, so
+        // we need to get the OpenContainer row before we check if a row
+        // is the last row in a container, and thus whether we should
+        // print a trailing comma or not.
+        let row_root = if row.is_closing_of_container() {
+            &viewer.flatjson[row.pair_index().unwrap()]
+        } else {
+            row
+        };
+
+        if row_root.next_sibling.is_some() {
+            self.tty_writer.write_char(',');
+        }
     }
 }
 
