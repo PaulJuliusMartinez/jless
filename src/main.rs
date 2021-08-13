@@ -36,7 +36,7 @@ fn main() {
 
     let json = flatjson::parse_top_level_json(json_string).unwrap();
     let (_width, height) = termion::terminal_size().unwrap();
-    let mut viewer = viewer::JsonViewer::new(json, viewer::Mode::Data);
+    let mut viewer = viewer::JsonViewer::new(json, viewer::Mode::Line);
     let mut stdout = io::stdout().into_raw_mode().unwrap();
     viewer.height = height;
 

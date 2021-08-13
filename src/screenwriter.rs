@@ -1,8 +1,30 @@
-use termion::color::{Bg, Color, Fg};
 use termion::{clear, cursor};
+use termion::{color, style};
 
 use super::flatjson::{ContainerType, OptionIndex, Row, Value};
 use super::viewer::{JsonViewer, Mode};
+
+#[derive(Copy, Clone)]
+enum Color {
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    LightBlack,
+    LightRed,
+    LightGreen,
+    LightYellow,
+    LightBlue,
+    LightMagenta,
+    LightCyan,
+    LightWhite,
+}
+
+use Color::*;
 
 pub struct ScreenWriter {
     pub tty_writer: Box<AnsiTTYWriter>,
@@ -41,6 +63,23 @@ impl ScreenWriter {
         self.tty_writer.flush()
     }
 
+    fn invert_colors(&mut self, fg: Color) -> std::io::Result<()> {
+        self.tty_writer.set_bg_color(LightWhite)?;
+        self.tty_writer.set_fg_color(fg)
+    }
+
+    fn set_fg_color(&mut self, color: Color) -> std::io::Result<()> {
+        self.tty_writer.set_fg_color(color)
+    }
+
+    fn reset_style(&mut self) -> std::io::Result<()> {
+        write!(self.tty_writer, "{}", style::Reset)
+    }
+
+    fn bold(&mut self) -> std::io::Result<()> {
+        write!(self.tty_writer, "{}", style::Bold)
+    }
+
     fn print_line(
         &mut self,
         viewer: &JsonViewer,
@@ -51,12 +90,35 @@ impl ScreenWriter {
         let col = 2 * row.depth as u16;
         self.tty_writer.position_cursor(col + 1, row_index + 1)?;
 
-        if is_focused {
-            write!(self.tty_writer, "* ")?;
+        if let Some(key) = &row.key {
+            if is_focused {
+                self.invert_colors(Blue)?;
+            } else {
+                self.set_fg_color(LightBlue)?;
+            }
+            write!(self.tty_writer, "\"{}\":", key)?;
+            self.reset_style()?;
+            self.tty_writer.write_char(' ')?;
         }
 
-        if let Some(key) = &row.key {
-            write!(self.tty_writer, "\"{}\": ", key)?;
+        if let OptionIndex::Index(parent) = row.parent {
+            if viewer.flatjson[parent].is_array() && !row.is_closing_of_container() {
+                if !is_focused {
+                    self.set_fg_color(LightBlack)?;
+                } else {
+                    self.bold()?;
+                }
+                write!(self.tty_writer, "[{}] ", row.index)?;
+                self.reset_style()?;
+            }
+        }
+
+        let mut bold_brace = false;
+        if row.is_container() {
+            let pair_index = row.pair_index().unwrap();
+            if is_focused || viewer.focused_row == pair_index {
+                bold_brace = true;
+            }
         }
 
         match &row.value {
@@ -69,31 +131,67 @@ impl ScreenWriter {
                     if *collapsed {
                         write!(self.tty_writer, "{{ ... }}")?
                     } else {
-                        write!(self.tty_writer, "{{")?
+                        if viewer.mode == Mode::Line {
+                            if bold_brace {
+                                self.bold()?;
+                            }
+                            write!(self.tty_writer, "{{")?
+                        } else {
+                            if !is_focused {
+                                self.set_fg_color(LightBlack)?;
+                            }
+                            write!(self.tty_writer, "Object")?
+                        }
                     }
                 }
                 ContainerType::Array => {
                     if *collapsed {
                         write!(self.tty_writer, "[ ... ]")?
                     } else {
-                        write!(self.tty_writer, "[")?
+                        if viewer.mode == Mode::Line {
+                            if bold_brace {
+                                self.bold()?;
+                            }
+                            write!(self.tty_writer, "[")?
+                        } else {
+                            if !is_focused {
+                                self.set_fg_color(LightBlack)?;
+                            }
+                            write!(self.tty_writer, "Array")?
+                        }
                     }
                 }
             },
-            Value::CloseContainer { container_type, .. } => match container_type {
-                ContainerType::Object => self.tty_writer.write_char('}')?,
-                ContainerType::Array => self.tty_writer.write_char(']')?,
-            },
-            Value::Null => write!(self.tty_writer, "null")?,
-            Value::Boolean(b) => match b {
-                true => write!(self.tty_writer, "true")?,
-                false => write!(self.tty_writer, "false")?,
-            },
-            Value::Number(n) => write!(self.tty_writer, "{}", n)?,
-            Value::String(s) => write!(self.tty_writer, "{}", s)?,
+            Value::CloseContainer { container_type, .. } => {
+                if bold_brace {
+                    self.bold()?;
+                }
+                match container_type {
+                    ContainerType::Object => self.tty_writer.write_char('}')?,
+                    ContainerType::Array => self.tty_writer.write_char(']')?,
+                }
+            }
+            Value::Null => {
+                self.set_fg_color(LightBlack)?;
+                write!(self.tty_writer, "null")?;
+            }
+            Value::Boolean(b) => {
+                self.set_fg_color(Yellow)?;
+                write!(self.tty_writer, "{}", b)?;
+            }
+            Value::Number(n) => {
+                self.set_fg_color(Magenta)?;
+                write!(self.tty_writer, "{}", n)?;
+            }
+            Value::String(s) => {
+                self.set_fg_color(Green)?;
+                write!(self.tty_writer, "\"{}\"", s)?;
+            }
             Value::EmptyObject => write!(self.tty_writer, "{{}}")?,
             Value::EmptyArray => write!(self.tty_writer, "[]")?,
         };
+
+        self.reset_style()?;
 
         // The next_sibling field isn't set for CloseContainer rows, so
         // we need to get the OpenContainer row before we check if a row
@@ -106,7 +204,12 @@ impl ScreenWriter {
         };
 
         if row_root.next_sibling.is_some() {
-            self.tty_writer.write_char(',')?;
+            if row.is_opening_of_container() && row.is_expanded() {
+                // Don't print trailing commas after { or [, but
+                // if it's collapsed, we do print one after the } or ].
+            } else {
+                self.tty_writer.write_char(',')?;
+            }
         }
 
         Ok(())
@@ -117,8 +220,8 @@ pub trait TTYWriter {
     fn clear_screen(&mut self) -> std::io::Result<()>;
     fn clear_line(&mut self) -> std::io::Result<()>;
     fn position_cursor(&mut self, row: u16, col: u16) -> std::io::Result<()>;
-    fn set_fg_color(&mut self, color: &dyn Color) -> std::io::Result<()>;
-    fn set_bg_color(&mut self, color: &dyn Color) -> std::io::Result<()>;
+    fn set_fg_color(&mut self, color: Color) -> std::io::Result<()>;
+    fn set_bg_color(&mut self, color: Color) -> std::io::Result<()>;
     fn write(&mut self, s: &str) -> std::io::Result<()>;
     fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()>;
     fn write_char(&mut self, c: char) -> std::io::Result<()>;
@@ -143,12 +246,46 @@ impl TTYWriter for AnsiTTYWriter {
         write!(self.stdout, "{}", cursor::Goto(row, col))
     }
 
-    fn set_fg_color(&mut self, color: &dyn Color) -> std::io::Result<()> {
-        write!(self.stdout, "{}", Fg(color))
+    fn set_fg_color(&mut self, color: Color) -> std::io::Result<()> {
+        match color {
+            Black => write!(self.stdout, "{}", color::Fg(color::Black)),
+            Red => write!(self.stdout, "{}", color::Fg(color::Red)),
+            Green => write!(self.stdout, "{}", color::Fg(color::Green)),
+            Yellow => write!(self.stdout, "{}", color::Fg(color::Yellow)),
+            Blue => write!(self.stdout, "{}", color::Fg(color::Blue)),
+            Magenta => write!(self.stdout, "{}", color::Fg(color::Magenta)),
+            Cyan => write!(self.stdout, "{}", color::Fg(color::Cyan)),
+            White => write!(self.stdout, "{}", color::Fg(color::White)),
+            LightBlack => write!(self.stdout, "{}", color::Fg(color::LightBlack)),
+            LightRed => write!(self.stdout, "{}", color::Fg(color::LightRed)),
+            LightGreen => write!(self.stdout, "{}", color::Fg(color::LightGreen)),
+            LightYellow => write!(self.stdout, "{}", color::Fg(color::LightYellow)),
+            LightBlue => write!(self.stdout, "{}", color::Fg(color::LightBlue)),
+            LightMagenta => write!(self.stdout, "{}", color::Fg(color::LightMagenta)),
+            LightCyan => write!(self.stdout, "{}", color::Fg(color::LightCyan)),
+            LightWhite => write!(self.stdout, "{}", color::Fg(color::LightWhite)),
+        }
     }
 
-    fn set_bg_color(&mut self, color: &dyn Color) -> std::io::Result<()> {
-        write!(self.stdout, "{}", Bg(color))
+    fn set_bg_color(&mut self, color: Color) -> std::io::Result<()> {
+        match color {
+            Black => write!(self.stdout, "{}", color::Bg(color::Black)),
+            Red => write!(self.stdout, "{}", color::Bg(color::Red)),
+            Green => write!(self.stdout, "{}", color::Bg(color::Green)),
+            Yellow => write!(self.stdout, "{}", color::Bg(color::Yellow)),
+            Blue => write!(self.stdout, "{}", color::Bg(color::Blue)),
+            Magenta => write!(self.stdout, "{}", color::Bg(color::Magenta)),
+            Cyan => write!(self.stdout, "{}", color::Bg(color::Cyan)),
+            White => write!(self.stdout, "{}", color::Bg(color::White)),
+            LightBlack => write!(self.stdout, "{}", color::Bg(color::LightBlack)),
+            LightRed => write!(self.stdout, "{}", color::Bg(color::LightRed)),
+            LightGreen => write!(self.stdout, "{}", color::Bg(color::LightGreen)),
+            LightYellow => write!(self.stdout, "{}", color::Bg(color::LightYellow)),
+            LightBlue => write!(self.stdout, "{}", color::Bg(color::LightBlue)),
+            LightMagenta => write!(self.stdout, "{}", color::Bg(color::LightMagenta)),
+            LightCyan => write!(self.stdout, "{}", color::Bg(color::LightCyan)),
+            LightWhite => write!(self.stdout, "{}", color::Bg(color::LightWhite)),
+        }
     }
 
     fn write(&mut self, s: &str) -> std::io::Result<()> {

@@ -179,7 +179,7 @@ pub struct Row {
     pub next_sibling: OptionIndex,
 
     pub depth: usize,
-    index: Index,
+    pub index: Index,
     // start_index: usize
     // end_index: usize
     pub key: Option<String>,
@@ -204,6 +204,12 @@ impl Row {
     }
     pub fn is_expanded(&self) -> bool {
         self.value.is_expanded()
+    }
+    pub fn is_array(&self) -> bool {
+        self.value.is_array()
+    }
+    pub fn is_object(&self) -> bool {
+        self.value.is_object()
     }
 
     fn expand(&mut self) {
@@ -292,6 +298,34 @@ impl Value {
 
     pub fn is_expanded(&self) -> bool {
         !self.is_collapsed()
+    }
+
+    pub fn is_array(&self) -> bool {
+        match self {
+            Value::OpenContainer {
+                container_type: ContainerType::Array,
+                ..
+            } => true,
+            Value::CloseContainer {
+                container_type: ContainerType::Array,
+                ..
+            } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_object(&self) -> bool {
+        match self {
+            Value::OpenContainer {
+                container_type: Object,
+                ..
+            } => true,
+            Value::CloseContainer {
+                container_type: Object,
+                ..
+            } => true,
+            _ => false,
+        }
     }
 
     fn toggle_collapsed(&mut self) {
