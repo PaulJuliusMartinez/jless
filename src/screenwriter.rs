@@ -97,12 +97,12 @@ impl ScreenWriter {
                 self.set_fg_color(LightBlue)?;
             }
             if viewer.mode == Mode::Line {
-                write!(self.tty_writer, "\"{}\":", key)?;
+                write!(self.tty_writer, "\"{}\"", key)?;
             } else {
-                write!(self.tty_writer, "{}:", key)?;
+                write!(self.tty_writer, "{}", key)?;
             }
             self.reset_style()?;
-            self.tty_writer.write_char(' ')?;
+            write!(self.tty_writer, ": ")?;
         }
 
         if let OptionIndex::Index(parent) = row.parent {
@@ -112,7 +112,7 @@ impl ScreenWriter {
                 } else {
                     self.bold()?;
                 }
-                write!(self.tty_writer, "[{}] ", row.index)?;
+                write!(self.tty_writer, "[{}]: ", row.index)?;
                 self.reset_style()?;
             }
         }
