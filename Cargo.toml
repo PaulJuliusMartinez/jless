@@ -5,6 +5,8 @@ authors = ["Paul Julius Martinez <pauljuliusmartinez@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+regex = "1.5"
+lazy_static = "1.4.0"
 termion = "*"
 signal-hook = "0.3.8"
 libc = "0.2"

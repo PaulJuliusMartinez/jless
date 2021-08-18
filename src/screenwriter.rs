@@ -1,3 +1,4 @@
+use regex::Regex;
 use termion::{clear, cursor};
 use termion::{color, style};
 
@@ -35,6 +36,10 @@ const FOCUSED_COLLAPSED_CONTAINER: &'static str = "▶ ";
 const FOCUSED_EXPANDED_CONTAINER: &'static str = "▼ ";
 const COLLAPSED_CONTAINER: &'static str = "▷ ";
 const EXPANDED_CONTAINER: &'static str = "▽ ";
+
+lazy_static! {
+    static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
+}
 
 impl ScreenWriter {
     pub fn print_screen(&mut self, viewer: &JsonViewer) {
@@ -128,7 +133,7 @@ impl ScreenWriter {
             } else {
                 self.set_fg_color(LightBlue)?;
             }
-            if viewer.mode == Mode::Line {
+            if viewer.mode == Mode::Line || !JS_IDENTIFIER.is_match(key) {
                 write!(self.tty_writer, "\"{}\"", key)?;
             } else {
                 write!(self.tty_writer, "{}", key)?;
