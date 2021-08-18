@@ -1,9 +1,10 @@
 use regex::Regex;
 use rustyline::Editor;
+use std::fmt::Write;
 use termion::{clear, cursor};
 use termion::{color, style};
 
-use super::flatjson::{ContainerType, OptionIndex, Row, Value};
+use super::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
 use super::viewer::{JsonViewer, Mode};
 
 #[derive(Copy, Clone)]
@@ -296,7 +297,11 @@ impl ScreenWriter {
         self.invert_colors(Black)?;
         self.tty_writer.clear_line()?;
         self.tty_writer.position_cursor(1, viewer.height + 1)?;
-        write!(self.tty_writer, ".path.[\"to\"].current.line")?;
+        write!(
+            self.tty_writer,
+            "{}",
+            ScreenWriter::get_path_to_focused_node(viewer)
+        )?;
         self.tty_writer
             .position_cursor(viewer.width - 8, viewer.height + 1)?;
         write!(self.tty_writer, "FILE NAME")?;
@@ -306,6 +311,49 @@ impl ScreenWriter {
         write!(self.tty_writer, ":")?;
 
         Ok(())
+    }
+
+    fn get_path_to_focused_node(viewer: &JsonViewer) -> String {
+        let mut buf = String::new();
+        write!(
+            buf,
+            "{}input{}",
+            color::Fg(color::LightBlack),
+            color::Fg(color::Black)
+        )
+        .unwrap();
+        ScreenWriter::build_path_to_focused_node(viewer, &mut buf, viewer.focused_row);
+        buf
+    }
+
+    fn build_path_to_focused_node(viewer: &JsonViewer, buf: &mut String, index: Index) {
+        let row = &viewer.flatjson[index];
+
+        if row.is_closing_of_container() {
+            return ScreenWriter::build_path_to_focused_node(
+                viewer,
+                buf,
+                row.pair_index().unwrap(),
+            );
+        }
+
+        if let OptionIndex::Index(parent_index) = row.parent {
+            ScreenWriter::build_path_to_focused_node(viewer, buf, parent_index);
+        }
+
+        if let Some(key) = &row.key {
+            if JS_IDENTIFIER.is_match(key) {
+                write!(buf, ".{}", key).unwrap();
+            } else {
+                write!(buf, "[\"{}\"]", key).unwrap();
+            }
+        } else {
+            if index == 0 && row.next_sibling.is_nil() {
+                // Don't print out an array index if there is only one top level item.
+            } else {
+                write!(buf, "[{}]", row.index).unwrap();
+            }
+        }
     }
 }
 

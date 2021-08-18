@@ -77,10 +77,6 @@ fn main() {
             KeyEvent(Key::Ctrl('e')) => Some(viewer::Action::ScrollDown(1)),
             KeyEvent(Key::Ctrl('y')) => Some(viewer::Action::ScrollUp(1)),
             KeyEvent(Key::Char('m')) => Some(viewer::Action::ToggleMode),
-            KeyEvent(Key::Ctrl('c')) => {
-                println!("Typed C-c, exiting\r");
-                break;
-            }
             KeyEvent(Key::Char(':')) => {
                 let _readline = screen_writer.get_command(&viewer);
                 // Something like this?
@@ -91,6 +87,7 @@ fn main() {
                 let (width, height) = termion::terminal_size().unwrap();
                 Some(viewer::Action::ResizeWindow(height, width))
             }
+            KeyEvent(Key::Ctrl('c')) | KeyEvent(Key::Char('q')) => break,
             _ => {
                 println!("Got: {:?}\r", event);
                 None
