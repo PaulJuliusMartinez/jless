@@ -1,4 +1,5 @@
 use regex::Regex;
+use rustyline::Editor;
 use termion::{clear, cursor};
 use termion::{color, style};
 
@@ -30,6 +31,7 @@ use Color::*;
 
 pub struct ScreenWriter {
     pub tty_writer: Box<AnsiTTYWriter>,
+    pub command_editor: Editor<()>,
 }
 
 const FOCUSED_LINE: &'static str = "▶ ";
@@ -76,6 +78,28 @@ impl ScreenWriter {
         self.print_status_bar(viewer)?;
 
         self.tty_writer.flush()
+    }
+
+    pub fn get_command(&mut self, viewer: &JsonViewer) -> rustyline::Result<String> {
+        write!(self.tty_writer, "{}", termion::cursor::Show)?;
+        self.tty_writer.position_cursor(1, viewer.height + 2)?;
+        let result = self.command_editor.readline(":");
+        write!(self.tty_writer, "{}", termion::cursor::Hide)?;
+
+        self.tty_writer.position_cursor(1, viewer.height + 2)?;
+        self.tty_writer.clear_line()?;
+
+        match &result {
+            Ok(line) => {
+                write!(self.tty_writer, "Executed command: {}", line)?;
+            }
+            Err(err) => {
+                write!(self.tty_writer, "Command error: {:?}", err)?;
+            }
+        }
+
+        self.tty_writer.flush()?;
+        result
     }
 
     fn invert_colors(&mut self, fg: Color) -> std::io::Result<()> {
@@ -278,6 +302,8 @@ impl ScreenWriter {
         write!(self.tty_writer, "FILE NAME")?;
 
         self.reset_style()?;
+        self.tty_writer.position_cursor(1, viewer.height + 2)?;
+        write!(self.tty_writer, ":")?;
 
         Ok(())
     }

@@ -1,12 +1,12 @@
 #[macro_use]
 extern crate lazy_static;
 
+use rustyline::Editor;
 use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::PathBuf;
 use structopt::StructOpt;
-use termion::cursor::DetectCursorPos;
 use termion::event::Key;
 use termion::raw::IntoRawMode;
 
@@ -44,10 +44,13 @@ fn main() {
     let stdout = io::stdout().into_raw_mode().unwrap();
 
     let tty_writer = Box::new(screenwriter::AnsiTTYWriter {
-        stdout: Box::new(stdout),
+        stdout: Box::new(termion::cursor::HideCursor::from(stdout)),
         color: true,
     });
-    let mut screen_writer = screenwriter::ScreenWriter { tty_writer };
+    let mut screen_writer = screenwriter::ScreenWriter {
+        tty_writer,
+        command_editor: Editor::<()>::new(),
+    };
     screen_writer.print_screen(&viewer);
 
     for event in input::get_input() {
@@ -56,9 +59,11 @@ fn main() {
             KeyEvent(Key::Up) | KeyEvent(Key::Char('k')) | KeyEvent(Key::Ctrl('p')) => {
                 Some(viewer::Action::MoveUp(1))
             }
-            KeyEvent(Key::Down) | KeyEvent(Key::Char('j')) | KeyEvent(Key::Ctrl('n')) => {
-                Some(viewer::Action::MoveDown(1))
-            }
+            KeyEvent(Key::Down)
+            | KeyEvent(Key::Char('j'))
+            | KeyEvent(Key::Char(' '))
+            | KeyEvent(Key::Ctrl('n'))
+            | KeyEvent(Key::Char('\n')) => Some(viewer::Action::MoveDown(1)),
             KeyEvent(Key::Left) | KeyEvent(Key::Char('h')) => Some(viewer::Action::MoveLeft),
             KeyEvent(Key::Right) | KeyEvent(Key::Char('l')) => Some(viewer::Action::MoveRight),
             KeyEvent(Key::Char('i')) => Some(viewer::Action::ToggleCollapsed),
@@ -75,6 +80,12 @@ fn main() {
             KeyEvent(Key::Ctrl('c')) => {
                 println!("Typed C-c, exiting\r");
                 break;
+            }
+            KeyEvent(Key::Char(':')) => {
+                let _readline = screen_writer.get_command(&viewer);
+                // Something like this?
+                // Some(viewer::Action::Command(parse_command(_readline))
+                None
             }
             WinChEvent => {
                 let (width, height) = termion::terminal_size().unwrap();
