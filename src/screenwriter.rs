@@ -72,6 +72,9 @@ impl ScreenWriter {
                 }
             }
         }
+
+        self.print_status_bar(viewer)?;
+
         self.tty_writer.flush()
     }
 
@@ -260,6 +263,21 @@ impl ScreenWriter {
                 }
             }
         }
+
+        Ok(())
+    }
+
+    fn print_status_bar(&mut self, viewer: &JsonViewer) -> std::io::Result<()> {
+        self.tty_writer.position_cursor(1, viewer.height + 1)?;
+        self.invert_colors(Black)?;
+        self.tty_writer.clear_line()?;
+        self.tty_writer.position_cursor(1, viewer.height + 1)?;
+        write!(self.tty_writer, ".path.[\"to\"].current.line")?;
+        self.tty_writer
+            .position_cursor(viewer.width - 8, viewer.height + 1)?;
+        write!(self.tty_writer, "FILE NAME")?;
+
+        self.reset_style()?;
 
         Ok(())
     }

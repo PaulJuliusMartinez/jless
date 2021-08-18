@@ -38,10 +38,10 @@ fn main() {
     };
 
     let json = flatjson::parse_top_level_json(json_string).unwrap();
-    let (_width, height) = termion::terminal_size().unwrap();
+    let (width, height) = termion::terminal_size().unwrap();
     let mut viewer = viewer::JsonViewer::new(json, viewer::Mode::Line);
-    let mut stdout = io::stdout().into_raw_mode().unwrap();
-    viewer.height = height;
+    viewer.set_window_dimensions(height, width);
+    let stdout = io::stdout().into_raw_mode().unwrap();
 
     let tty_writer = Box::new(screenwriter::AnsiTTYWriter {
         stdout: Box::new(stdout),

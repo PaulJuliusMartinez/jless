@@ -8,6 +8,7 @@ pub enum Mode {
 
 const DEFAULT_SCROLLOFF: u16 = 3;
 const DEFAULT_HEIGHT: u16 = 24;
+const DEFAULT_WIDTH: u16 = 80;
 
 pub struct JsonViewer {
     pub flatjson: FlatJson,
@@ -17,6 +18,7 @@ pub struct JsonViewer {
     desired_depth: usize,
 
     pub height: u16,
+    pub width: u16,
     // We call this scrolloff_setting, to differentiate between
     // what it's set to, and what the scrolloff functionally is
     // if it's set to value >= height / 2.
@@ -33,7 +35,8 @@ impl JsonViewer {
             top_row: 0,
             focused_row: 0,
             desired_depth: 0,
-            height: DEFAULT_HEIGHT,
+            height: DEFAULT_HEIGHT - 2,
+            width: DEFAULT_WIDTH,
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
         }
@@ -93,9 +96,7 @@ impl JsonViewer {
                 // TODO: custom window management here
                 self.toggle_mode();
             }
-            Action::ResizeWindow(height, _width) => {
-                self.height = height;
-            }
+            Action::ResizeWindow(height, width) => self.set_window_dimensions(height, width),
         }
 
         if reset_desired_depth {
@@ -138,6 +139,11 @@ impl JsonViewer {
             Action::ResizeWindow(_, _) => false,
             _ => true,
         }
+    }
+
+    pub fn set_window_dimensions(&mut self, height: u16, width: u16) {
+        self.height = if height < 2 { height } else { height - 2 };
+        self.width = width;
     }
 
     fn move_up(&mut self, rows: usize) {
