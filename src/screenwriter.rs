@@ -96,7 +96,11 @@ impl ScreenWriter {
             } else {
                 self.set_fg_color(LightBlue)?;
             }
-            write!(self.tty_writer, "\"{}\":", key)?;
+            if viewer.mode == Mode::Line {
+                write!(self.tty_writer, "\"{}\":", key)?;
+            } else {
+                write!(self.tty_writer, "{}:", key)?;
+            }
             self.reset_style()?;
             self.tty_writer.write_char(' ')?;
         }
