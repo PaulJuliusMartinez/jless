@@ -138,7 +138,10 @@ impl ScreenWriter {
         }
 
         if let OptionIndex::Index(parent) = row.parent {
-            if viewer.flatjson[parent].is_array() && !row.is_closing_of_container() {
+            if viewer.mode == Mode::Data
+                && viewer.flatjson[parent].is_array()
+                && !row.is_closing_of_container()
+            {
                 if !is_focused {
                     self.set_fg_color(LightBlack)?;
                 } else {
@@ -229,22 +232,25 @@ impl ScreenWriter {
 
         self.reset_style()?;
 
-        // The next_sibling field isn't set for CloseContainer rows, so
-        // we need to get the OpenContainer row before we check if a row
-        // is the last row in a container, and thus whether we should
-        // print a trailing comma or not.
-        let row_root = if row.is_closing_of_container() {
-            &viewer.flatjson[row.pair_index().unwrap()]
-        } else {
-            row
-        };
-
-        if row_root.next_sibling.is_some() {
-            if row.is_opening_of_container() && row.is_expanded() {
-                // Don't print trailing commas after { or [, but
-                // if it's collapsed, we do print one after the } or ].
+        // Only print trailing comma in line mode.
+        if viewer.mode == Mode::Line {
+            // The next_sibling field isn't set for CloseContainer rows, so
+            // we need to get the OpenContainer row before we check if a row
+            // is the last row in a container, and thus whether we should
+            // print a trailing comma or not.
+            let row_root = if row.is_closing_of_container() {
+                &viewer.flatjson[row.pair_index().unwrap()]
             } else {
-                self.tty_writer.write_char(',')?;
+                row
+            };
+
+            if row_root.next_sibling.is_some() {
+                if row.is_opening_of_container() && row.is_expanded() {
+                    // Don't print trailing commas after { or [, but
+                    // if it's collapsed, we do print one after the } or ].
+                } else {
+                    self.tty_writer.write_char(',')?;
+                }
             }
         }
 
