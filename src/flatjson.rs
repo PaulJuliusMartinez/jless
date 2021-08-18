@@ -317,11 +317,11 @@ impl Value {
     pub fn is_object(&self) -> bool {
         match self {
             Value::OpenContainer {
-                container_type: Object,
+                container_type: ContainerType::Object,
                 ..
             } => true,
             Value::CloseContainer {
-                container_type: Object,
+                container_type: ContainerType::Object,
                 ..
             } => true,
             _ => false,
