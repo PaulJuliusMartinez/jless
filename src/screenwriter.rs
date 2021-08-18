@@ -6,7 +6,8 @@ use super::flatjson::{ContainerType, OptionIndex, Row, Value};
 use super::viewer::{JsonViewer, Mode};
 
 #[derive(Copy, Clone)]
-enum Color {
+#[allow(dead_code)]
+pub enum Color {
     Black,
     Red,
     Green,

@@ -429,7 +429,7 @@ impl JsonViewer {
 
     fn count_n_lines_past(&self, mut start: Index, mut lines: usize, mode: Mode) -> Index {
         while lines != 0 {
-            let next = match self.mode {
+            let next = match mode {
                 Mode::Line => self.flatjson.next_visible_row(start),
                 Mode::Data => self.flatjson.next_item(start),
             };

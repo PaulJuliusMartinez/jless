@@ -27,21 +27,6 @@ impl OptionIndex {
             OptionIndex::Index(i) => *i,
         }
     }
-
-    pub fn to_usize(&self) -> usize {
-        match self {
-            OptionIndex::Nil => NIL,
-            OptionIndex::Index(i) => *i,
-        }
-    }
-
-    pub fn from_usize(i: usize) -> OptionIndex {
-        if i == NIL {
-            OptionIndex::Nil
-        } else {
-            OptionIndex::Index(i)
-        }
-    }
 }
 
 pub const NIL: usize = usize::MAX;
@@ -127,14 +112,6 @@ impl FlatJson {
         OptionIndex::Nil
     }
 
-    pub fn inner_item(&self, index: Index) -> OptionIndex {
-        match &self.0[index].value {
-            Value::OpenContainer { first_child, .. } => OptionIndex::Index(*first_child),
-            Value::CloseContainer { last_child, .. } => OptionIndex::Index(*last_child),
-            _ => OptionIndex::Nil,
-        }
-    }
-
     pub fn expand(&mut self, index: Index) {
         if let OptionIndex::Index(pair) = self.0[index].pair_index() {
             self.0[pair].expand();
@@ -207,9 +184,6 @@ impl Row {
     }
     pub fn is_array(&self) -> bool {
         self.value.is_array()
-    }
-    pub fn is_object(&self) -> bool {
-        self.value.is_object()
     }
 
     fn expand(&mut self) {
@@ -308,20 +282,6 @@ impl Value {
             } => true,
             Value::CloseContainer {
                 container_type: ContainerType::Array,
-                ..
-            } => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_object(&self) -> bool {
-        match self {
-            Value::OpenContainer {
-                container_type: ContainerType::Object,
-                ..
-            } => true,
-            Value::CloseContainer {
-                container_type: ContainerType::Object,
                 ..
             } => true,
             _ => false,
