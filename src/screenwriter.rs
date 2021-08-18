@@ -30,6 +30,12 @@ pub struct ScreenWriter {
     pub tty_writer: Box<AnsiTTYWriter>,
 }
 
+const FOCUSED_LINE: &'static str = "▶ ";
+const FOCUSED_COLLAPSED_CONTAINER: &'static str = "▶ ";
+const FOCUSED_EXPANDED_CONTAINER: &'static str = "▼ ";
+const COLLAPSED_CONTAINER: &'static str = "▷ ";
+const EXPANDED_CONTAINER: &'static str = "▽ ";
+
 impl ScreenWriter {
     pub fn print_screen(&mut self, viewer: &JsonViewer) {
         match self.print_screen_no_error_handling(viewer) {
@@ -87,8 +93,34 @@ impl ScreenWriter {
         row: &Row,
         is_focused: bool,
     ) -> std::io::Result<()> {
-        let col = 2 * row.depth as u16;
-        self.tty_writer.position_cursor(col + 1, row_index + 1)?;
+        let col = 2 * (row.depth + 1) as u16;
+        if viewer.mode == Mode::Line && is_focused {
+            self.tty_writer.position_cursor(1, row_index + 1)?;
+            write!(self.tty_writer, "{}", FOCUSED_LINE)?;
+        }
+
+        if viewer.mode == Mode::Line {
+            self.tty_writer.position_cursor(col + 1, row_index + 1)?;
+        } else {
+            self.tty_writer.position_cursor(col - 1, row_index + 1)?;
+            if row.is_opening_of_container() {
+                if row.is_expanded() {
+                    if is_focused {
+                        write!(self.tty_writer, "{}", FOCUSED_EXPANDED_CONTAINER)?;
+                    } else {
+                        write!(self.tty_writer, "{}", EXPANDED_CONTAINER)?;
+                    }
+                } else {
+                    if is_focused {
+                        write!(self.tty_writer, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
+                    } else {
+                        write!(self.tty_writer, "{}", COLLAPSED_CONTAINER)?;
+                    }
+                }
+            } else {
+                write!(self.tty_writer, "  ")?;
+            }
+        }
 
         if let Some(key) = &row.key {
             if is_focused {
