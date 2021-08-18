@@ -147,8 +147,9 @@ impl ScreenWriter {
                 } else {
                     self.bold()?;
                 }
-                write!(self.tty_writer, "[{}]: ", row.index)?;
+                write!(self.tty_writer, "[{}]", row.index)?;
                 self.reset_style()?;
+                write!(self.tty_writer, ": ")?;
             }
         }
 
