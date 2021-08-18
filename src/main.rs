@@ -16,7 +16,7 @@ mod viewer;
 
 mod input;
 
-use input::TuiEvent::KeyEvent;
+use input::TuiEvent::{KeyEvent, WinChEvent};
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "jless", about = "A pager for JSON data")]
@@ -75,6 +75,10 @@ fn main() {
             KeyEvent(Key::Ctrl('c')) => {
                 println!("Typed C-c, exiting\r");
                 break;
+            }
+            WinChEvent => {
+                let (width, height) = termion::terminal_size().unwrap();
+                Some(viewer::Action::ResizeWindow(height, width))
             }
             _ => {
                 println!("Got: {:?}\r", event);

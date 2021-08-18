@@ -65,6 +65,8 @@ pub enum Action {
 
     ToggleCollapsed,
     ToggleMode,
+
+    ResizeWindow(u16, u16),
 }
 
 impl JsonViewer {
@@ -90,6 +92,9 @@ impl JsonViewer {
             Action::ToggleMode => {
                 // TODO: custom window management here
                 self.toggle_mode();
+            }
+            Action::ResizeWindow(height, _width) => {
+                self.height = height;
             }
         }
 
@@ -118,6 +123,7 @@ impl JsonViewer {
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
+            Action::ResizeWindow(_, _) => true,
             _ => false,
         }
     }
@@ -129,6 +135,7 @@ impl JsonViewer {
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
+            Action::ResizeWindow(_, _) => false,
             _ => true,
         }
     }
