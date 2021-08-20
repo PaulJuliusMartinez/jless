@@ -3,10 +3,12 @@ use std::io::Write;
 
 use rustyline::Editor;
 use termion::event::Key;
+use termion::event::MouseButton::{Left, WheelDown, WheelUp};
+use termion::event::MouseEvent::Press;
 
 use crate::flatjson;
 use crate::input::TuiEvent;
-use crate::input::TuiEvent::{KeyEvent, WinChEvent};
+use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
 use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
 use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer, Mode};
@@ -130,6 +132,20 @@ impl JLess {
                     self.input_buffer.clear();
 
                     action
+                }
+                MouseEvent(me) => {
+                    self.input_buffer.clear();
+
+                    match me {
+                        Press(Left, _, h) => {
+                            print!("Clicked on line {}", h);
+                            None
+                        }
+                        Press(WheelUp, _, _) => Some(Action::MoveUp(3)),
+                        Press(WheelDown, _, _) => Some(Action::MoveDown(3)),
+                        /* Ignore other mouse events. */
+                        _ => None,
+                    }
                 }
                 WinChEvent => {
                     let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());

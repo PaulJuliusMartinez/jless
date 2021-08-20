@@ -7,6 +7,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use structopt::StructOpt;
 use termion::cursor::HideCursor;
+use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
@@ -36,7 +37,9 @@ fn main() {
         }
     };
 
-    let stdout = HideCursor::from(AlternateScreen::from(io::stdout().into_raw_mode().unwrap()));
+    let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
+        io::stdout().into_raw_mode().unwrap(),
+    )));
     let mut app = match jless::new(json_string, Box::new(stdout)) {
         Ok(jl) => jl,
         Err(err) => {
