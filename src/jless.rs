@@ -17,7 +17,7 @@ pub struct JLess {
     input_buffer: Vec<u8>,
 }
 
-const MAX_BUFFER_SIZE: usize = 8;
+pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &'static str = "\x07";
 
 pub fn new(json: String, stdout: Box<dyn Write>) -> Result<JLess, String> {
@@ -66,7 +66,7 @@ impl JLess {
                 KeyEvent(key) => {
                     let action = match key {
                         // These interpret the input buffer as a number.
-                        Key::Up | Key::Char('k') | Key::Ctrl('p') => {
+                        Key::Up | Key::Char('k') | Key::Ctrl('p') | Key::Backspace => {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::MoveUp(lines))
                         }
@@ -122,7 +122,7 @@ impl JLess {
                             None
                         }
                         _ => {
-                            println!("{}Got: {:?}\r", BELL, event);
+                            print!("{}Got: {:?}\r", BELL, event);
                             None
                         }
                     };
@@ -139,7 +139,7 @@ impl JLess {
                     ))
                 }
                 _ => {
-                    println!("{}Got: {:?}\r", BELL, event);
+                    print!("{}Got: {:?}\r", BELL, event);
                     None
                 }
             };
@@ -154,6 +154,11 @@ impl JLess {
     }
 
     fn buffer_input(&mut self, ch: u8) {
+        // Don't buffer leading 0s.
+        if self.input_buffer.is_empty() && ch == '0' as u8 {
+            return;
+        }
+
         if self.input_buffer.len() >= MAX_BUFFER_SIZE {
             self.input_buffer.rotate_left(1);
             self.input_buffer.pop();

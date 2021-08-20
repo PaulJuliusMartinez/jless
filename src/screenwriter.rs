@@ -5,6 +5,7 @@ use termion::{clear, cursor};
 use termion::{color, style};
 
 use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
+use crate::jless::MAX_BUFFER_SIZE;
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
@@ -330,9 +331,8 @@ impl ScreenWriter {
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
         write!(self.tty_writer, ":")?;
 
-        let buffer_len = input_buffer.len();
         self.tty_writer.position_cursor(
-            self.dimensions.width - 4 - (buffer_len as u16),
+            self.dimensions.width - (1 + MAX_BUFFER_SIZE as u16),
             self.dimensions.height,
         )?;
         write!(
@@ -340,6 +340,9 @@ impl ScreenWriter {
             "{}",
             std::str::from_utf8(input_buffer).unwrap()
         )?;
+
+        // Position the cursor better for random debugging prints. (2 so it's after ':')
+        self.tty_writer.position_cursor(2, self.dimensions.height)?;
 
         self.tty_writer.flush()
     }
