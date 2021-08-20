@@ -31,7 +31,7 @@ pub enum Color {
 use Color::*;
 
 pub struct ScreenWriter {
-    pub tty_writer: Box<AnsiTTYWriter>,
+    pub tty_writer: AnsiTTYWriter,
     pub command_editor: Editor<()>,
 }
 
