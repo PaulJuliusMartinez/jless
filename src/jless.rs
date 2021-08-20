@@ -8,15 +8,16 @@ use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, WinChEvent};
 use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
+use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer, Mode};
 
 pub struct JLess {
     viewer: JsonViewer,
     screen_writer: ScreenWriter,
-
-    input_buffer: String,
+    input_buffer: Vec<u8>,
 }
 
+const MAX_BUFFER_SIZE: usize = 8;
 const BELL: &'static str = "\x07";
 
 pub fn new(json: String, stdout: Box<dyn Write>) -> Result<JLess, String> {
@@ -33,20 +34,22 @@ pub fn new(json: String, stdout: Box<dyn Write>) -> Result<JLess, String> {
     let screen_writer = ScreenWriter {
         tty_writer,
         command_editor: Editor::<()>::new(),
+        dimensions: TTYDimensions::default(),
     };
 
     Ok(JLess {
         viewer,
         screen_writer,
-        input_buffer: String::new(),
+        input_buffer: vec![],
     })
 }
 
 impl JLess {
     pub fn run(&mut self, input: Box<dyn Iterator<Item = io::Result<TuiEvent>>>) {
-        let (width, height) = termion::terminal_size().unwrap();
-        self.viewer.set_window_dimensions(height, width);
-        self.screen_writer.print_screen(&self.viewer);
+        let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
+        self.viewer.dimensions = dimensions.without_status_bar();
+        self.screen_writer.dimensions = dimensions;
+        self.screen_writer.print(&self.viewer, &self.input_buffer);
 
         for event in input {
             let event = event.unwrap();
@@ -55,7 +58,7 @@ impl JLess {
                 KeyEvent(Key::Ctrl('c')) | KeyEvent(Key::Char('q')) => break,
                 // These inputs may be buffered.
                 KeyEvent(Key::Char(ch @ '0'..='9')) => {
-                    self.input_buffer.push(ch);
+                    self.buffer_input(ch as u8);
                     None
                 }
                 KeyEvent(Key::Char('z')) => self.handle_z_input(),
@@ -85,7 +88,7 @@ impl JLess {
                         }
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
-                            if self.input_buffer == "z" {
+                            if self.input_buffer == "z".as_bytes() {
                                 // Action::MoveFocusedLineToTop
                                 None
                             } else {
@@ -93,7 +96,7 @@ impl JLess {
                             }
                         }
                         Key::Char('b') => {
-                            if self.input_buffer == "z" {
+                            if self.input_buffer == "z".as_bytes() {
                                 // Action::MoveFocusedLineToBottom
                                 None
                             } else {
@@ -105,6 +108,7 @@ impl JLess {
                         Key::Left | Key::Char('h') => Some(Action::MoveLeft),
                         Key::Right | Key::Char('l') => Some(Action::MoveRight),
                         Key::Char('i') => Some(Action::ToggleCollapsed),
+                        // TODO: These should also accept buffered counts
                         Key::Char('K') => Some(Action::FocusPrevSibling),
                         Key::Char('J') => Some(Action::FocusNextSibling),
                         Key::Char('^') => Some(Action::FocusFirstSibling),
@@ -114,7 +118,7 @@ impl JLess {
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
                         Key::Char(':') => {
-                            let _readline = self.screen_writer.get_command(&self.viewer);
+                            let _readline = self.screen_writer.get_command();
                             // Something like this?
                             // Some(Action::Command(parse_command(_readline))
                             None
@@ -130,8 +134,11 @@ impl JLess {
                     action
                 }
                 WinChEvent => {
-                    let (width, height) = termion::terminal_size().unwrap();
-                    Some(Action::ResizeWindow(height, width))
+                    let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
+                    self.screen_writer.dimensions = dimensions;
+                    Some(Action::ResizeViewerDimensions(
+                        dimensions.without_status_bar(),
+                    ))
                 }
                 _ => {
                     println!("{}Got: {:?}\r", BELL, event);
@@ -141,30 +148,36 @@ impl JLess {
 
             if let Some(action) = action {
                 self.viewer.perform_action(action);
-                // TODO: Change print_screen to print_viewer,
-                // and uncomment print_status_bar below.
-                // self.screen_writer.print_viewer(&self.viewer);
-                self.screen_writer.print_screen(&self.viewer);
+                self.screen_writer.print_viewer(&self.viewer);
             }
-            // self.screen_writer.print_status_bar(&self.viewer);
+            self.screen_writer
+                .print_status_bar(&self.viewer, &self.input_buffer);
         }
     }
 
+    fn buffer_input(&mut self, ch: u8) {
+        if self.input_buffer.len() >= MAX_BUFFER_SIZE {
+            self.input_buffer.rotate_left(1);
+            self.input_buffer.pop();
+        }
+        self.input_buffer.push(ch);
+    }
+
     fn handle_z_input(&mut self) -> Option<Action> {
-        if self.input_buffer == "z" {
+        if self.input_buffer == "z".as_bytes() {
             self.input_buffer.clear();
 
             // Action::MoveFocusedLineToCenter()
             None
         } else {
             self.input_buffer.clear();
-            self.input_buffer.push('z');
+            self.buffer_input('z' as u8);
             None
         }
     }
 
     fn parse_input_buffer_as_number(&mut self) -> usize {
-        let n = str::parse::<usize>(&self.input_buffer);
+        let n = str::parse::<usize>(std::str::from_utf8(&self.input_buffer).unwrap());
         self.input_buffer.clear();
         n.unwrap_or(1)
     }

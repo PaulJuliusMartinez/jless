@@ -1,4 +1,5 @@
-use super::flatjson::{FlatJson, Index, OptionIndex};
+use crate::flatjson::{FlatJson, Index, OptionIndex};
+use crate::types::TTYDimensions;
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum Mode {
@@ -7,8 +8,6 @@ pub enum Mode {
 }
 
 const DEFAULT_SCROLLOFF: u16 = 3;
-const DEFAULT_HEIGHT: u16 = 24;
-const DEFAULT_WIDTH: u16 = 80;
 
 pub struct JsonViewer {
     pub flatjson: FlatJson,
@@ -17,8 +16,7 @@ pub struct JsonViewer {
     // Used for Focus{Prev,Next}Sibling actions.
     desired_depth: usize,
 
-    pub height: u16,
-    pub width: u16,
+    pub dimensions: TTYDimensions,
     // We call this scrolloff_setting, to differentiate between
     // what it's set to, and what the scrolloff functionally is
     // if it's set to value >= height / 2.
@@ -35,8 +33,7 @@ impl JsonViewer {
             top_row: 0,
             focused_row: 0,
             desired_depth: 0,
-            height: DEFAULT_HEIGHT - 2,
-            width: DEFAULT_WIDTH,
+            dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
         }
@@ -69,7 +66,7 @@ pub enum Action {
     ToggleCollapsed,
     ToggleMode,
 
-    ResizeWindow(u16, u16),
+    ResizeViewerDimensions(TTYDimensions),
 }
 
 impl JsonViewer {
@@ -96,7 +93,7 @@ impl JsonViewer {
                 // TODO: custom window management here
                 self.toggle_mode();
             }
-            Action::ResizeWindow(height, width) => self.set_window_dimensions(height, width),
+            Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
         }
 
         if reset_desired_depth {
@@ -124,7 +121,7 @@ impl JsonViewer {
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
-            Action::ResizeWindow(_, _) => true,
+            Action::ResizeViewerDimensions(_) => true,
             _ => false,
         }
     }
@@ -136,14 +133,9 @@ impl JsonViewer {
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::ToggleMode => false,
-            Action::ResizeWindow(_, _) => false,
+            Action::ResizeViewerDimensions(_) => false,
             _ => true,
         }
-    }
-
-    pub fn set_window_dimensions(&mut self, height: u16, width: u16) {
-        self.height = if height < 2 { height } else { height - 2 };
-        self.width = width;
     }
 
     fn move_up(&mut self, rows: usize) {
@@ -330,7 +322,7 @@ impl JsonViewer {
         self.top_row = self.count_n_lines_before(self.top_row, rows, self.mode);
         let max_focused_row = self.count_n_lines_past(
             self.top_row,
-            (self.height - self.scrolloff() - 1) as usize,
+            (self.dimensions.height - self.scrolloff() - 1) as usize,
             self.mode,
         );
 
@@ -376,7 +368,7 @@ impl JsonViewer {
     }
 
     fn scrolloff(&self) -> u16 {
-        self.scrolloff_setting.min((self.height - 1) / 2)
+        self.scrolloff_setting.min((self.dimensions.height - 1) / 2)
     }
 
     // This is called after moving the cursor up or down (or other operations that
@@ -389,7 +381,7 @@ impl JsonViewer {
         //   15        8              7             7
         //   16        8              7             8
         let scrolloff = self.scrolloff();
-        let max_visible = self.height - scrolloff - 1;
+        let max_visible = self.dimensions.height - scrolloff - 1;
 
         let num_visible_before_focused = self.count_visible_rows_before(
             self.top_row,
@@ -416,7 +408,7 @@ impl JsonViewer {
             let bottom_padding = scrolloff.min(lines_visible_before_eof);
             self.top_row = self.count_n_lines_before(
                 self.focused_row,
-                (self.height - bottom_padding - 1) as usize,
+                (self.dimensions.height - bottom_padding - 1) as usize,
                 self.mode,
             )
         }
@@ -681,7 +673,7 @@ mod tests {
     fn test_ensure_focused_line_is_visible_in_line_mode() {
         let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
-        viewer.height = 8;
+        viewer.dimensions.height = 8;
         viewer.scrolloff_setting = 2;
 
         viewer.ensure_focused_row_is_visible();
@@ -737,7 +729,7 @@ mod tests {
 
         viewer.top_row = 0;
         viewer.focused_row = 0;
-        viewer.height = 6;
+        viewer.dimensions.height = 6;
         viewer.flatjson.collapse(2);
 
         // Test with collapsed items
@@ -760,7 +752,7 @@ mod tests {
     fn test_ensure_focused_line_is_visible_in_data_mode() {
         let fj = parse_top_level_json(DATA_OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Data);
-        viewer.height = 7;
+        viewer.dimensions.height = 7;
         viewer.scrolloff_setting = 2;
 
         viewer.ensure_focused_row_is_visible();
@@ -816,7 +808,7 @@ mod tests {
 
         viewer.top_row = 0;
         viewer.focused_row = 0;
-        viewer.height = 5;
+        viewer.dimensions.height = 5;
         viewer.flatjson.collapse(2);
 
         // Test with collapsed items
@@ -839,7 +831,7 @@ mod tests {
     fn test_scroll() {
         let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
-        viewer.height = 8;
+        viewer.dimensions.height = 8;
         viewer.scrolloff_setting = 2;
 
         assert_window_tracking(
@@ -1042,7 +1034,7 @@ mod tests {
     fn test_focus_top_and_bottom() {
         let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
-        viewer.height = 8;
+        viewer.dimensions.height = 8;
 
         assert_window_tracking(
             &mut viewer,

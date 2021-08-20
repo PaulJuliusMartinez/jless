@@ -4,8 +4,9 @@ use std::fmt::Write;
 use termion::{clear, cursor};
 use termion::{color, style};
 
-use super::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
-use super::viewer::{JsonViewer, Mode};
+use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
+use crate::types::TTYDimensions;
+use crate::viewer::{JsonViewer, Mode};
 
 #[derive(Copy, Clone)]
 #[allow(dead_code)]
@@ -33,6 +34,7 @@ use Color::*;
 pub struct ScreenWriter {
     pub tty_writer: AnsiTTYWriter,
     pub command_editor: Editor<()>,
+    pub dimensions: TTYDimensions,
 }
 
 const FOCUSED_LINE: &'static str = "▶ ";
@@ -46,20 +48,34 @@ lazy_static! {
 }
 
 impl ScreenWriter {
-    pub fn print_screen(&mut self, viewer: &JsonViewer) {
-        match self.print_screen_no_error_handling(viewer) {
+    pub fn print(&mut self, viewer: &JsonViewer, input_buffer: &[u8]) {
+        self.print_viewer(viewer);
+        self.print_status_bar(viewer, input_buffer);
+    }
+
+    pub fn print_viewer(&mut self, viewer: &JsonViewer) {
+        match self.print_screen_impl(viewer) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Error while printing to screen: {}", e);
+                eprintln!("Error while printing viewer: {}", e);
             }
         }
     }
 
-    pub fn print_screen_no_error_handling(&mut self, viewer: &JsonViewer) -> std::io::Result<()> {
+    pub fn print_status_bar(&mut self, viewer: &JsonViewer, input_buffer: &[u8]) {
+        match self.print_status_bar_impl(viewer, input_buffer) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("Error while printing status bar: {}", e);
+            }
+        }
+    }
+
+    fn print_screen_impl(&mut self, viewer: &JsonViewer) -> std::io::Result<()> {
         self.tty_writer.clear_screen()?;
 
         let mut line = OptionIndex::Index(viewer.top_row);
-        for row_index in 0..viewer.height {
+        for row_index in 0..viewer.dimensions.height {
             match line {
                 OptionIndex::Nil => {
                     self.tty_writer.position_cursor(1, row_index + 1)?;
@@ -76,18 +92,16 @@ impl ScreenWriter {
             }
         }
 
-        self.print_status_bar(viewer)?;
-
         self.tty_writer.flush()
     }
 
-    pub fn get_command(&mut self, viewer: &JsonViewer) -> rustyline::Result<String> {
+    pub fn get_command(&mut self) -> rustyline::Result<String> {
         write!(self.tty_writer, "{}", termion::cursor::Show)?;
-        self.tty_writer.position_cursor(1, viewer.height + 2)?;
+        self.tty_writer.position_cursor(1, self.dimensions.height)?;
         let result = self.command_editor.readline(":");
         write!(self.tty_writer, "{}", termion::cursor::Hide)?;
 
-        self.tty_writer.position_cursor(1, viewer.height + 2)?;
+        self.tty_writer.position_cursor(1, self.dimensions.height)?;
         self.tty_writer.clear_line()?;
 
         match &result {
@@ -292,25 +306,42 @@ impl ScreenWriter {
         Ok(())
     }
 
-    fn print_status_bar(&mut self, viewer: &JsonViewer) -> std::io::Result<()> {
-        self.tty_writer.position_cursor(1, viewer.height + 1)?;
+    fn print_status_bar_impl(
+        &mut self,
+        viewer: &JsonViewer,
+        input_buffer: &[u8],
+    ) -> std::io::Result<()> {
+        self.tty_writer
+            .position_cursor(1, self.dimensions.height - 1)?;
         self.invert_colors(Black)?;
         self.tty_writer.clear_line()?;
-        self.tty_writer.position_cursor(1, viewer.height + 1)?;
+        self.tty_writer
+            .position_cursor(1, self.dimensions.height - 1)?;
         write!(
             self.tty_writer,
             "{}",
             ScreenWriter::get_path_to_focused_node(viewer)
         )?;
         self.tty_writer
-            .position_cursor(viewer.width - 8, viewer.height + 1)?;
+            .position_cursor(self.dimensions.width - 8, self.dimensions.height - 1)?;
         write!(self.tty_writer, "FILE NAME")?;
 
         self.reset_style()?;
-        self.tty_writer.position_cursor(1, viewer.height + 2)?;
+        self.tty_writer.position_cursor(1, self.dimensions.height)?;
         write!(self.tty_writer, ":")?;
 
-        Ok(())
+        let buffer_len = input_buffer.len();
+        self.tty_writer.position_cursor(
+            self.dimensions.width - 4 - (buffer_len as u16),
+            self.dimensions.height,
+        )?;
+        write!(
+            self.tty_writer,
+            "{}",
+            std::str::from_utf8(input_buffer).unwrap()
+        )?;
+
+        self.tty_writer.flush()
     }
 
     fn get_path_to_focused_node(viewer: &JsonViewer) -> String {

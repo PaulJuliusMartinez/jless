@@ -14,6 +14,7 @@ mod flatjson;
 mod input;
 mod jless;
 mod screenwriter;
+mod types;
 mod viewer;
 
 #[derive(Debug, StructOpt)]
