@@ -434,6 +434,7 @@ impl JsonViewer {
         let scrolloff = self.scrolloff();
         let max_visible = self.dimensions.height - scrolloff - 1;
 
+        // Note that this will return 0 if focused_row < top_row.
         let num_visible_before_focused = self.count_visible_rows_before(
             self.top_row,
             self.focused_row,
@@ -442,7 +443,7 @@ impl JsonViewer {
             self.mode,
         );
 
-        if num_visible_before_focused < scrolloff {
+        if self.focused_row < self.top_row || num_visible_before_focused < scrolloff {
             self.top_row =
                 self.count_n_lines_before(self.focused_row, scrolloff as usize, self.mode)
         } else if num_visible_before_focused > max_visible {
@@ -760,6 +761,32 @@ mod tests {
                 (Action::MoveUp(1), 0, 1),
             ],
         );
+
+        // Test pushing past bottom with scrolloff == 0
+        viewer.scrolloff_setting = 0;
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveDown(6), 0, 7),
+                (Action::MoveDown(1), 1, 8),
+                (Action::MoveDown(4), 5, 12),
+                (Action::MoveDown(1), 5, 12),
+            ],
+        );
+
+        // Test pushing past top with scrolloff == 0
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveUp(7), 5, 5),
+                (Action::MoveUp(1), 4, 4),
+                (Action::MoveUp(5), 0, 0),
+            ],
+        );
+
+        viewer.top_row = 0;
+        viewer.focused_row = 1;
+        viewer.scrolloff_setting = 2;
 
         // Test pushing past bottom at end of file
         assert_window_tracking(
