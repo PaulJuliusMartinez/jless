@@ -63,6 +63,10 @@ pub enum Action {
     ScrollUp(usize),
     ScrollDown(usize),
 
+    MoveFocusedLineToTop,
+    MoveFocusedLineToCenter,
+    MoveFocusedLineToBottom,
+
     ToggleCollapsed,
     ToggleMode,
 
@@ -88,6 +92,9 @@ impl JsonViewer {
             Action::FocusMatchingPair => self.focus_matching_pair(),
             Action::ScrollUp(n) => self.scroll_up(n),
             Action::ScrollDown(n) => self.scroll_down(n),
+            Action::MoveFocusedLineToTop => self.move_focused_line_to_top(),
+            Action::MoveFocusedLineToCenter => self.move_focused_line_to_center(),
+            Action::MoveFocusedLineToBottom => self.move_focused_line_to_bottom(),
             Action::ToggleCollapsed => self.toggle_collapsed(),
             Action::ToggleMode => {
                 // TODO: custom window management here
@@ -120,6 +127,9 @@ impl JsonViewer {
             Action::FocusMatchingPair => true,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
+            Action::MoveFocusedLineToTop => false,
+            Action::MoveFocusedLineToCenter => false,
+            Action::MoveFocusedLineToBottom => false,
             Action::ToggleMode => false,
             Action::ResizeViewerDimensions(_) => true,
             _ => false,
@@ -132,6 +142,9 @@ impl JsonViewer {
             Action::FocusNextSibling => false,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
+            Action::MoveFocusedLineToTop => false,
+            Action::MoveFocusedLineToCenter => false,
+            Action::MoveFocusedLineToBottom => false,
             Action::ToggleMode => false,
             Action::ResizeViewerDimensions(_) => false,
             _ => true,
@@ -341,6 +354,21 @@ impl JsonViewer {
         }
     }
 
+    fn move_focused_line_to_top(&mut self) {
+        let padding = self.scrolloff() as usize;
+        self.top_row = self.count_n_lines_before(self.focused_row, padding, self.mode);
+    }
+
+    fn move_focused_line_to_center(&mut self) {
+        let padding = (self.dimensions.height / 2) as usize;
+        self.top_row = self.count_n_lines_before(self.focused_row, padding, self.mode);
+    }
+
+    fn move_focused_line_to_bottom(&mut self) {
+        let padding = (self.dimensions.height - self.scrolloff() - 1) as usize;
+        self.top_row = self.count_n_lines_before(self.focused_row, padding, self.mode);
+    }
+
     fn toggle_collapsed(&mut self) {
         let focused_row = &mut self.flatjson[self.focused_row];
         if focused_row.is_primitive() {
@@ -467,7 +495,16 @@ impl JsonViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flatjson::parse_top_level_json;
+    use crate::flatjson::{parse_top_level_json, NIL};
+
+    impl OptionIndex {
+        pub fn to_usize(&self) -> usize {
+            match self {
+                OptionIndex::Nil => NIL,
+                OptionIndex::Index(i) => *i,
+            }
+        }
+    }
 
     const OBJECT: &'static str = r#"{
         "1": 1,
@@ -868,6 +905,59 @@ mod tests {
                 (Action::ScrollUp(1), 5, 10),
                 // Can't scroll up past top of file
                 (Action::ScrollUp(6), 0, 5),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_move_focus() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+        viewer.dimensions.height = 5;
+        viewer.scrolloff_setting = 1;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveFocusedLineToTop, 0, 0),
+                (Action::MoveFocusedLineToCenter, 0, 0),
+                (Action::MoveFocusedLineToBottom, 0, 0),
+            ],
+        );
+
+        viewer.top_row = 10;
+        viewer.focused_row = 12;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveFocusedLineToTop, 11, 12),
+                (Action::MoveFocusedLineToCenter, 10, 12),
+                (Action::MoveFocusedLineToBottom, 9, 12),
+            ],
+        );
+
+        viewer.top_row = 4;
+        viewer.focused_row = 6;
+        viewer.dimensions.height = 7;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveFocusedLineToTop, 5, 6),
+                (Action::MoveFocusedLineToCenter, 3, 6),
+                (Action::MoveFocusedLineToBottom, 1, 6),
+            ],
+        );
+
+        viewer.dimensions.height = 8;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveFocusedLineToTop, 5, 6),
+                (Action::MoveFocusedLineToCenter, 2, 6),
+                (Action::MoveFocusedLineToBottom, 0, 6),
             ],
         );
     }

@@ -89,16 +89,14 @@ impl JLess {
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
                             if self.input_buffer == "z".as_bytes() {
-                                // Action::MoveFocusedLineToTop
-                                None
+                                Some(Action::MoveFocusedLineToTop)
                             } else {
                                 None
                             }
                         }
                         Key::Char('b') => {
                             if self.input_buffer == "z".as_bytes() {
-                                // Action::MoveFocusedLineToBottom
-                                None
+                                Some(Action::MoveFocusedLineToBottom)
                             } else {
                                 // Action::MoveUpAtDepth
                                 None
@@ -166,9 +164,7 @@ impl JLess {
     fn handle_z_input(&mut self) -> Option<Action> {
         if self.input_buffer == "z".as_bytes() {
             self.input_buffer.clear();
-
-            // Action::MoveFocusedLineToCenter()
-            None
+            Some(Action::MoveFocusedLineToCenter)
         } else {
             self.input_buffer.clear();
             self.buffer_input('z' as u8);
