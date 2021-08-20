@@ -7,6 +7,18 @@ pub enum Mode {
     Data,
 }
 
+impl std::str::FromStr for Mode {
+    type Err = String;
+
+    fn from_str(mode: &str) -> Result<Self, Self::Err> {
+        match mode {
+            "line" => Ok(Mode::Line),
+            "data" => Ok(Mode::Data),
+            _ => Err(format!("Unknown visual mode: {}", mode)),
+        }
+    }
+}
+
 const DEFAULT_SCROLLOFF: u16 = 3;
 
 pub struct JsonViewer {
@@ -22,7 +34,7 @@ pub struct JsonViewer {
     // if it's set to value >= height / 2.
     //
     // Access the functional value via .scrolloff().
-    scrolloff_setting: u16,
+    pub scrolloff_setting: u16,
     pub mode: Mode,
 }
 

@@ -11,7 +11,8 @@ use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
 use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
 use crate::types::TTYDimensions;
-use crate::viewer::{Action, JsonViewer, Mode};
+use crate::viewer::{Action, JsonViewer};
+use crate::Opt;
 
 pub struct JLess {
     viewer: JsonViewer,
@@ -22,13 +23,15 @@ pub struct JLess {
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &'static str = "\x07";
 
-pub fn new(json: String, stdout: Box<dyn Write>) -> Result<JLess, String> {
+pub fn new(opt: &Opt, json: String, stdout: Box<dyn Write>) -> Result<JLess, String> {
     let flatjson = match flatjson::parse_top_level_json(json) {
         Ok(flatjson) => flatjson,
         Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
     };
 
-    let viewer = JsonViewer::new(flatjson, Mode::Data);
+    let mut viewer = JsonViewer::new(flatjson, opt.mode);
+    viewer.scrolloff_setting = opt.scrolloff;
+
     let tty_writer = AnsiTTYWriter {
         stdout,
         color: true,

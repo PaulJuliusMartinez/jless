@@ -20,10 +20,16 @@ mod viewer;
 
 #[derive(Debug, StructOpt)]
 #[structopt(name = "jless", about = "A pager for JSON data")]
-struct Opt {
+pub struct Opt {
     /// Output file, stdout if not present
     #[structopt(parse(from_os_str))]
     input: Option<PathBuf>,
+
+    #[structopt(short, long, default_value = "data")]
+    mode: viewer::Mode,
+
+    #[structopt(long = "scrolloff", default_value = "3")]
+    scrolloff: u16,
 }
 
 fn main() {
@@ -40,7 +46,7 @@ fn main() {
     let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
         io::stdout().into_raw_mode().unwrap(),
     )));
-    let mut app = match jless::new(json_string, Box::new(stdout)) {
+    let mut app = match jless::new(&opt, json_string, Box::new(stdout)) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{}", err);
