@@ -97,7 +97,7 @@ impl JsonViewer {
             Action::MoveFocusedLineToTop => self.move_focused_line_to_top(),
             Action::MoveFocusedLineToCenter => self.move_focused_line_to_center(),
             Action::MoveFocusedLineToBottom => self.move_focused_line_to_bottom(),
-            Action::Click(n) => self.focus_clicked_row(n),
+            Action::Click(n) => self.click_row(n),
             Action::ToggleCollapsed => self.toggle_collapsed(),
             Action::ToggleMode => {
                 // TODO: custom window management here
@@ -373,8 +373,11 @@ impl JsonViewer {
         self.top_row = self.count_n_lines_before(self.focused_row, padding, self.mode);
     }
 
-    fn focus_clicked_row(&mut self, row: u16) {
+    fn click_row(&mut self, row: u16) {
         self.focused_row = self.count_n_lines_past(self.top_row, (row - 1) as usize, self.mode);
+        if self.flatjson[self.focused_row].is_opening_of_container() {
+            self.toggle_collapsed();
+        }
     }
 
     fn toggle_collapsed(&mut self) {
@@ -971,21 +974,23 @@ mod tests {
     }
 
     #[test]
-    fn test_focus_clicked_row() {
+    fn test_click_row() {
         let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
         viewer.dimensions.height = 7;
         viewer.scrolloff_setting = 3;
 
-        assert_window_tracking(
-            &mut viewer,
-            vec![
-                (Action::Click(6), 2, 5),
-                (Action::Click(1), 0, 2),
-                (Action::Click(3), 0, 2),
-                (Action::Click(5), 1, 4),
-            ],
-        );
+        // Clicked on closing brace; doesn't collapse object
+        assert_window_tracking(&mut viewer, vec![(Action::Click(6), 2, 5)]);
+        assert!(viewer.flatjson[5].is_expanded());
+
+        assert_window_tracking(&mut viewer, vec![(Action::Click(1), 0, 2)]);
+        assert!(viewer.flatjson[2].is_collapsed());
+
+        assert_window_tracking(&mut viewer, vec![(Action::Click(3), 0, 2)]);
+        assert!(viewer.flatjson[2].is_expanded());
+
+        assert_window_tracking(&mut viewer, vec![(Action::Click(5), 1, 4)]);
     }
 
     #[test]
