@@ -137,10 +137,7 @@ impl JLess {
                     self.input_buffer.clear();
 
                     match me {
-                        Press(Left, _, h) => {
-                            print!("Clicked on line {}", h);
-                            None
-                        }
+                        Press(Left, _, h) => Some(Action::Click(h)),
                         Press(WheelUp, _, _) => Some(Action::MoveUp(3)),
                         Press(WheelDown, _, _) => Some(Action::MoveDown(3)),
                         /* Ignore other mouse events. */

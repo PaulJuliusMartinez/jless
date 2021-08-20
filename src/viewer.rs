@@ -67,6 +67,8 @@ pub enum Action {
     MoveFocusedLineToCenter,
     MoveFocusedLineToBottom,
 
+    Click(u16),
+
     ToggleCollapsed,
     ToggleMode,
 
@@ -95,6 +97,7 @@ impl JsonViewer {
             Action::MoveFocusedLineToTop => self.move_focused_line_to_top(),
             Action::MoveFocusedLineToCenter => self.move_focused_line_to_center(),
             Action::MoveFocusedLineToBottom => self.move_focused_line_to_bottom(),
+            Action::Click(n) => self.focus_clicked_row(n),
             Action::ToggleCollapsed => self.toggle_collapsed(),
             Action::ToggleMode => {
                 // TODO: custom window management here
@@ -130,6 +133,7 @@ impl JsonViewer {
             Action::MoveFocusedLineToTop => false,
             Action::MoveFocusedLineToCenter => false,
             Action::MoveFocusedLineToBottom => false,
+            Action::Click(_) => true,
             Action::ToggleMode => false,
             Action::ResizeViewerDimensions(_) => true,
             _ => false,
@@ -367,6 +371,10 @@ impl JsonViewer {
     fn move_focused_line_to_bottom(&mut self) {
         let padding = (self.dimensions.height - self.scrolloff() - 1) as usize;
         self.top_row = self.count_n_lines_before(self.focused_row, padding, self.mode);
+    }
+
+    fn focus_clicked_row(&mut self, row: u16) {
+        self.focused_row = self.count_n_lines_past(self.top_row, (row - 1) as usize, self.mode);
     }
 
     fn toggle_collapsed(&mut self) {
@@ -958,6 +966,24 @@ mod tests {
                 (Action::MoveFocusedLineToTop, 5, 6),
                 (Action::MoveFocusedLineToCenter, 2, 6),
                 (Action::MoveFocusedLineToBottom, 0, 6),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_focus_clicked_row() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+        viewer.dimensions.height = 7;
+        viewer.scrolloff_setting = 3;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::Click(6), 2, 5),
+                (Action::Click(1), 0, 2),
+                (Action::Click(3), 0, 2),
+                (Action::Click(5), 1, 4),
             ],
         );
     }
