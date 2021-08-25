@@ -59,6 +59,8 @@ pub enum Action {
     MoveLeft,
     MoveRight,
 
+    FocusParent,
+
     // The behavior of these is subtle and stateful. These move to the previous/next sibling of the
     // focused element. If we are focused on the first/last child, we will move to the parent, but
     // we will remember what depth we were at when we first performed this action, and move back
@@ -99,6 +101,7 @@ impl JsonViewer {
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
+            Action::FocusParent => self.focus_parent(),
             Action::FocusPrevSibling(n) => self.focus_prev_sibling(n),
             Action::FocusNextSibling(n) => self.focus_next_sibling(n),
             Action::FocusFirstSibling => self.focus_first_sibling(),
@@ -137,6 +140,7 @@ impl JsonViewer {
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
+            Action::FocusParent => true,
             Action::FocusPrevSibling(_) => true,
             Action::FocusNextSibling(_) => true,
             Action::FocusFirstSibling => true,
@@ -248,6 +252,10 @@ impl JsonViewer {
             return;
         }
 
+        self.focus_parent();
+    }
+
+    fn focus_parent(&mut self) {
         if let OptionIndex::Index(parent) = self.flatjson[self.focused_row].parent {
             self.focused_row = parent;
         }
