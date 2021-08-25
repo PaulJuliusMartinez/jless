@@ -63,8 +63,12 @@ impl JLess {
                 KeyEvent(Key::Ctrl('c')) | KeyEvent(Key::Char('q')) => break,
                 // These inputs may be buffered.
                 KeyEvent(Key::Char(ch @ '0'..='9')) => {
-                    self.buffer_input(ch as u8);
-                    None
+                    if ch == '0' && self.input_buffer.is_empty() {
+                        Some(Action::FocusFirstSibling)
+                    } else {
+                        self.buffer_input(ch as u8);
+                        None
+                    }
                 }
                 KeyEvent(Key::Char('z')) => self.handle_z_input(),
                 // These inputs always clear the input_buffer (but may use its current contents).
