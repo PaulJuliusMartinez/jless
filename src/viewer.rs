@@ -63,8 +63,8 @@ pub enum Action {
     // focused element. If we are focused on the first/last child, we will move to the parent, but
     // we will remember what depth we were at when we first performed this action, and move back
     // to that depth the next time we can.
-    FocusPrevSibling,
-    FocusNextSibling,
+    FocusPrevSibling(usize),
+    FocusNextSibling(usize),
 
     FocusFirstSibling,
     FocusLastSibling,
@@ -97,8 +97,8 @@ impl JsonViewer {
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
-            Action::FocusPrevSibling => self.focus_prev_sibling(),
-            Action::FocusNextSibling => self.focus_next_sibling(),
+            Action::FocusPrevSibling(n) => self.focus_prev_sibling(n),
+            Action::FocusNextSibling(n) => self.focus_next_sibling(n),
             Action::FocusFirstSibling => self.focus_first_sibling(),
             Action::FocusLastSibling => self.focus_last_sibling(),
             Action::FocusTop => self.focus_top(),
@@ -133,8 +133,8 @@ impl JsonViewer {
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
-            Action::FocusPrevSibling => true,
-            Action::FocusNextSibling => true,
+            Action::FocusPrevSibling(_) => true,
+            Action::FocusNextSibling(_) => true,
             Action::FocusFirstSibling => true,
             Action::FocusLastSibling => true,
             Action::FocusTop => false, // Window refocusing is handled in focus_top.
@@ -154,8 +154,8 @@ impl JsonViewer {
 
     fn should_reset_desired_depth(action: &Action) -> bool {
         match action {
-            Action::FocusPrevSibling => false,
-            Action::FocusNextSibling => false,
+            Action::FocusPrevSibling(_) => false,
+            Action::FocusNextSibling(_) => false,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
             Action::MoveFocusedLineToTop => false,
@@ -245,44 +245,48 @@ impl JsonViewer {
         }
     }
 
-    fn focus_prev_sibling(&mut self) {
-        // The user is trying to move up in the file, but stay at the desired depth, so we just
-        // move up once, and then, if we're focused on a node that's nested deeper than the
-        // desired depth, move up the node's parents until we get to the right depth.
-        self.move_up(1);
-        let mut focused_row = &self.flatjson[self.focused_row];
-        while focused_row.depth > self.desired_depth {
-            self.focused_row = focused_row.parent.unwrap();
-            focused_row = &self.flatjson[self.focused_row];
+    fn focus_prev_sibling(&mut self, rows: usize) {
+        for _ in 0..rows {
+            // The user is trying to move up in the file, but stay at the desired depth, so we just
+            // move up once, and then, if we're focused on a node that's nested deeper than the
+            // desired depth, move up the node's parents until we get to the right depth.
+            self.move_up(1);
+            let mut focused_row = &self.flatjson[self.focused_row];
+            while focused_row.depth > self.desired_depth {
+                self.focused_row = focused_row.parent.unwrap();
+                focused_row = &self.flatjson[self.focused_row];
+            }
         }
     }
 
-    fn focus_next_sibling(&mut self) {
-        // The user is trying to move down in the file, but stay at the desired depth.
-        // If we just move down once, this will accomplish what the user wants, unless
-        // they are already at the correct depth and currently focused on a opening
-        // of an expanded container. If this is the case, we just want to jump past the
-        // contents to the closing brace. If we're in Data mode, since the closing brace
-        // can't be focused, we'll still want to go past it to the next visible item.
-        let current_row = &self.flatjson[self.focused_row];
+    fn focus_next_sibling(&mut self, rows: usize) {
+        for _ in 0..rows {
+            // The user is trying to move down in the file, but stay at the desired depth.
+            // If we just move down once, this will accomplish what the user wants, unless
+            // they are already at the correct depth and currently focused on a opening
+            // of an expanded container. If this is the case, we just want to jump past the
+            // contents to the closing brace. If we're in Data mode, since the closing brace
+            // can't be focused, we'll still want to go past it to the next visible item.
+            let current_row = &self.flatjson[self.focused_row];
 
-        if current_row.depth == self.desired_depth
-            && current_row.is_opening_of_container()
-            && current_row.is_expanded()
-        {
-            let closing_brace = current_row.pair_index().unwrap();
-            self.focused_row = if self.mode == Mode::Data {
-                match self.flatjson.next_item(closing_brace) {
-                    // If there's no item after the closing brace, then we don't actually
-                    // want to move the focus at all.
-                    OptionIndex::Nil => self.focused_row,
-                    OptionIndex::Index(i) => i,
+            if current_row.depth == self.desired_depth
+                && current_row.is_opening_of_container()
+                && current_row.is_expanded()
+            {
+                let closing_brace = current_row.pair_index().unwrap();
+                self.focused_row = if self.mode == Mode::Data {
+                    match self.flatjson.next_item(closing_brace) {
+                        // If there's no item after the closing brace, then we don't actually
+                        // want to move the focus at all.
+                        OptionIndex::Nil => self.focused_row,
+                        OptionIndex::Index(i) => i,
+                    }
+                } else {
+                    closing_brace
                 }
             } else {
-                closing_brace
+                self.move_down(1);
             }
-        } else {
-            self.move_down(1);
         }
     }
 
@@ -1042,17 +1046,20 @@ mod tests {
         assert_movements(
             &mut viewer,
             vec![
-                (Action::FocusNextSibling, 12),
-                (Action::FocusNextSibling, 12),
-                (Action::FocusPrevSibling, 0),
-                (Action::FocusPrevSibling, 0),
+                (Action::FocusNextSibling(1), 12),
+                (Action::FocusNextSibling(1), 12),
+                (Action::FocusPrevSibling(1), 0),
+                (Action::FocusPrevSibling(1), 0),
             ],
         );
 
         viewer.flatjson.collapse(0);
         assert_movements(
             &mut viewer,
-            vec![(Action::FocusNextSibling, 0), (Action::FocusPrevSibling, 0)],
+            vec![
+                (Action::FocusNextSibling(1), 0),
+                (Action::FocusPrevSibling(1), 0),
+            ],
         );
 
         viewer.flatjson.expand(0);
@@ -1063,23 +1070,16 @@ mod tests {
             &mut viewer,
             vec![
                 // Go all the way down
-                (Action::FocusNextSibling, 1),
-                (Action::FocusNextSibling, 2),
-                (Action::FocusNextSibling, 5),
-                (Action::FocusNextSibling, 6),
-                (Action::FocusNextSibling, 10),
-                (Action::FocusNextSibling, 11),
-                (Action::FocusNextSibling, 12),
-                (Action::FocusNextSibling, 12),
+                (Action::FocusNextSibling(1), 1),
+                (Action::FocusNextSibling(2), 5),
+                (Action::FocusNextSibling(1), 6),
+                (Action::FocusNextSibling(1), 10),
+                (Action::FocusNextSibling(2), 12),
+                (Action::FocusNextSibling(1), 12),
                 // And all the way back up
-                (Action::FocusPrevSibling, 11),
-                (Action::FocusPrevSibling, 10),
-                (Action::FocusPrevSibling, 6),
-                (Action::FocusPrevSibling, 5),
-                (Action::FocusPrevSibling, 2),
-                (Action::FocusPrevSibling, 1),
-                (Action::FocusPrevSibling, 0),
-                (Action::FocusPrevSibling, 0),
+                (Action::FocusPrevSibling(3), 6),
+                (Action::FocusPrevSibling(4), 0),
+                (Action::FocusPrevSibling(1), 0),
             ],
         );
 
@@ -1089,11 +1089,11 @@ mod tests {
             &mut viewer,
             vec![
                 // Skip closing brace of 2
-                (Action::FocusNextSibling, 6),
-                (Action::FocusNextSibling, 10),
+                (Action::FocusNextSibling(1), 6),
+                (Action::FocusNextSibling(1), 10),
                 // And all the way back up
-                (Action::FocusPrevSibling, 6),
-                (Action::FocusPrevSibling, 2),
+                (Action::FocusPrevSibling(1), 6),
+                (Action::FocusPrevSibling(1), 2),
             ],
         );
     }
@@ -1107,13 +1107,19 @@ mod tests {
         viewer.desired_depth = 0;
         assert_movements(
             &mut viewer,
-            vec![(Action::FocusNextSibling, 0), (Action::FocusPrevSibling, 0)],
+            vec![
+                (Action::FocusNextSibling(1), 0),
+                (Action::FocusPrevSibling(1), 0),
+            ],
         );
 
         viewer.flatjson.collapse(0);
         assert_movements(
             &mut viewer,
-            vec![(Action::FocusNextSibling, 0), (Action::FocusPrevSibling, 0)],
+            vec![
+                (Action::FocusNextSibling(1), 0),
+                (Action::FocusPrevSibling(1), 0),
+            ],
         );
 
         viewer.flatjson.expand(0);
@@ -1124,17 +1130,13 @@ mod tests {
             &mut viewer,
             vec![
                 // Go all the way down
-                (Action::FocusNextSibling, 1),
-                (Action::FocusNextSibling, 2),
-                (Action::FocusNextSibling, 6),
-                (Action::FocusNextSibling, 11),
-                (Action::FocusNextSibling, 11),
+                (Action::FocusNextSibling(3), 6),
+                (Action::FocusNextSibling(1), 11),
+                (Action::FocusNextSibling(1), 11),
                 // And all the way back up
-                (Action::FocusPrevSibling, 6),
-                (Action::FocusPrevSibling, 2),
-                (Action::FocusPrevSibling, 1),
-                (Action::FocusPrevSibling, 0),
-                (Action::FocusPrevSibling, 0),
+                (Action::FocusPrevSibling(1), 6),
+                (Action::FocusPrevSibling(3), 0),
+                (Action::FocusPrevSibling(1), 0),
             ],
         );
 
@@ -1144,10 +1146,10 @@ mod tests {
             &mut viewer,
             vec![
                 // Skip closing brace of 2
-                (Action::FocusNextSibling, 6),
-                (Action::FocusNextSibling, 11),
-                (Action::FocusPrevSibling, 6),
-                (Action::FocusPrevSibling, 2),
+                (Action::FocusNextSibling(1), 6),
+                (Action::FocusNextSibling(1), 11),
+                (Action::FocusPrevSibling(1), 6),
+                (Action::FocusPrevSibling(1), 2),
             ],
         );
     }

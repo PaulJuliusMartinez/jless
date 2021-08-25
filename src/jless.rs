@@ -95,6 +95,14 @@ impl JLess {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::ScrollUp(lines))
                         }
+                        Key::Char('K') => {
+                            let lines = self.parse_input_buffer_as_number();
+                            Some(Action::FocusPrevSibling(lines))
+                        }
+                        Key::Char('J') => {
+                            let lines = self.parse_input_buffer_as_number();
+                            Some(Action::FocusNextSibling(lines))
+                        }
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
                             if self.input_buffer == "z".as_bytes() {
@@ -115,9 +123,6 @@ impl JLess {
                         Key::Left | Key::Char('h') => Some(Action::MoveLeft),
                         Key::Right | Key::Char('l') => Some(Action::MoveRight),
                         Key::Char('i') => Some(Action::ToggleCollapsed),
-                        // TODO: These should also accept buffered counts
-                        Key::Char('K') => Some(Action::FocusPrevSibling),
-                        Key::Char('J') => Some(Action::FocusNextSibling),
                         Key::Char('^') => Some(Action::FocusFirstSibling),
                         Key::Char('$') => Some(Action::FocusLastSibling),
                         Key::Char('g') => Some(Action::FocusTop),
