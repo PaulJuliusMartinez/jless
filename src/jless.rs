@@ -95,6 +95,14 @@ impl JLess {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::ScrollUp(lines))
                         }
+                        Key::PageUp => {
+                            let count = self.parse_input_buffer_as_number();
+                            Some(Action::PageUp(count))
+                        }
+                        Key::PageDown => {
+                            let count = self.parse_input_buffer_as_number();
+                            Some(Action::PageDown(count))
+                        }
                         Key::Char('K') => {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::FocusPrevSibling(lines))
@@ -125,8 +133,8 @@ impl JLess {
                         Key::Char('i') => Some(Action::ToggleCollapsed),
                         Key::Char('^') => Some(Action::FocusFirstSibling),
                         Key::Char('$') => Some(Action::FocusLastSibling),
-                        Key::Char('g') => Some(Action::FocusTop),
-                        Key::Char('G') => Some(Action::FocusBottom),
+                        Key::Char('g') | Key::Home => Some(Action::FocusTop),
+                        Key::Char('G') | Key::End => Some(Action::FocusBottom),
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
                         Key::Char(':') => {
