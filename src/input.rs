@@ -12,6 +12,8 @@ const POLL_INFINITE_TIMEOUT: i32 = -1;
 const SIGWINCH_PIPE_INDEX: usize = 0;
 const BUFFER_SIZE: usize = 1024;
 
+const ESCAPE: u8 = 0o33;
+
 pub fn get_input() -> impl Iterator<Item = io::Result<TuiEvent>> {
     let tty = File::open("/dev/tty").unwrap();
     let (sigwinch_read, sigwinch_write) = UnixStream::pair().unwrap();
@@ -34,6 +36,7 @@ fn read_and_retry_on_interrupt(input: &mut File, buf: &mut [u8]) -> io::Result<u
         }
     }
 }
+
 struct BufferedInput<const N: usize> {
     input: File,
     buffer: [u8; N],
@@ -63,6 +66,19 @@ impl<const N: usize> BufferedInput<N> {
         val
     }
 
+    fn clear(&mut self) {
+        // Clear buffer in debug mode.
+        if cfg!(debug_assertions) {
+            for elem in self.buffer.iter_mut() {
+                *elem = 0;
+            }
+        }
+
+        self.buffer_size = 0;
+        self.buffer_index = 0;
+        self.might_have_more_data = false;
+    }
+
     fn might_have_buffered_data(&self) -> bool {
         self.might_have_more_data || self.has_buffered_data()
     }
@@ -70,31 +86,46 @@ impl<const N: usize> BufferedInput<N> {
     fn has_buffered_data(&self) -> bool {
         self.buffer_index < self.buffer_size
     }
+
+    fn take_pure_escape(&mut self) -> bool {
+        if self.buffer_index == 0 && self.buffer_size == 1 && self.buffer[0] == ESCAPE {
+            // This will set self.might_have_more_data = true, which is fine,
+            // because that only gets set to true when buffer_size == N, but
+            // we just checked that it is 1 and not N.
+            self.clear();
+            return true;
+        }
+
+        return false;
+    }
+
+    fn read_more_if_needed(&mut self) -> Option<io::Error> {
+        if self.has_buffered_data() {
+            return None;
+        }
+
+        self.clear();
+
+        match read_and_retry_on_interrupt(&mut self.input, &mut self.buffer) {
+            Ok(bytes_read) => {
+                self.buffer_size = bytes_read;
+                self.might_have_more_data = bytes_read == N;
+                None
+            }
+            Err(err) => Some(err),
+        }
+    }
 }
 
 impl<const N: usize> Iterator for BufferedInput<N> {
     type Item = io::Result<u8>;
 
     fn next(&mut self) -> Option<io::Result<u8>> {
-        if self.has_buffered_data() {
-            return Some(Ok(self.next_u8()));
+        if !self.has_buffered_data() {
+            return None;
         }
 
-        // buffer has been exhausted, clear it and read from its input again.
-        self.buffer_size = 0;
-        self.buffer_index = 0;
-        self.might_have_more_data = false;
-
-        match read_and_retry_on_interrupt(&mut self.input, &mut self.buffer) {
-            Ok(bytes_read) => {
-                self.buffer_size = bytes_read;
-                self.might_have_more_data = bytes_read == N;
-                return Some(Ok(self.next_u8()));
-            }
-            Err(err) => {
-                return Some(Err(err));
-            }
-        }
+        Some(Ok(self.next_u8()))
     }
 }
 
@@ -130,6 +161,16 @@ impl TuiInput {
     }
 
     fn get_event_from_buffered_input(&mut self) -> Option<io::Result<TuiEvent>> {
+        if !self.buffered_input.has_buffered_data() {
+            if let Some(err) = self.buffered_input.read_more_if_needed() {
+                return Some(Err(err));
+            }
+        }
+
+        if self.buffered_input.take_pure_escape() {
+            return Some(Ok(TuiEvent::KeyEvent(Key::Esc)));
+        }
+
         match self.buffered_input.next() {
             Some(Ok(byte)) => {
                 return match parse_event(byte, &mut self.buffered_input) {
@@ -137,7 +178,7 @@ impl TuiInput {
                     Ok(Event::Mouse(m)) => Some(Ok(TuiEvent::MouseEvent(m))),
                     Ok(Event::Unsupported(_)) => Some(Ok(TuiEvent::Unknown)),
                     Err(err) => Some(Err(err)),
-                }
+                };
             }
             Some(Err(err)) => return Some(Err(err)),
             None => return None,
