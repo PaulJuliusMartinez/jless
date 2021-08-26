@@ -446,27 +446,82 @@ impl JsonViewer {
     // change where the focused row is) and makes sure that it isn't within SCROLLOFF
     // lines of the top or bottom of the screen.
     fn ensure_focused_row_is_visible(&mut self) {
-        // height; scrolloff; actual scrolloff; max_visible
+        // height; scrolloff; actual scrolloff; max_padding
         //   100       3              3            96
         //   15        7              7             7
         //   15        8              7             7
         //   16        8              7             8
         let scrolloff = self.scrolloff();
-        let max_visible = self.dimensions.height - scrolloff - 1;
+        // Max padding is max number of rows that can be visible between the focused
+        // row and the top or bottom of the screen.
+        let max_padding = self.dimensions.height - scrolloff - 1;
+
+        // Normally as the user moves down the the file we'll keep the focused line
+        // scrolloff lines from the bottom of the screen.
+        //
+        // But if the user jumps well past the end of the screen, rather than leaving
+        // the cursor scrolloff lines from the bottom, we'll put it closer to the
+        // middle, so they see more context, matching similar behavior in vim.
+        //
+        // In vim, the re-centering behavior occurs when you jump roughly half a screen
+        // past the bottom of the current visible screen. The exact point where it
+        // switches between leaving the cursor at the bottom of the screen vs.
+        // recentering works out so that there are no lines in common between the
+        // lines displayed before the jump and the lines displayed after the jump.
+        //
+        // We'll make the assumption that in JSON the context provided by previous lines
+        // is less helpful. When we refocus the screen we'll put the focused line 1/3
+        // of the way from the top, so we need to have moved 1 and 1/3 screen lengths
+        // past the top line for there to not be any overlap in the lines visible on the
+        // screen.
+        //
+        // We anticipate that users will also jump using FocusNextSibling frequently,
+        // which means that the focused line is a natural starting point of a large
+        // object, so showing more lines after the focused line than before makes
+        // sense.
+        //
+        // This might make less sense if they arrived there after a random jump or
+        // text search. Perhaps we could do something more intelligent where we try
+        // to make sure that the parent is visible, but this works for now.
+        //
+        // Because of the assumption that lines after the focused line are more relevant,
+        // we don't recenter the focused line when moving far up in the file.
+        let recenter_distance = self.dimensions.height + (self.dimensions.height / 3);
 
         // Note that this will return 0 if focused_row < top_row.
         let num_visible_before_focused = self.count_visible_rows_before(
             self.top_row,
             self.focused_row,
-            // Add 1 so we can differentiate between == max_visible and > max_visible
-            max_visible + 1,
+            // Add 1 so we can differentiate between == recenter_distance and > recenter_distance
+            recenter_distance + 1,
             self.mode,
         );
 
+        // Handle focused line too close to or past the top of the screen.
         if self.focused_row < self.top_row || num_visible_before_focused < scrolloff {
             self.top_row =
-                self.count_n_lines_before(self.focused_row, scrolloff as usize, self.mode)
-        } else if num_visible_before_focused > max_visible {
+                self.count_n_lines_before(self.focused_row, scrolloff as usize, self.mode);
+        } else if num_visible_before_focused > max_padding {
+            // Handle focused line too close to or past the bottom of the screen.
+
+            // If the user moved well past the bottom of the screen, we will refocus
+            // the cursor in the middle of the screen, rather than at the bottom of
+            // the screen.
+            //
+            // Note this is padding from the _bottom_ of the screen.
+            let refocus_padding = if num_visible_before_focused > recenter_distance {
+                let bottom_padding = self.dimensions.height * 2 / 3;
+                // Make sure to still obey scrolloff on the top if scrolloff > 1/3 of height.
+                bottom_padding.min(max_padding)
+            } else {
+                scrolloff
+            };
+
+            // We need to figure out where the last line is because we won't
+            // show any empty lines past the end of the file (unless the
+            // user explicitly scrolls past the end of the file).
+            //
+            // This overrides the scrolloff setting.
             let last_line = match self.mode {
                 Mode::Line => self.flatjson.last_visible_index(),
                 Mode::Data => self.flatjson.last_visible_item(),
@@ -474,15 +529,18 @@ impl JsonViewer {
             let lines_visible_before_eof = self.count_visible_rows_before(
                 self.focused_row,
                 last_line,
-                scrolloff + 1,
+                refocus_padding + 1,
                 self.mode,
             );
-            let bottom_padding = scrolloff.min(lines_visible_before_eof);
+
+            // Clamp the refocus padding at the number of lines visible before EOF
+            // so that we don't show anything past EOF.
+            let bottom_padding = refocus_padding.min(lines_visible_before_eof);
             self.top_row = self.count_n_lines_before(
                 self.focused_row,
                 (self.dimensions.height - bottom_padding - 1) as usize,
                 self.mode,
-            )
+            );
         }
     }
 
@@ -931,6 +989,37 @@ mod tests {
                 (Action::MoveUp(1), 1, 6),
                 (Action::MoveUp(1), 0, 2),
             ],
+        );
+    }
+
+    const TALL_OBJECT: &'static str = "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]";
+
+    #[test]
+    fn test_ensure_focused_line_is_visible_centers_focus_line_after_big_jump() {
+        let fj = parse_top_level_json(TALL_OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+        viewer.dimensions.height = 9;
+        viewer.scrolloff_setting = 2;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::MoveDown(8), 2, 8),
+                (Action::FocusTop, 0, 0),
+                (Action::MoveDown(9), 3, 9),
+                (Action::FocusTop, 0, 0),
+                (Action::MoveDown(12), 6, 12),
+                (Action::FocusTop, 0, 0),
+                // Jumped far, so focused line will be 1/3 from top.
+                (Action::MoveDown(13), 11, 13),
+            ],
+        );
+
+        // Have to be careful to still obey top scrolloff setting though.
+        viewer.scrolloff_setting = 3;
+        assert_window_tracking(
+            &mut viewer,
+            vec![(Action::FocusTop, 0, 0), (Action::MoveDown(13), 10, 13)],
         );
     }
 
