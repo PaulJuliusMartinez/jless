@@ -49,9 +49,9 @@ lazy_static! {
 }
 
 impl ScreenWriter {
-    pub fn print(&mut self, viewer: &JsonViewer, input_buffer: &[u8]) {
+    pub fn print(&mut self, viewer: &JsonViewer, input_buffer: &[u8], input_filename: &str) {
         self.print_viewer(viewer);
-        self.print_status_bar(viewer, input_buffer);
+        self.print_status_bar(viewer, input_buffer, input_filename);
     }
 
     pub fn print_viewer(&mut self, viewer: &JsonViewer) {
@@ -63,8 +63,13 @@ impl ScreenWriter {
         }
     }
 
-    pub fn print_status_bar(&mut self, viewer: &JsonViewer, input_buffer: &[u8]) {
-        match self.print_status_bar_impl(viewer, input_buffer) {
+    pub fn print_status_bar(
+        &mut self,
+        viewer: &JsonViewer,
+        input_buffer: &[u8],
+        input_filename: &str,
+    ) {
+        match self.print_status_bar_impl(viewer, input_buffer, input_filename) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("Error while printing status bar: {}", e);
@@ -311,6 +316,7 @@ impl ScreenWriter {
         &mut self,
         viewer: &JsonViewer,
         input_buffer: &[u8],
+        input_filename: &str,
     ) -> std::io::Result<()> {
         self.tty_writer
             .position_cursor(1, self.dimensions.height - 1)?;
@@ -320,12 +326,22 @@ impl ScreenWriter {
             .position_cursor(1, self.dimensions.height - 1)?;
         write!(
             self.tty_writer,
+            "{}input{}",
+            color::Fg(color::LightBlack),
+            color::Fg(color::Black)
+        )
+        .unwrap();
+        write!(
+            self.tty_writer,
             "{}",
             ScreenWriter::get_path_to_focused_node(viewer)
         )?;
-        self.tty_writer
-            .position_cursor(self.dimensions.width - 8, self.dimensions.height - 1)?;
-        write!(self.tty_writer, "FILE NAME")?;
+        self.tty_writer.position_cursor(
+            // 1 indexed
+            1 + self.dimensions.width - input_filename.len() as u16,
+            self.dimensions.height - 1,
+        )?;
+        write!(self.tty_writer, "{}", input_filename)?;
 
         self.reset_style()?;
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
@@ -349,13 +365,6 @@ impl ScreenWriter {
 
     fn get_path_to_focused_node(viewer: &JsonViewer) -> String {
         let mut buf = String::new();
-        write!(
-            buf,
-            "{}input{}",
-            color::Fg(color::LightBlack),
-            color::Fg(color::Black)
-        )
-        .unwrap();
         ScreenWriter::build_path_to_focused_node(viewer, &mut buf, viewer.focused_row);
         buf
     }

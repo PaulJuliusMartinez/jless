@@ -18,12 +18,18 @@ pub struct JLess {
     viewer: JsonViewer,
     screen_writer: ScreenWriter,
     input_buffer: Vec<u8>,
+    input_filename: String,
 }
 
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &'static str = "\x07";
 
-pub fn new(opt: &Opt, json: String, stdout: Box<dyn Write>) -> Result<JLess, String> {
+pub fn new(
+    opt: &Opt,
+    json: String,
+    input_filename: String,
+    stdout: Box<dyn Write>,
+) -> Result<JLess, String> {
     let flatjson = match flatjson::parse_top_level_json(json) {
         Ok(flatjson) => flatjson,
         Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
@@ -46,6 +52,7 @@ pub fn new(opt: &Opt, json: String, stdout: Box<dyn Write>) -> Result<JLess, Str
         viewer,
         screen_writer,
         input_buffer: vec![],
+        input_filename,
     })
 }
 
@@ -54,7 +61,8 @@ impl JLess {
         let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
         self.viewer.dimensions = dimensions.without_status_bar();
         self.screen_writer.dimensions = dimensions;
-        self.screen_writer.print(&self.viewer, &self.input_buffer);
+        self.screen_writer
+            .print(&self.viewer, &self.input_buffer, &self.input_filename);
 
         for event in input {
             let event = event.unwrap();
@@ -182,8 +190,11 @@ impl JLess {
                 self.viewer.perform_action(action);
                 self.screen_writer.print_viewer(&self.viewer);
             }
-            self.screen_writer
-                .print_status_bar(&self.viewer, &self.input_buffer);
+            self.screen_writer.print_status_bar(
+                &self.viewer,
+                &self.input_buffer,
+                &self.input_filename,
+            );
         }
     }
 

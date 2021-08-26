@@ -45,7 +45,7 @@ pub struct Opt {
 fn main() {
     let opt = Opt::from_args();
 
-    let json_string = match get_json_input(&opt) {
+    let (json_string, input_filename) = match get_json_input(&opt) {
         Ok(json_string) => json_string,
         Err(err) => {
             println!("Unable to get input: {}", err);
@@ -56,7 +56,7 @@ fn main() {
     let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
         io::stdout().into_raw_mode().unwrap(),
     )));
-    let mut app = match jless::new(&opt, json_string, Box::new(stdout)) {
+    let mut app = match jless::new(&opt, json_string, input_filename, Box::new(stdout)) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{}", err);
@@ -67,8 +67,9 @@ fn main() {
     app.run(Box::new(input::get_input()));
 }
 
-fn get_json_input(opt: &Opt) -> io::Result<String> {
+fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
     let mut json_string = String::new();
+    let filename;
 
     match &opt.input {
         None => {
@@ -76,16 +77,19 @@ fn get_json_input(opt: &Opt) -> io::Result<String> {
                 println!("Missing filename (\"jless --help\" for help)");
                 std::process::exit(1);
             }
+            filename = "STDIN".to_string();
             io::stdin().read_to_string(&mut json_string)?;
         }
         Some(path) => {
             if *path == PathBuf::from("-") {
+                filename = "STDIN".to_string();
                 io::stdin().read_to_string(&mut json_string)?;
             } else {
                 File::open(path)?.read_to_string(&mut json_string)?;
+                filename = String::from(path.file_name().unwrap().to_string_lossy());
             }
         }
     }
 
-    Ok(json_string)
+    Ok((json_string, filename))
 }
