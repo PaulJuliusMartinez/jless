@@ -5,6 +5,8 @@ authors = ["Paul Julius Martinez <pauljuliusmartinez@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+unicode-width = "0.1.5"
+unicode-segmentation = "1.7.1"
 rustyline = "9.0.0"
 regex = "1.5"
 lazy_static = "1.4.0"

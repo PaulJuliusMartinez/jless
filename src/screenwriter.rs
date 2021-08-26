@@ -3,6 +3,8 @@ use rustyline::Editor;
 use std::fmt::Write;
 use termion::{clear, cursor};
 use termion::{color, style};
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
@@ -43,6 +45,9 @@ const FOCUSED_COLLAPSED_CONTAINER: &'static str = "▶ ";
 const FOCUSED_EXPANDED_CONTAINER: &'static str = "▼ ";
 const COLLAPSED_CONTAINER: &'static str = "▷ ";
 const EXPANDED_CONTAINER: &'static str = "▽ ";
+
+const PATH_BASE: &'static str = "input";
+const SPACE_BETWEEN_PATH_AND_FILENAME: usize = 3;
 
 lazy_static! {
     static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
@@ -312,6 +317,24 @@ impl ScreenWriter {
         Ok(())
     }
 
+    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id    filename.json
+    //
+    // Idea 1: Replace intermediate accessors with '.', but always keep full key names
+    //
+    // input...viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
+    // input...gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
+    //
+    // Idea 2: Vim style '<' on the left
+    //
+    // <t.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
+    // <viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
+    //
+    // Idea 3: filename moves:
+    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.>
+    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id fi>
+    // // Path also shrinks if needed
+    // <.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id
+
     fn print_status_bar_impl(
         &mut self,
         viewer: &JsonViewer,
@@ -324,24 +347,13 @@ impl ScreenWriter {
         self.tty_writer.clear_line()?;
         self.tty_writer
             .position_cursor(1, self.dimensions.height - 1)?;
-        write!(
-            self.tty_writer,
-            "{}input{}",
-            color::Fg(color::LightBlack),
-            color::Fg(color::Black)
-        )
-        .unwrap();
-        write!(
-            self.tty_writer,
-            "{}",
-            ScreenWriter::get_path_to_focused_node(viewer)
+
+        let path_to_node = ScreenWriter::get_path_to_focused_node(viewer);
+        self.print_path_to_node_and_file_name(
+            &path_to_node,
+            &input_filename,
+            viewer.dimensions.width as usize,
         )?;
-        self.tty_writer.position_cursor(
-            // 1 indexed
-            1 + self.dimensions.width - input_filename.len() as u16,
-            self.dimensions.height - 1,
-        )?;
-        write!(self.tty_writer, "{}", input_filename)?;
 
         self.reset_style()?;
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
@@ -361,6 +373,172 @@ impl ScreenWriter {
         self.tty_writer.position_cursor(2, self.dimensions.height)?;
 
         self.tty_writer.flush()
+    }
+
+    fn print_path_to_node_and_file_name(
+        &mut self,
+        path_to_node: &str,
+        file_name: &str,
+        width: usize,
+    ) -> std::io::Result<()> {
+        let base_len = PATH_BASE.len();
+        let path_byte_len = path_to_node.len() + base_len;
+        let mut file_display_width = UnicodeWidthStr::width(file_name);
+
+        let mut base_ref = PATH_BASE;
+        let mut path_truncated = false;
+        let mut path_ref = path_to_node;
+        let mut file_visible = true;
+        let mut file_truncated = false;
+        let mut file_ref = file_name;
+
+        eprintln!("\n***\n");
+
+        eprintln!("Screen width: {}", width);
+        eprintln!("Path width: {} - {}{}", path_byte_len, base_ref, path_ref);
+        eprintln!("File width: {} - {}", file_display_width, file_ref);
+
+        if base_len + path_byte_len + SPACE_BETWEEN_PATH_AND_FILENAME + file_display_width <= width
+        {
+            // Nothing to do; everything fits. This is the fastest path.
+            eprintln!("Everything fits fast path");
+        } else {
+            let path_display_width = UnicodeWidthStr::width(path_to_node);
+            eprintln!(
+                "Path display width: {} - {}{}",
+                path_display_width, base_ref, path_ref
+            );
+
+            if base_len + path_display_width + SPACE_BETWEEN_PATH_AND_FILENAME + file_display_width
+                <= width
+            {
+                // Everything still fits.
+                eprintln!("Everything still fits");
+            } else {
+                // First character could be wide, plus '>'.
+                let min_file_len = 3;
+
+                let mut overflow = base_len
+                    + path_display_width
+                    + SPACE_BETWEEN_PATH_AND_FILENAME
+                    + file_display_width
+                    - width;
+
+                // Check if we can get by just truncating the file_name:
+                if base_len + path_display_width + SPACE_BETWEEN_PATH_AND_FILENAME + min_file_len
+                    > width
+                {
+                    eprintln!(
+                        "Can't truncate just filename, will have to hide file and truncate path"
+                    );
+                    file_visible = false;
+                    // path_display_width might still be < width, so use saturating_sub here.
+                    overflow = (base_len + path_display_width).saturating_sub(width);
+                    eprintln!("Path is overflowing by {}", overflow);
+                } else {
+                    // We also need to fit in the '>' now.
+                    overflow += 1;
+                    file_display_width += 1;
+                    file_truncated = true;
+
+                    let mut file_graphemes = file_name.graphemes(true);
+                    while let Some(grapheme) = file_graphemes.next_back() {
+                        let grapheme_width = UnicodeWidthStr::width(grapheme);
+                        overflow = overflow.saturating_sub(grapheme_width);
+                        file_display_width -= grapheme_width;
+                        file_ref = file_graphemes.as_str();
+
+                        eprintln!("Chomping off {} from file", grapheme);
+
+                        if overflow == 0 {
+                            eprintln!("Got rid of all overflow while trimming file!");
+                            break;
+                        }
+                    }
+
+                    // Set overflow to 0 so we don't also truncate path.
+                    overflow = 0;
+                }
+
+                // Need to truncate path.
+                if overflow > 0 {
+                    // We also need to fit in the '<' now.
+                    overflow += 1;
+
+                    path_truncated = true;
+
+                    // First truncate from PATH_BASE
+                    let mut base_graphemes = PATH_BASE.graphemes(true);
+                    while let Some(grapheme) = base_graphemes.next() {
+                        overflow = overflow.saturating_sub(UnicodeWidthStr::width(grapheme));
+                        base_ref = base_graphemes.as_str();
+
+                        eprintln!("Chomping off {} from base", grapheme);
+
+                        if overflow == 0 {
+                            eprintln!("Got rid of all overflow while trimming base!");
+                            break;
+                        }
+                    }
+
+                    if overflow > 0 {
+                        let mut path_graphemes = path_to_node.graphemes(true);
+                        while let Some(grapheme) = path_graphemes.next() {
+                            overflow = overflow.saturating_sub(UnicodeWidthStr::width(grapheme));
+                            path_ref = path_graphemes.as_str();
+
+                            eprintln!("Chomping off {} from base", grapheme);
+
+                            if overflow == 0 {
+                                eprintln!("Got rid of all overflow while trimming path!");
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        dbg!(file_display_width);
+        dbg!(base_ref);
+        dbg!(path_truncated);
+        dbg!(path_ref);
+        dbg!(file_visible);
+        dbg!(file_truncated);
+        dbg!(file_ref);
+
+        if path_truncated && base_ref.is_empty() {
+            write!(self.tty_writer, "<")?;
+        }
+        // Print the remaining bits of the base_ref and the path ref.
+        write!(
+            self.tty_writer,
+            "{}{}{}{}",
+            color::Fg(color::LightBlack),
+            if path_truncated && !base_ref.is_empty() {
+                "<"
+            } else {
+                ""
+            },
+            base_ref,
+            color::Fg(color::Black)
+        )?;
+        write!(self.tty_writer, "{}", path_ref)?;
+
+        if file_visible {
+            self.tty_writer.position_cursor(
+                // 1 indexed
+                1 + self.dimensions.width - (file_display_width as u16),
+                self.dimensions.height - 1,
+            )?;
+            write!(self.tty_writer, "{}", file_ref)?;
+
+            if file_truncated {
+                write!(self.tty_writer, ">")?;
+            }
+        }
+
+        Ok(())
     }
 
     fn get_path_to_focused_node(viewer: &JsonViewer) -> String {

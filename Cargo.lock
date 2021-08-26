@@ -211,6 +211,8 @@ dependencies = [
  "signal-hook",
  "structopt",
  "termion",
+ "unicode-segmentation",
+ "unicode-width",
 ]
 
 [[package]]
