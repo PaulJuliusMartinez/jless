@@ -38,6 +38,7 @@ pub struct ScreenWriter {
     pub tty_writer: AnsiTTYWriter,
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
+    pub indentation_reduction: u16,
 }
 
 const FOCUSED_LINE: &'static str = "▶ ";
@@ -152,7 +153,7 @@ impl ScreenWriter {
         row: &Row,
         is_focused: bool,
     ) -> std::io::Result<()> {
-        let col = 2 * (row.depth + 1) as u16;
+        let col = 2 * ((row.depth as u16).saturating_sub(self.indentation_reduction) + 1);
         if viewer.mode == Mode::Line && is_focused {
             self.tty_writer.position_cursor(1, row_index + 1)?;
             write!(self.tty_writer, "{}", FOCUSED_LINE)?;
@@ -575,6 +576,14 @@ impl ScreenWriter {
                 write!(buf, "[{}]", row.index).unwrap();
             }
         }
+    }
+
+    pub fn decrease_indentation_level(&mut self) {
+        self.indentation_reduction = self.indentation_reduction.saturating_add(1)
+    }
+
+    pub fn increase_indentation_level(&mut self) {
+        self.indentation_reduction = self.indentation_reduction.saturating_sub(1)
     }
 }
 

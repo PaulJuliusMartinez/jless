@@ -46,6 +46,7 @@ pub fn new(
         tty_writer,
         command_editor: Editor::<()>::new(),
         dimensions: TTYDimensions::default(),
+        indentation_reduction: 0,
     };
 
     Ok(JLess {
@@ -146,6 +147,14 @@ impl JLess {
                         Key::Char('G') | Key::End => Some(Action::FocusBottom),
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
+                        Key::Char('<') => {
+                            self.screen_writer.decrease_indentation_level();
+                            None
+                        }
+                        Key::Char('>') => {
+                            self.screen_writer.increase_indentation_level();
+                            None
+                        }
                         Key::Char(':') => {
                             let _readline = self.screen_writer.get_command();
                             // Something like this?
@@ -188,8 +197,8 @@ impl JLess {
 
             if let Some(action) = action {
                 self.viewer.perform_action(action);
-                self.screen_writer.print_viewer(&self.viewer);
             }
+            self.screen_writer.print_viewer(&self.viewer);
             self.screen_writer.print_status_bar(
                 &self.viewer,
                 &self.input_buffer,
