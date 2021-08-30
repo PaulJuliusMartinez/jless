@@ -3,11 +3,12 @@ use rustyline::Editor;
 use std::fmt::Write;
 use termion::{clear, cursor};
 use termion::{color, style};
-use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
+use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
+use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
@@ -384,14 +385,19 @@ impl ScreenWriter {
     ) -> std::io::Result<()> {
         let base_len = PATH_BASE.len();
         let path_byte_len = path_to_node.len() + base_len;
-        let mut file_display_width = UnicodeWidthStr::width(file_name);
+        let file_display_width = UnicodeWidthStr::width(file_name);
 
+        let mut base_visible = true;
+        let mut base_truncated = false;
         let mut base_ref = PATH_BASE;
+
         let mut path_truncated = false;
         let mut path_ref = path_to_node;
+
         let mut file_visible = true;
         let mut file_truncated = false;
         let mut file_ref = file_name;
+        let mut file_offset = file_display_width;
 
         eprintln!("\n***\n");
 
@@ -399,105 +405,79 @@ impl ScreenWriter {
         eprintln!("Path width: {} - {}{}", path_byte_len, base_ref, path_ref);
         eprintln!("File width: {} - {}", file_display_width, file_ref);
 
-        if base_len + path_byte_len + SPACE_BETWEEN_PATH_AND_FILENAME + file_display_width <= width
-        {
-            // Nothing to do; everything fits. This is the fastest path.
-            eprintln!("Everything fits fast path");
-        } else {
-            let path_display_width = UnicodeWidthStr::width(path_to_node);
-            eprintln!(
-                "Path display width: {} - {}{}",
-                path_display_width, base_ref, path_ref
-            );
+        let path_display_width = UnicodeWidthStr::width(path_to_node);
+        eprintln!(
+            "Path display width: {} - {}{}",
+            path_display_width, base_ref, path_ref
+        );
 
-            if base_len + path_display_width + SPACE_BETWEEN_PATH_AND_FILENAME + file_display_width
-                <= width
-            {
-                // Everything still fits.
-                eprintln!("Everything still fits");
-            } else {
-                // First character could be wide, plus '>'.
-                let min_file_len = 3;
+        let space_available_for_filename = width
+            .saturating_sub(base_len)
+            .saturating_sub(path_display_width)
+            .saturating_sub(SPACE_BETWEEN_PATH_AND_FILENAME);
 
-                let mut overflow = base_len
-                    + path_display_width
-                    + SPACE_BETWEEN_PATH_AND_FILENAME
-                    + file_display_width
-                    - width;
-
-                // Check if we can get by just truncating the file_name:
-                if base_len + path_display_width + SPACE_BETWEEN_PATH_AND_FILENAME + min_file_len
-                    > width
-                {
-                    eprintln!(
-                        "Can't truncate just filename, will have to hide file and truncate path"
-                    );
-                    file_visible = false;
-                    // path_display_width might still be < width, so use saturating_sub here.
-                    overflow = (base_len + path_display_width).saturating_sub(width);
-                    eprintln!("Path is overflowing by {}", overflow);
-                } else {
-                    // We also need to fit in the '>' now.
-                    overflow += 1;
-                    file_display_width += 1;
-                    file_truncated = true;
-
-                    let mut file_graphemes = file_name.graphemes(true);
-                    while let Some(grapheme) = file_graphemes.next_back() {
-                        let grapheme_width = UnicodeWidthStr::width(grapheme);
-                        overflow = overflow.saturating_sub(grapheme_width);
-                        file_display_width -= grapheme_width;
-                        file_ref = file_graphemes.as_str();
-
-                        eprintln!("Chomping off {} from file", grapheme);
-
-                        if overflow == 0 {
-                            eprintln!("Got rid of all overflow while trimming file!");
-                            break;
-                        }
-                    }
-
-                    // Set overflow to 0 so we don't also truncate path.
-                    overflow = 0;
-                }
-
-                // Need to truncate path.
-                if overflow > 0 {
-                    // We also need to fit in the '<' now.
-                    overflow += 1;
-
-                    path_truncated = true;
-
-                    // First truncate from PATH_BASE
-                    let mut base_graphemes = PATH_BASE.graphemes(true);
-                    while let Some(grapheme) = base_graphemes.next() {
-                        overflow = overflow.saturating_sub(UnicodeWidthStr::width(grapheme));
-                        base_ref = base_graphemes.as_str();
-
-                        eprintln!("Chomping off {} from base", grapheme);
-
-                        if overflow == 0 {
-                            eprintln!("Got rid of all overflow while trimming base!");
-                            break;
-                        }
-                    }
-
-                    if overflow > 0 {
-                        let mut path_graphemes = path_to_node.graphemes(true);
-                        while let Some(grapheme) = path_graphemes.next() {
-                            overflow = overflow.saturating_sub(UnicodeWidthStr::width(grapheme));
-                            path_ref = path_graphemes.as_str();
-
-                            eprintln!("Chomping off {} from base", grapheme);
-
-                            if overflow == 0 {
-                                eprintln!("Got rid of all overflow while trimming path!");
-                                break;
-                            }
-                        }
-                    }
-                }
+        match truncate_right_to_fit(file_name, space_available_for_filename, ">") {
+            NoTruncation => {
+                // Nothing to do here
+                eprintln!("Don't need to truncate filename");
             }
+            Truncated(filename_prefix, width) => {
+                file_ref = filename_prefix;
+                file_offset = width;
+                file_truncated = true;
+                eprintln!(
+                    "Filename is truncated: {}, prefix + '>' will take up {}",
+                    filename_prefix, width
+                );
+            }
+            DoesntFit => {
+                eprintln!("Can't truncate filename; doesn't fit");
+                file_visible = false;
+            }
+        };
+
+        // Might need to truncate path if we're not showing the file.
+        if !file_visible {
+            let space_available_for_base = width.saturating_sub(path_display_width);
+
+            match truncate_left_to_fit(PATH_BASE, space_available_for_base, "<") {
+                NoTruncation => {
+                    // Nothing to do here
+                    eprintln!("Don't need to truncate base");
+                }
+                Truncated(base_suffix, width) => {
+                    base_ref = base_suffix;
+                    base_truncated = true;
+                    eprintln!(
+                        "Base is truncated: {}, '<' + suffix will take up {}",
+                        base_suffix, width
+                    );
+                }
+                DoesntFit => {
+                    eprintln!("Can't truncate base; doesn't fit");
+                    base_visible = false;
+                }
+            };
+        }
+
+        if !base_visible {
+            match truncate_left_to_fit(path_to_node, width, "<") {
+                NoTruncation => {
+                    // Nothing to do here
+                    eprintln!("Don't need to truncate path");
+                }
+                Truncated(path_suffix, width) => {
+                    path_ref = path_suffix;
+                    path_truncated = true;
+                    eprintln!(
+                        "Path is truncated: {}, '<' + suffix will take up {}",
+                        path_suffix, width
+                    );
+                }
+                DoesntFit => {
+                    eprintln!("CAN'T TRUNCATE PATH; DOESN'T FIT");
+                }
+            };
         }
 
         dbg!(file_display_width);
@@ -511,25 +491,27 @@ impl ScreenWriter {
         if path_truncated && base_ref.is_empty() {
             write!(self.tty_writer, "<")?;
         }
+
         // Print the remaining bits of the base_ref and the path ref.
-        write!(
-            self.tty_writer,
-            "{}{}{}{}",
-            color::Fg(color::LightBlack),
-            if path_truncated && !base_ref.is_empty() {
-                "<"
-            } else {
-                ""
-            },
-            base_ref,
-            color::Fg(color::Black)
-        )?;
+        if base_visible {
+            write!(
+                self.tty_writer,
+                "{}{}{}{}",
+                color::Fg(color::LightBlack),
+                if base_truncated { "<" } else { "" },
+                base_ref,
+                color::Fg(color::Black)
+            )?;
+        }
+        if !base_visible {
+            write!(self.tty_writer, "<")?;
+        }
         write!(self.tty_writer, "{}", path_ref)?;
 
         if file_visible {
             self.tty_writer.position_cursor(
                 // 1 indexed
-                1 + self.dimensions.width - (file_display_width as u16),
+                1 + self.dimensions.width - (file_offset as u16),
                 self.dimensions.height - 1,
             )?;
             write!(self.tty_writer, "{}", file_ref)?;

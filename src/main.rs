@@ -15,6 +15,7 @@ mod flatjson;
 mod input;
 mod jless;
 mod screenwriter;
+mod truncate;
 mod types;
 mod viewer;
 
