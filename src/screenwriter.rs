@@ -384,14 +384,13 @@ impl ScreenWriter {
         width: usize,
     ) -> std::io::Result<()> {
         let base_len = PATH_BASE.len();
-        let path_byte_len = path_to_node.len() + base_len;
+        let path_display_width = UnicodeWidthStr::width(path_to_node);
         let file_display_width = UnicodeWidthStr::width(file_name);
 
         let mut base_visible = true;
         let mut base_truncated = false;
         let mut base_ref = PATH_BASE;
 
-        let mut path_truncated = false;
         let mut path_ref = path_to_node;
 
         let mut file_visible = true;
@@ -399,39 +398,19 @@ impl ScreenWriter {
         let mut file_ref = file_name;
         let mut file_offset = file_display_width;
 
-        eprintln!("\n***\n");
-
-        eprintln!("Screen width: {}", width);
-        eprintln!("Path width: {} - {}{}", path_byte_len, base_ref, path_ref);
-        eprintln!("File width: {} - {}", file_display_width, file_ref);
-
-        let path_display_width = UnicodeWidthStr::width(path_to_node);
-        eprintln!(
-            "Path display width: {} - {}{}",
-            path_display_width, base_ref, path_ref
-        );
-
         let space_available_for_filename = width
             .saturating_sub(base_len)
             .saturating_sub(path_display_width)
             .saturating_sub(SPACE_BETWEEN_PATH_AND_FILENAME);
 
         match truncate_right_to_fit(file_name, space_available_for_filename, ">") {
-            NoTruncation => {
-                // Nothing to do here
-                eprintln!("Don't need to truncate filename");
-            }
+            NoTruncation => { /* Don't need to truncate filename */ }
             Truncated(filename_prefix, width) => {
                 file_ref = filename_prefix;
                 file_offset = width;
                 file_truncated = true;
-                eprintln!(
-                    "Filename is truncated: {}, prefix + '>' will take up {}",
-                    filename_prefix, width
-                );
             }
             DoesntFit => {
-                eprintln!("Can't truncate filename; doesn't fit");
                 file_visible = false;
             }
         };
@@ -441,55 +420,28 @@ impl ScreenWriter {
             let space_available_for_base = width.saturating_sub(path_display_width);
 
             match truncate_left_to_fit(PATH_BASE, space_available_for_base, "<") {
-                NoTruncation => {
-                    // Nothing to do here
-                    eprintln!("Don't need to truncate base");
-                }
-                Truncated(base_suffix, width) => {
+                NoTruncation => { /* Don't need to truncate base */ }
+                Truncated(base_suffix, _) => {
                     base_ref = base_suffix;
                     base_truncated = true;
-                    eprintln!(
-                        "Base is truncated: {}, '<' + suffix will take up {}",
-                        base_suffix, width
-                    );
                 }
                 DoesntFit => {
-                    eprintln!("Can't truncate base; doesn't fit");
                     base_visible = false;
                 }
             };
         }
 
+        // Might need to truncate path if we're not showing the the base ref.
         if !base_visible {
             match truncate_left_to_fit(path_to_node, width, "<") {
-                NoTruncation => {
-                    // Nothing to do here
-                    eprintln!("Don't need to truncate path");
-                }
-                Truncated(path_suffix, width) => {
+                NoTruncation => { /* Don't need to truncate path */ }
+                Truncated(path_suffix, _) => {
                     path_ref = path_suffix;
-                    path_truncated = true;
-                    eprintln!(
-                        "Path is truncated: {}, '<' + suffix will take up {}",
-                        path_suffix, width
-                    );
                 }
                 DoesntFit => {
-                    eprintln!("CAN'T TRUNCATE PATH; DOESN'T FIT");
+                    panic!("Not enough room to display any of path.");
                 }
             };
-        }
-
-        dbg!(file_display_width);
-        dbg!(base_ref);
-        dbg!(path_truncated);
-        dbg!(path_ref);
-        dbg!(file_visible);
-        dbg!(file_truncated);
-        dbg!(file_ref);
-
-        if path_truncated && base_ref.is_empty() {
-            write!(self.tty_writer, "<")?;
         }
 
         // Print the remaining bits of the base_ref and the path ref.
@@ -503,6 +455,7 @@ impl ScreenWriter {
                 color::Fg(color::Black)
             )?;
         }
+
         if !base_visible {
             write!(self.tty_writer, "<")?;
         }
