@@ -16,7 +16,7 @@ use unicode_width::UnicodeWidthStr;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum TruncationResult<'a> {
-    NoTruncation,
+    NoTruncation(usize),
     Truncated(&'a str, usize),
     DoesntFit,
 }
@@ -26,7 +26,8 @@ pub enum TruncationResult<'a> {
 // that it will fit along with the replacement string in the available space.
 //
 // Returns an enum with three possible values:
-// - NoTruncation, which means that the entire input string will fit unmodified
+// - NoTruncation, which means that the entire input string will fit
+//   unmodified. It will return the display width of the entire input string.
 // - Truncated, which means that the input string had to be truncated to fit
 //   in the available space. It will return a &str reference to a prefix of the
 //   input string, and the combined width taken up by the prefix string and the
@@ -41,10 +42,6 @@ pub enum TruncationResult<'a> {
 //
 // This function is Unicode aware an will handle full-width characters, such as
 // emoji.
-//
-//
-// THIS ASSUMES THAT THE REPLACMENT STRING HAS NO ZERO OR FULL-WIDTH CHARACTERS
-// (i.e., WIDTH == LEN).
 
 macro_rules! define_truncate {
     ($fn_name:ident, $iter_fn:ident) => {
@@ -53,23 +50,16 @@ macro_rules! define_truncate {
             available_space: usize,
             replacement: &'a str,
         ) -> TruncationResult<'a> {
-            // Fast case
-            if input.len() <= available_space {
-                return TruncationResult::NoTruncation;
-            }
-
             let input_width = UnicodeWidthStr::width(input);
+            let replacement_width = UnicodeWidthStr::width(replacement);
 
             // Not quite as fast base case.
             if input_width <= available_space {
-                return TruncationResult::NoTruncation;
+                return TruncationResult::NoTruncation(input_width);
             }
 
             // Compute the current width taken up by the input and its replacement.
-            //
-            // This is where we make the assumption that replacement is simple ASCII and
-            // has width == len.
-            let mut current_width = input_width + replacement.len();
+            let mut current_width = input_width + replacement_width;
             let mut remaining_width = input_width;
 
             // Iterate over all the graphemes in the input so we don't break the input
@@ -95,7 +85,7 @@ macro_rules! define_truncate {
             } else {
                 return TruncationResult::Truncated(
                     graphemes.as_str(),
-                    remaining_width + replacement.len(),
+                    remaining_width + replacement_width,
                 );
             }
         }
@@ -150,10 +140,10 @@ mod tests {
         ) => {
             #[track_caller]
             fn $assert_not_truncated(input: &str, available_space: usize, replacement: &str) {
-                assert_eq!(
-                    TruncationResult::NoTruncation,
-                    $truncate_fn(input, available_space, replacement)
-                );
+                assert!(matches!(
+                    $truncate_fn(input, available_space, replacement),
+                    TruncationResult::NoTruncation(_),
+                ));
             }
 
             #[track_caller]

@@ -14,6 +14,8 @@ use termion::screen::AlternateScreen;
 mod flatjson;
 mod input;
 mod jless;
+mod lineprinter;
+mod richformatter;
 mod screenwriter;
 mod truncate;
 mod types;

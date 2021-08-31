@@ -404,7 +404,7 @@ impl ScreenWriter {
             .saturating_sub(SPACE_BETWEEN_PATH_AND_FILENAME);
 
         match truncate_right_to_fit(file_name, space_available_for_filename, ">") {
-            NoTruncation => { /* Don't need to truncate filename */ }
+            NoTruncation(_) => { /* Don't need to truncate filename */ }
             Truncated(filename_prefix, width) => {
                 file_ref = filename_prefix;
                 file_offset = width;
@@ -420,7 +420,7 @@ impl ScreenWriter {
             let space_available_for_base = width.saturating_sub(path_display_width);
 
             match truncate_left_to_fit(PATH_BASE, space_available_for_base, "<") {
-                NoTruncation => { /* Don't need to truncate base */ }
+                NoTruncation(_) => { /* Don't need to truncate base */ }
                 Truncated(base_suffix, _) => {
                     base_ref = base_suffix;
                     base_truncated = true;
@@ -434,7 +434,7 @@ impl ScreenWriter {
         // Might need to truncate path if we're not showing the the base ref.
         if !base_visible {
             match truncate_left_to_fit(path_to_node, width, "<") {
-                NoTruncation => { /* Don't need to truncate path */ }
+                NoTruncation(_) => { /* Don't need to truncate path */ }
                 Truncated(path_suffix, _) => {
                     path_ref = path_suffix;
                 }
