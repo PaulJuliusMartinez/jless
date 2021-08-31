@@ -2,9 +2,9 @@ use std::fmt;
 use std::fmt::Write;
 
 use crate::flatjson::Value;
-use crate::richformatter::{Color, RichFormatter};
 use crate::truncate::truncate_right_to_fit;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
+use crate::tuicontrol::{Color, TUIControl};
 use crate::viewer::Mode;
 
 // # Printing out individual lines
@@ -186,9 +186,9 @@ impl<'a> LineValue<'a> {
     }
 }
 
-pub struct Line<'a, F: RichFormatter> {
+pub struct LinePrinter<'a, TUI: TUIControl> {
     pub mode: Mode,
-    pub formatter: F, // RichFormatter
+    pub tui: TUI,
 
     // Do I need these?
     pub depth: usize,
@@ -206,13 +206,12 @@ pub struct Line<'a, F: RichFormatter> {
     pub value: LineValue<'a>,
 }
 
-impl<'a, F: RichFormatter> Line<'a, F> {
+impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     pub fn print_line<W: Write>(&self, buf: &mut W) -> fmt::Result {
         self.print_focus_and_container_indicators(buf)?;
 
         let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
-        self.formatter
-            .position_cursor(buf, (1 + label_depth) as u16)?;
+        self.tui.position_cursor(buf, (1 + label_depth) as u16)?;
 
         let mut available_space = self.width.saturating_sub(label_depth);
 
@@ -242,7 +241,7 @@ impl<'a, F: RichFormatter> Line<'a, F> {
 
     fn print_focused_line_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
         if self.focused {
-            self.formatter.position_cursor(buf, 1)?;
+            self.tui.position_cursor(buf, 1)?;
             write!(buf, "{}", FOCUSED_LINE)?;
         }
 
@@ -262,7 +261,7 @@ impl<'a, F: RichFormatter> Line<'a, F> {
         }
 
         let container_indicator_col = 1 + self.depth * self.tab_size;
-        self.formatter
+        self.tui
             .position_cursor(buf, container_indicator_col as u16)?;
 
         match (self.focused, collapsed) {
@@ -346,10 +345,10 @@ impl<'a, F: RichFormatter> Line<'a, F> {
         }
 
         // Actually print out the label!
-        self.formatter.maybe_fg_color(buf, fg_label_color)?;
-        self.formatter.maybe_bg_color(buf, bg_label_color)?;
+        self.tui.maybe_fg_color(buf, fg_label_color)?;
+        self.tui.maybe_bg_color(buf, bg_label_color)?;
         if label_bolded {
-            self.formatter.bold(buf)?;
+            self.tui.bold(buf)?;
         }
 
         write!(buf, "{}", label_style.left())?;
@@ -359,7 +358,7 @@ impl<'a, F: RichFormatter> Line<'a, F> {
         }
         write!(buf, "{}", label_style.right())?;
 
-        self.formatter.reset_style(buf)?;
+        self.tui.reset_style(buf)?;
         write!(buf, ": ")?;
 
         used_space += label_style.width();
@@ -416,7 +415,7 @@ impl<'a, F: RichFormatter> Line<'a, F> {
         }
 
         // Print out the value.
-        self.formatter.fg_color(buf, color)?;
+        self.tui.fg_color(buf, color)?;
         if quoted {
             used_space += 1;
             buf.write_char('"')?;
@@ -431,7 +430,7 @@ impl<'a, F: RichFormatter> Line<'a, F> {
         }
 
         // Be a good citizen and reset the style.
-        self.formatter.reset_style(buf)?;
+        self.tui.reset_style(buf)?;
 
         if self.trailing_comma {
             used_space += 1;
@@ -442,23 +441,23 @@ impl<'a, F: RichFormatter> Line<'a, F> {
     }
 
     fn print_truncated_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
-        self.formatter.position_cursor(buf, self.width as u16)?;
-        self.formatter.fg_color(buf, Color::LightBlack)?;
+        self.tui.position_cursor(buf, self.width as u16)?;
+        self.tui.fg_color(buf, Color::LightBlack)?;
         write!(buf, ">")
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::richformatter::test::NoFormatting;
+    use crate::tuicontrol::test::EmptyControl;
 
     use super::*;
 
-    impl<'a, F: Default + RichFormatter> Default for Line<'a, F> {
-        fn default() -> Line<'a, F> {
-            Line {
+    impl<'a, TUI: Default + TUIControl> Default for LinePrinter<'a, TUI> {
+        fn default() -> LinePrinter<'a, TUI> {
+            LinePrinter {
                 mode: Mode::Data,
-                formatter: F::default(),
+                tui: TUI::default(),
                 depth: 0,
                 width: 100,
                 tab_size: 2,
@@ -477,9 +476,9 @@ mod tests {
     #[test]
     #[ignore]
     fn test_focus_indicators() {
-        let line: Line<'_, NoFormatting> = Line {
+        let line: LinePrinter<'_, EmptyControl> = LinePrinter {
             mode: Mode::Line,
-            ..Line::default()
+            ..LinePrinter::default()
         };
         let mut buf = String::new();
         line.print_line(&mut buf);
@@ -489,7 +488,7 @@ mod tests {
 
     #[test]
     fn test_fill_label_basic() -> std::fmt::Result {
-        let mut line: Line<'_, NoFormatting> = Line { ..Line::default() };
+        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
         line.label = Some(LineLabel::Key {
             quoted: true,
             key: "hello",
@@ -525,7 +524,7 @@ mod tests {
 
     #[test]
     fn test_fill_label_not_enough_space() -> std::fmt::Result {
-        let mut line: Line<'_, NoFormatting> = Line { ..Line::default() };
+        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
         line.label = Some(LineLabel::Key {
             quoted: true,
             key: "hello",
@@ -591,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_fill_value_basic() -> std::fmt::Result {
-        let mut line: Line<'_, NoFormatting> = Line { ..Line::default() };
+        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
         let color = Color::Black;
 
         line.value = LineValue::Value {
@@ -624,7 +623,7 @@ mod tests {
 
     #[test]
     fn test_fill_value_not_enough_space() -> std::fmt::Result {
-        let mut line: Line<'_, NoFormatting> = Line { ..Line::default() };
+        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
         let color = Color::Black;
 
         // QUOTED VALUE

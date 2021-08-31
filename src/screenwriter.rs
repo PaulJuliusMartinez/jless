@@ -8,9 +8,9 @@ use unicode_width::UnicodeWidthStr;
 use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
 use crate::lineprinter as lp;
-use crate::richformatter::{Color as TUIColor, ColorFormatter};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
+use crate::tuicontrol::{Color as TUIColor, ColorControl};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
@@ -249,9 +249,9 @@ impl ScreenWriter {
                 }
             }
 
-            let line = lp::Line {
+            let line = lp::LinePrinter {
                 mode: viewer.mode,
-                formatter: ColorFormatter {},
+                tui: ColorControl {},
 
                 depth,
                 width: self.dimensions.width as usize,

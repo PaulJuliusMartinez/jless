@@ -15,9 +15,9 @@ mod flatjson;
 mod input;
 mod jless;
 mod lineprinter;
-mod richformatter;
 mod screenwriter;
 mod truncate;
+mod tuicontrol;
 mod types;
 mod viewer;
 

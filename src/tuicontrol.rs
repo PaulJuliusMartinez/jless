@@ -44,7 +44,7 @@ impl Color {
     }
 }
 
-pub trait RichFormatter {
+pub trait TUIControl {
     fn position_cursor<W: Write>(&self, buf: &mut W, col: u16) -> Result;
     fn fg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result;
     fn bg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result;
@@ -67,9 +67,9 @@ pub trait RichFormatter {
 }
 
 #[derive(Default)]
-pub struct ColorFormatter {}
+pub struct ColorControl {}
 
-impl RichFormatter for ColorFormatter {
+impl TUIControl for ColorControl {
     fn position_cursor<W: Write>(&self, buf: &mut W, col: u16) -> Result {
         write!(buf, "\x1b[{}G", col)
     }
@@ -96,9 +96,9 @@ pub mod test {
     use super::*;
 
     #[derive(Default)]
-    pub struct NoFormatting {}
+    pub struct EmptyControl {}
 
-    impl RichFormatter for NoFormatting {
+    impl TUIControl for EmptyControl {
         fn position_cursor<W: Write>(&self, _buf: &mut W, _col: u16) -> Result {
             Ok(())
         }
@@ -123,7 +123,7 @@ pub mod test {
     #[derive(Default)]
     pub struct VisibleEscapes {}
 
-    impl RichFormatter for VisibleEscapes {
+    impl TUIControl for VisibleEscapes {
         fn position_cursor<W: Write>(&self, buf: &mut W, col: u16) -> Result {
             write!(buf, "_COL({})_", col)
         }
