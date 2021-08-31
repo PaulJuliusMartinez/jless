@@ -7,6 +7,8 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
+use crate::lineprinter as lp;
+use crate::richformatter::{Color as TUIColor, ColorFormatter};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::types::TTYDimensions;
@@ -154,6 +156,122 @@ impl ScreenWriter {
         row: &Row,
         is_focused: bool,
     ) -> std::io::Result<()> {
+        if !row.is_container() {
+            self.tty_writer.position_cursor(1, row_index + 1)?;
+
+            // USING LINEPRINTER
+            let depth = row
+                .depth
+                .saturating_sub(self.indentation_reduction as usize);
+
+            let focused = is_focused;
+
+            let mut label = None;
+            let mut index_label = "".to_string();
+            let mut number_value = "".to_string();
+
+            // Set up key label.
+            if let Some(key) = &row.key {
+                label = Some(lp::LineLabel::Key {
+                    key,
+                    quoted: viewer.mode == Mode::Line || !JS_IDENTIFIER.is_match(key),
+                });
+            }
+
+            // Set up index label.
+            if let OptionIndex::Index(parent) = row.parent {
+                if viewer.mode == Mode::Data && viewer.flatjson[parent].is_array() {
+                    index_label = format!("{}", row.index);
+                    label = Some(lp::LineLabel::Index {
+                        index: &index_label,
+                    });
+                }
+            }
+
+            let value = match &row.value {
+                Value::OpenContainer { .. } => panic!("Can't use line printer for containers yet"),
+                Value::CloseContainer { .. } => panic!("Can't use line printer for containers yet"),
+                Value::Null => lp::LineValue::Value {
+                    s: "null",
+                    quotes: false,
+                    color: TUIColor::LightBlack,
+                },
+                Value::Boolean(b) => lp::LineValue::Value {
+                    s: if *b { "true" } else { "false" },
+                    quotes: false,
+                    color: TUIColor::Yellow,
+                },
+                Value::Number(n) => {
+                    number_value = n.to_string();
+                    lp::LineValue::Value {
+                        s: &number_value,
+                        quotes: false,
+                        color: TUIColor::Magenta,
+                    }
+                }
+                Value::String(s) => lp::LineValue::Value {
+                    s,
+                    quotes: true,
+                    color: TUIColor::Green,
+                },
+                Value::EmptyObject => lp::LineValue::Value {
+                    s: "{}",
+                    quotes: false,
+                    color: TUIColor::White,
+                },
+                Value::EmptyArray => lp::LineValue::Value {
+                    s: "[]",
+                    quotes: false,
+                    color: TUIColor::White,
+                },
+            };
+
+            let mut trailing_comma = false;
+
+            if viewer.mode == Mode::Line {
+                // The next_sibling field isn't set for CloseContainer rows, so
+                // we need to get the OpenContainer row before we check if a row
+                // is the last row in a container, and thus whether we should
+                // print a trailing comma or not.
+                let row_root = if row.is_closing_of_container() {
+                    &viewer.flatjson[row.pair_index().unwrap()]
+                } else {
+                    row
+                };
+
+                if row_root.next_sibling.is_some() {
+                    if row.is_opening_of_container() && row.is_expanded() {
+                        // Don't print trailing commas after { or [, but
+                        // if it's collapsed, we do print one after the } or ].
+                    } else {
+                        trailing_comma = true;
+                    }
+                }
+            }
+
+            let line = lp::Line {
+                mode: viewer.mode,
+                formatter: ColorFormatter {},
+
+                depth,
+                width: self.dimensions.width as usize,
+                tab_size: 2,
+
+                focused,
+                secondarily_focused: false,
+                trailing_comma,
+
+                label,
+                value,
+            };
+
+            let mut buf = String::new();
+            line.print_line(&mut buf).unwrap();
+            return write!(self.tty_writer, "{}", buf);
+        }
+
+        // OLD PRINT_LINE
+
         let col = 2 * ((row.depth as u16).saturating_sub(self.indentation_reduction) + 1);
         if viewer.mode == Mode::Line && is_focused {
             self.tty_writer.position_cursor(1, row_index + 1)?;
@@ -272,24 +390,7 @@ impl ScreenWriter {
                     ContainerType::Array => self.tty_writer.write_char(']')?,
                 }
             }
-            Value::Null => {
-                self.set_fg_color(LightBlack)?;
-                write!(self.tty_writer, "null")?;
-            }
-            Value::Boolean(b) => {
-                self.set_fg_color(Yellow)?;
-                write!(self.tty_writer, "{}", b)?;
-            }
-            Value::Number(n) => {
-                self.set_fg_color(Magenta)?;
-                write!(self.tty_writer, "{}", n)?;
-            }
-            Value::String(s) => {
-                self.set_fg_color(Green)?;
-                write!(self.tty_writer, "\"{}\"", s)?;
-            }
-            Value::EmptyObject => write!(self.tty_writer, "{{}}")?,
-            Value::EmptyArray => write!(self.tty_writer, "[]")?,
+            _ => {}
         };
 
         self.reset_style()?;

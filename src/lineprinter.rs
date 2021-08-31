@@ -210,12 +210,15 @@ impl<'a, F: RichFormatter> Line<'a, F> {
     pub fn print_line<W: Write>(&self, buf: &mut W) -> fmt::Result {
         self.print_focus_and_container_indicators(buf)?;
 
-        let available_space = self
-            .width
-            .saturating_sub(INDICATOR_WIDTH)
-            .saturating_sub(self.depth * self.tab_size);
+        let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
+        self.formatter
+            .position_cursor(buf, (1 + label_depth) as u16)?;
+
+        let mut available_space = self.width.saturating_sub(label_depth);
 
         let space_used_for_label = self.fill_in_label(buf, available_space)?;
+
+        available_space = available_space.saturating_sub(space_used_for_label);
 
         if self.label.is_some() && space_used_for_label == 0 {
             self.print_truncated_indicator(buf)?;
