@@ -242,6 +242,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn print_focused_line_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
         if self.focused {
             self.tui.position_cursor(buf, 1)?;
+            self.tui.reset_style(buf)?;
             write!(buf, "{}", FOCUSED_LINE)?;
         }
 
@@ -442,7 +443,12 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
     fn print_truncated_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
         self.tui.position_cursor(buf, self.width as u16)?;
-        self.tui.fg_color(buf, Color::LightBlack)?;
+        if self.focused {
+            self.tui.bold(buf)?;
+            self.tui.fg_color(buf, Color::White)?;
+        } else {
+            self.tui.fg_color(buf, Color::LightBlack)?;
+        }
         write!(buf, ">")
     }
 }
