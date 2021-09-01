@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::Write;
 
-use crate::flatjson::Value;
+use crate::flatjson::{FlatJson, Index, Row, Value};
 use crate::truncate::truncate_right_to_fit;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::tuicontrol::{Color, TUIControl};
@@ -169,21 +169,16 @@ impl LabelStyle {
 }
 
 pub enum LineValue<'a> {
-    ContainerChar {
-        ch: char,
-        collapsed: bool,
+    Container {
+        flatjson: &'a FlatJson,
+        row: &'a Row,
+        index: Index,
     },
     Value {
         s: &'a str,
         quotes: bool,
         color: Color,
     },
-}
-
-impl<'a> LineValue<'a> {
-    pub fn from_json_value(value: &'a Value) -> LineValue<'a> {
-        unimplemented!();
-    }
 }
 
 pub struct LinePrinter<'a, TUI: TUIControl> {
@@ -208,6 +203,8 @@ pub struct LinePrinter<'a, TUI: TUIControl> {
 
 impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     pub fn print_line<W: Write>(&self, buf: &mut W) -> fmt::Result {
+        self.tui.reset_style(buf)?;
+
         self.print_focus_and_container_indicators(buf)?;
 
         let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
@@ -242,7 +239,6 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn print_focused_line_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
         if self.focused {
             self.tui.position_cursor(buf, 1)?;
-            self.tui.reset_style(buf)?;
             write!(buf, "{}", FOCUSED_LINE)?;
         }
 
@@ -252,7 +248,10 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn print_container_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
         // let-else would be better here.
         let collapsed = match &self.value {
-            LineValue::ContainerChar { collapsed: c, .. } => c,
+            LineValue::Container { row, .. } => {
+                debug_assert!(row.is_opening_of_container());
+                row.is_collapsed()
+            }
             _ => return Ok(()),
         };
 
@@ -373,13 +372,23 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         buf: &mut W,
         mut available_space: usize,
     ) -> Result<usize, fmt::Error> {
+        // Object values are sufficiently complicated that we'll handle them
+        // in a separate function.
+        if let LineValue::Container {
+            flatjson,
+            index,
+            row,
+        } = self.value
+        {
+            return self.fill_in_container_value(buf, available_space, flatjson, index, row);
+        }
+
         let mut value_ref: &str;
         let mut value_truncated = false;
         let quoted: bool;
         let color: Color;
 
         match self.value {
-            LineValue::ContainerChar { .. } => return Ok(0),
             LineValue::Value {
                 s,
                 quotes,
@@ -389,6 +398,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 quoted = quotes;
                 color = c;
             }
+            LineValue::Container { .. } => panic!("We just eliminated the Container case above"),
         }
 
         let mut used_space = 0;
@@ -430,15 +440,140 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             buf.write_char('"')?;
         }
 
-        // Be a good citizen and reset the style.
-        self.tui.reset_style(buf)?;
-
         if self.trailing_comma {
             used_space += 1;
+            self.tui.reset_style(buf)?;
             buf.write_char(',')?;
         }
 
         Ok(used_space)
+    }
+
+    // Print out an object value on a line. There are three main variables at
+    // play here that determine what we should print out: the viewer mode,
+    // whether we're at the start or end of the container, and whether the
+    // container is expanded or collapsed. Whether the line is focused also
+    // determines the style in which the line is printed, but doesn't affect
+    // what actually gets printed.
+    //
+    // These are the 8 cases:
+    //
+    // Mode | Start/End |   State   |     Displayed
+    // -----+-----------+-----------+---------------------------
+    // Line |   Start   | Expanded  | Open char
+    // Line |   Start   | Collapsed | Preview + trailing comma?
+    // Line |    End    | Expanded  | Close char + trailing comma?
+    // Line |    End    | Collapsed | IMPOSSIBLE
+    // Data |   Start   | Expanded  | Preview
+    // Data |   Start   | Collapsed | Preview + trailing comma?
+    // Data |    End    | Expanded  | IMPOSSIBLE
+    // Data |    End    | Collapsed | IMPOSSIBLE
+    fn fill_in_container_value<W: Write>(
+        &self,
+        buf: &mut W,
+        mut available_space: usize,
+        flatjson: &FlatJson,
+        index: Index,
+        row: &Row,
+    ) -> Result<usize, fmt::Error> {
+        debug_assert!(row.is_container());
+
+        let mode = self.mode;
+        let side = row.is_opening_of_container();
+        let expanded_state = row.is_expanded();
+
+        const LINE: Mode = Mode::Line;
+        const DATA: Mode = Mode::Data;
+        const OPEN: bool = true;
+        const CLOSE: bool = false;
+        const EXPANDED: bool = true;
+        const COLLAPSED: bool = false;
+
+        match (mode, side, expanded_state) {
+            (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(buf, available_space, row),
+            (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(buf, available_space, row),
+            (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
+                self.fill_in_container_preview(buf, available_space, flatjson, index, row)
+            }
+            // Impossible states
+            (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
+            (DATA, CLOSE, _) => panic!("Can't focus closing of container in Data mode"),
+        }
+    }
+
+    fn fill_in_container_open_char<W: Write>(
+        &self,
+        buf: &mut W,
+        available_space: usize,
+        row: &Row,
+    ) -> Result<usize, fmt::Error> {
+        if available_space > 0 {
+            if self.focused || self.secondarily_focused {
+                self.tui.bold(buf)?;
+            }
+            buf.write_char(row.value.container_type().unwrap().open_char())?;
+            Ok(1)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn fill_in_container_close_char<W: Write>(
+        &self,
+        buf: &mut W,
+        available_space: usize,
+        row: &Row,
+    ) -> Result<usize, fmt::Error> {
+        let needed_space = if self.trailing_comma { 2 } else { 1 };
+
+        if available_space >= needed_space {
+            if self.focused || self.secondarily_focused {
+                self.tui.bold(buf)?;
+            }
+            buf.write_char(row.value.container_type().unwrap().close_char())?;
+
+            if self.trailing_comma {
+                self.tui.reset_style(buf)?;
+                buf.write_char(',')?;
+            }
+
+            Ok(needed_space)
+        } else {
+            Ok(0)
+        }
+    }
+
+    fn fill_in_container_preview<W: Write>(
+        &self,
+        buf: &mut W,
+        available_space: usize,
+        _flatjson: &FlatJson,
+        _index: Index,
+        row: &Row,
+    ) -> Result<usize, fmt::Error> {
+        let type_str = row.value.container_type().unwrap().type_str();
+        let mut needed_space = type_str.len();
+
+        if self.trailing_comma {
+            needed_space += 1;
+        }
+
+        if available_space >= needed_space {
+            if !self.focused {
+                self.tui.fg_color(buf, Color::LightBlack)?;
+            }
+
+            write!(buf, "{}", type_str)?;
+
+            if self.trailing_comma {
+                self.tui.reset_style(buf)?;
+                buf.write_char(',')?;
+            }
+
+            Ok(needed_space)
+        } else {
+            Ok(0)
+        }
     }
 
     fn print_truncated_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
@@ -471,9 +606,10 @@ mod tests {
                 secondarily_focused: false,
                 trailing_comma: false,
                 label: None,
-                value: LineValue::ContainerChar {
-                    ch: '{',
-                    collapsed: false,
+                value: LineValue::Value {
+                    s: "hello",
+                    quotes: true,
+                    color: Color::White,
                 },
             }
         }

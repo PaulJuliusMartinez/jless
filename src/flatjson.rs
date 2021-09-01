@@ -213,6 +213,29 @@ pub enum ContainerType {
     Array,
 }
 
+impl ContainerType {
+    pub fn open_char(&self) -> char {
+        match self {
+            ContainerType::Object => '{',
+            ContainerType::Array => '[',
+        }
+    }
+
+    pub fn close_char(&self) -> char {
+        match self {
+            ContainerType::Object => '}',
+            ContainerType::Array => ']',
+        }
+    }
+
+    pub fn type_str(&self) -> &'static str {
+        match self {
+            ContainerType::Object => "Object",
+            ContainerType::Array => "Array",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum Value {
     Null,
@@ -245,6 +268,14 @@ impl Value {
             Value::OpenContainer { .. } => true,
             Value::CloseContainer { .. } => true,
             _ => false,
+        }
+    }
+
+    pub fn container_type(&self) -> Option<ContainerType> {
+        match self {
+            Value::OpenContainer { container_type, .. } => Some(*container_type),
+            Value::CloseContainer { container_type, .. } => Some(*container_type),
+            _ => None,
         }
     }
 

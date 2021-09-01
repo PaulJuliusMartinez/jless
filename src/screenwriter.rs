@@ -98,7 +98,7 @@ impl ScreenWriter {
                 }
                 OptionIndex::Index(index) => {
                     let row = &viewer.flatjson[index];
-                    self.print_line(viewer, row_index, row, index == viewer.focused_row)?;
+                    self.print_line(viewer, index, row_index, row, index == viewer.focused_row)?;
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
                         Mode::Data => viewer.flatjson.next_item(index),
@@ -152,250 +152,98 @@ impl ScreenWriter {
     fn print_line(
         &mut self,
         viewer: &JsonViewer,
-        row_index: u16,
+        flatjson_index: Index,
+        screen_index: u16,
         row: &Row,
         is_focused: bool,
     ) -> std::io::Result<()> {
-        if !row.is_container() {
-            self.tty_writer.position_cursor(1, row_index + 1)?;
+        self.tty_writer.position_cursor(1, screen_index + 1)?;
 
-            // USING LINEPRINTER
-            let depth = row
-                .depth
-                .saturating_sub(self.indentation_reduction as usize);
+        let depth = row
+            .depth
+            .saturating_sub(self.indentation_reduction as usize);
 
-            let focused = is_focused;
+        let focused = is_focused;
 
-            let mut label = None;
-            let mut index_label = "".to_string();
-            let mut number_value = "".to_string();
+        let mut label = None;
+        let index_label: String;
+        let number_value: String;
 
-            // Set up key label.
-            if let Some(key) = &row.key {
-                label = Some(lp::LineLabel::Key {
-                    key,
-                    quoted: viewer.mode == Mode::Line || !JS_IDENTIFIER.is_match(key),
+        // Set up key label.
+        if let Some(key) = &row.key {
+            label = Some(lp::LineLabel::Key {
+                key,
+                quoted: viewer.mode == Mode::Line || !JS_IDENTIFIER.is_match(key),
+            });
+        }
+
+        // Set up index label.
+        if let OptionIndex::Index(parent) = row.parent {
+            if viewer.mode == Mode::Data && viewer.flatjson[parent].is_array() {
+                index_label = format!("{}", row.index);
+                label = Some(lp::LineLabel::Index {
+                    index: &index_label,
                 });
             }
+        }
 
-            // Set up index label.
-            if let OptionIndex::Index(parent) = row.parent {
-                if viewer.mode == Mode::Data && viewer.flatjson[parent].is_array() {
-                    index_label = format!("{}", row.index);
-                    label = Some(lp::LineLabel::Index {
-                        index: &index_label,
-                    });
+        // TODO: It would be great if I could move this match out of here,
+        // but I need a reference to the string representation of the Value::Number
+        // value that lives long enough. The Container LineValue also uses some
+        // local variables.
+        let value = match &row.value {
+            Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
+                lp::LineValue::Container {
+                    flatjson: &viewer.flatjson,
+                    row,
+                    index: flatjson_index,
                 }
             }
-
-            let value = match &row.value {
-                Value::OpenContainer { .. } => panic!("Can't use line printer for containers yet"),
-                Value::CloseContainer { .. } => panic!("Can't use line printer for containers yet"),
-                Value::Null => lp::LineValue::Value {
-                    s: "null",
+            Value::Null => lp::LineValue::Value {
+                s: "null",
+                quotes: false,
+                color: TUIColor::LightBlack,
+            },
+            Value::Boolean(b) => lp::LineValue::Value {
+                s: if *b { "true" } else { "false" },
+                quotes: false,
+                color: TUIColor::Yellow,
+            },
+            Value::Number(n) => {
+                number_value = n.to_string();
+                lp::LineValue::Value {
+                    s: &number_value,
                     quotes: false,
-                    color: TUIColor::LightBlack,
-                },
-                Value::Boolean(b) => lp::LineValue::Value {
-                    s: if *b { "true" } else { "false" },
-                    quotes: false,
-                    color: TUIColor::Yellow,
-                },
-                Value::Number(n) => {
-                    number_value = n.to_string();
-                    lp::LineValue::Value {
-                        s: &number_value,
-                        quotes: false,
-                        color: TUIColor::Magenta,
-                    }
-                }
-                Value::String(s) => lp::LineValue::Value {
-                    s,
-                    quotes: true,
-                    color: TUIColor::Green,
-                },
-                Value::EmptyObject => lp::LineValue::Value {
-                    s: "{}",
-                    quotes: false,
-                    color: TUIColor::White,
-                },
-                Value::EmptyArray => lp::LineValue::Value {
-                    s: "[]",
-                    quotes: false,
-                    color: TUIColor::White,
-                },
-            };
-
-            let mut trailing_comma = false;
-
-            if viewer.mode == Mode::Line {
-                // The next_sibling field isn't set for CloseContainer rows, so
-                // we need to get the OpenContainer row before we check if a row
-                // is the last row in a container, and thus whether we should
-                // print a trailing comma or not.
-                let row_root = if row.is_closing_of_container() {
-                    &viewer.flatjson[row.pair_index().unwrap()]
-                } else {
-                    row
-                };
-
-                if row_root.next_sibling.is_some() {
-                    if row.is_opening_of_container() && row.is_expanded() {
-                        // Don't print trailing commas after { or [, but
-                        // if it's collapsed, we do print one after the } or ].
-                    } else {
-                        trailing_comma = true;
-                    }
+                    color: TUIColor::Magenta,
                 }
             }
+            Value::String(s) => lp::LineValue::Value {
+                s,
+                quotes: true,
+                color: TUIColor::Green,
+            },
+            Value::EmptyObject => lp::LineValue::Value {
+                s: "{}",
+                quotes: false,
+                color: TUIColor::White,
+            },
+            Value::EmptyArray => lp::LineValue::Value {
+                s: "[]",
+                quotes: false,
+                color: TUIColor::White,
+            },
+        };
 
-            let line = lp::LinePrinter {
-                mode: viewer.mode,
-                tui: ColorControl {},
-
-                depth,
-                width: self.dimensions.width as usize,
-                tab_size: 2,
-
-                focused,
-                secondarily_focused: false,
-                trailing_comma,
-
-                label,
-                value,
-            };
-
-            let mut buf = String::new();
-            line.print_line(&mut buf).unwrap();
-            return write!(self.tty_writer, "{}", buf);
-        }
-
-        // OLD PRINT_LINE
-
-        let col = 2 * ((row.depth as u16).saturating_sub(self.indentation_reduction) + 1);
-        if viewer.mode == Mode::Line && is_focused {
-            self.tty_writer.position_cursor(1, row_index + 1)?;
-            write!(self.tty_writer, "{}", FOCUSED_LINE)?;
-        }
-
-        if viewer.mode == Mode::Line {
-            self.tty_writer.position_cursor(col + 1, row_index + 1)?;
-        } else {
-            self.tty_writer.position_cursor(col - 1, row_index + 1)?;
-            if row.is_opening_of_container() {
-                if row.is_expanded() {
-                    if is_focused {
-                        write!(self.tty_writer, "{}", FOCUSED_EXPANDED_CONTAINER)?;
-                    } else {
-                        write!(self.tty_writer, "{}", EXPANDED_CONTAINER)?;
-                    }
-                } else {
-                    if is_focused {
-                        write!(self.tty_writer, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
-                    } else {
-                        write!(self.tty_writer, "{}", COLLAPSED_CONTAINER)?;
-                    }
-                }
-            } else {
-                write!(self.tty_writer, "  ")?;
-            }
-        }
-
-        if let Some(key) = &row.key {
-            if is_focused {
-                self.invert_colors(Blue)?;
-            } else {
-                self.set_fg_color(LightBlue)?;
-            }
-            if viewer.mode == Mode::Line || !JS_IDENTIFIER.is_match(key) {
-                write!(self.tty_writer, "\"{}\"", key)?;
-            } else {
-                write!(self.tty_writer, "{}", key)?;
-            }
-            self.reset_style()?;
-            write!(self.tty_writer, ": ")?;
-        }
-
-        if let OptionIndex::Index(parent) = row.parent {
-            if viewer.mode == Mode::Data
-                && viewer.flatjson[parent].is_array()
-                && !row.is_closing_of_container()
-            {
-                if !is_focused {
-                    self.set_fg_color(LightBlack)?;
-                } else {
-                    self.bold()?;
-                }
-                write!(self.tty_writer, "[{}]", row.index)?;
-                self.reset_style()?;
-                write!(self.tty_writer, ": ")?;
-            }
-        }
-
-        let mut bold_brace = false;
+        let mut secondarily_focused = false;
         if row.is_container() {
             let pair_index = row.pair_index().unwrap();
             if is_focused || viewer.focused_row == pair_index {
-                bold_brace = true;
+                secondarily_focused = true;
             }
         }
 
-        match &row.value {
-            Value::OpenContainer {
-                container_type,
-                collapsed,
-                ..
-            } => match container_type {
-                ContainerType::Object => {
-                    if *collapsed {
-                        write!(self.tty_writer, "{{ ... }}")?
-                    } else {
-                        if viewer.mode == Mode::Line {
-                            if bold_brace {
-                                self.bold()?;
-                            }
-                            write!(self.tty_writer, "{{")?
-                        } else {
-                            if !is_focused {
-                                self.set_fg_color(LightBlack)?;
-                            }
-                            write!(self.tty_writer, "Object")?
-                        }
-                    }
-                }
-                ContainerType::Array => {
-                    if *collapsed {
-                        write!(self.tty_writer, "[ ... ]")?
-                    } else {
-                        if viewer.mode == Mode::Line {
-                            if bold_brace {
-                                self.bold()?;
-                            }
-                            write!(self.tty_writer, "[")?
-                        } else {
-                            if !is_focused {
-                                self.set_fg_color(LightBlack)?;
-                            }
-                            write!(self.tty_writer, "Array")?
-                        }
-                    }
-                }
-            },
-            Value::CloseContainer { container_type, .. } => {
-                if bold_brace {
-                    self.bold()?;
-                }
-                match container_type {
-                    ContainerType::Object => self.tty_writer.write_char('}')?,
-                    ContainerType::Array => self.tty_writer.write_char(']')?,
-                }
-            }
-            _ => {}
-        };
+        let mut trailing_comma = false;
 
-        self.reset_style()?;
-
-        // Only print trailing comma in line mode.
         if viewer.mode == Mode::Line {
             // The next_sibling field isn't set for CloseContainer rows, so
             // we need to get the OpenContainer row before we check if a row
@@ -412,12 +260,32 @@ impl ScreenWriter {
                     // Don't print trailing commas after { or [, but
                     // if it's collapsed, we do print one after the } or ].
                 } else {
-                    self.tty_writer.write_char(',')?;
+                    trailing_comma = true;
                 }
             }
         }
 
-        Ok(())
+        let line = lp::LinePrinter {
+            mode: viewer.mode,
+            tui: ColorControl {},
+
+            depth,
+            width: self.dimensions.width as usize,
+            tab_size: 2,
+
+            focused,
+            secondarily_focused,
+            trailing_comma,
+
+            label,
+            value,
+        };
+
+        let mut buf = String::new();
+        // TODO: Handle error here? Or is never an error because writes
+        // to String should never fail?
+        line.print_line(&mut buf).unwrap();
+        write!(self.tty_writer, "{}", buf)
     }
 
     // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id    filename.json
