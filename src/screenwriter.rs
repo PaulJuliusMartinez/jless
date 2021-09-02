@@ -5,7 +5,7 @@ use termion::{clear, cursor};
 use termion::{color, style};
 use unicode_width::UnicodeWidthStr;
 
-use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
+use crate::flatjson::{Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
 use crate::lineprinter as lp;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
@@ -43,12 +43,6 @@ pub struct ScreenWriter {
     pub dimensions: TTYDimensions,
     pub indentation_reduction: u16,
 }
-
-const FOCUSED_LINE: &'static str = "▶ ";
-const FOCUSED_COLLAPSED_CONTAINER: &'static str = "▶ ";
-const FOCUSED_EXPANDED_CONTAINER: &'static str = "▼ ";
-const COLLAPSED_CONTAINER: &'static str = "▷ ";
-const EXPANDED_CONTAINER: &'static str = "▽ ";
 
 const PATH_BASE: &'static str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: usize = 3;
@@ -137,16 +131,8 @@ impl ScreenWriter {
         self.tty_writer.set_fg_color(fg)
     }
 
-    fn set_fg_color(&mut self, color: Color) -> std::io::Result<()> {
-        self.tty_writer.set_fg_color(color)
-    }
-
     fn reset_style(&mut self) -> std::io::Result<()> {
         write!(self.tty_writer, "{}", style::Reset)
-    }
-
-    fn bold(&mut self) -> std::io::Result<()> {
-        write!(self.tty_writer, "{}", style::Bold)
     }
 
     fn print_line(
@@ -288,19 +274,6 @@ impl ScreenWriter {
         write!(self.tty_writer, "{}", buf)
     }
 
-    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id    filename.json
-    //
-    // Idea 1: Replace intermediate accessors with '.', but always keep full key names
-    //
-    // input...viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
-    // input...gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
-    //
-    // Idea 2: Vim style '<' on the left
-    //
-    // <t.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
-    // <viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.json
-    //
-    // Idea 3: filename moves:
     // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.>
     // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id fi>
     // // Path also shrinks if needed
