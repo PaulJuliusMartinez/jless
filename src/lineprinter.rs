@@ -1,7 +1,7 @@
 use std::fmt;
 use std::fmt::Write;
 
-use crate::flatjson::{FlatJson, Index, Row, Value};
+use crate::flatjson::{FlatJson, Index, Row};
 use crate::truncate::truncate_right_to_fit;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::tuicontrol::{Color, TUIControl};
@@ -130,6 +130,11 @@ const FOCUSED_EXPANDED_CONTAINER: &'static str = "▼ ";
 const COLLAPSED_CONTAINER: &'static str = "▷ ";
 const EXPANDED_CONTAINER: &'static str = "▽ ";
 const INDICATOR_WIDTH: usize = 2;
+
+const LABEL_COLOR: Color = Color::LightBlue;
+const FOCUSED_LABEL_COLOR: Color = Color::Blue;
+const FOCUSED_LABEL_BG_COLOR: Color = Color::LightWhite;
+const DIMMED: Color = Color::LightBlack;
 
 pub enum LineLabel<'a> {
     Key { quoted: bool, key: &'a str },
@@ -300,10 +305,10 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 label_ref = key;
 
                 if self.focused {
-                    fg_label_color = Some(Color::Blue);
-                    bg_label_color = Some(Color::LightWhite);
+                    fg_label_color = Some(FOCUSED_LABEL_COLOR);
+                    bg_label_color = Some(FOCUSED_LABEL_BG_COLOR);
                 } else {
-                    fg_label_color = Some(Color::LightBlue);
+                    fg_label_color = Some(LABEL_COLOR);
                 }
             }
             Some(LineLabel::Index { index }) => {
@@ -313,7 +318,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 if self.focused {
                     label_bolded = true;
                 } else {
-                    fg_label_color = Some(Color::LightBlack);
+                    fg_label_color = Some(DIMMED);
                 }
             }
         }
@@ -560,7 +565,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
         if available_space >= needed_space {
             if !self.focused {
-                self.tui.fg_color(buf, Color::LightBlack)?;
+                self.tui.fg_color(buf, DIMMED)?;
             }
 
             write!(buf, "{}", type_str)?;
@@ -579,10 +584,10 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn print_truncated_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
         self.tui.position_cursor(buf, self.width as u16)?;
         if self.focused {
+            self.tui.reset_style(buf)?;
             self.tui.bold(buf)?;
-            self.tui.fg_color(buf, Color::White)?;
         } else {
-            self.tui.fg_color(buf, Color::LightBlack)?;
+            self.tui.fg_color(buf, DIMMED)?;
         }
         write!(buf, ">")
     }
@@ -590,9 +595,24 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tuicontrol::test::EmptyControl;
+    use crate::flatjson::parse_top_level_json;
+    use crate::tuicontrol::test::{EmptyControl, VisibleEscapes};
 
     use super::*;
+
+    const OBJECT: &'static str = r#"{
+        "1": 1,
+        "2": [
+            3,
+            "4"
+        ],
+        "6": {
+            "7": null,
+            "8": true,
+            "9": 9
+        },
+        "11": 11
+    }"#;
 
     impl<'a, TUI: Default + TUIControl> Default for LinePrinter<'a, TUI> {
         fn default() -> LinePrinter<'a, TUI> {
@@ -616,32 +636,114 @@ mod tests {
     }
 
     #[test]
-    #[ignore]
-    fn test_focus_indicators() {
-        let line: LinePrinter<'_, EmptyControl> = LinePrinter {
+    fn test_line_mode_focus_indicators() -> std::fmt::Result {
+        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
             mode: Mode::Line,
+            tui: VisibleEscapes::position_only(),
+            depth: 1,
+            value: LineValue::Value {
+                s: "null",
+                quotes: false,
+                color: Color::White,
+            },
             ..LinePrinter::default()
         };
-        let mut buf = String::new();
-        line.print_line(&mut buf);
 
-        assert_eq!(format!("{}{{", FOCUSED_LINE), buf);
+        let mut buf = String::new();
+        line.print_line(&mut buf)?;
+
+        assert_eq!(format!("_C(5)_null"), buf);
+
+        line.focused = true;
+        line.depth = 3;
+        line.tab_size = 1;
+
+        buf.clear();
+        line.print_line(&mut buf)?;
+
+        assert_eq!(format!("_C(1)_{}_C(6)_null", FOCUSED_LINE), buf);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_data_mode_focus_indicators() -> std::fmt::Result {
+        let mut fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+            tui: VisibleEscapes::position_only(),
+            value: LineValue::Container {
+                flatjson: &fj,
+                index: 0,
+                row: &fj[0],
+            },
+            ..LinePrinter::default()
+        };
+
+        let mut buf = String::new();
+        line.depth = 1;
+        line.print_line(&mut buf)?;
+
+        assert_eq!(format!("_C(3)_{}_C(5)_Object", EXPANDED_CONTAINER), buf);
+
+        line.focused = true;
+
+        buf.clear();
+        line.print_line(&mut buf)?;
+
+        assert_eq!(
+            format!("_C(3)_{}_C(5)_Object", FOCUSED_EXPANDED_CONTAINER),
+            buf
+        );
+
+        fj.collapse(0);
+        // Need to create a new LinePrinter so I can modify fj on the line above.
+        line = LinePrinter {
+            tui: VisibleEscapes::position_only(),
+            depth: 2,
+            tab_size: 4,
+            value: LineValue::Container {
+                flatjson: &fj,
+                index: 0,
+                row: &fj[0],
+            },
+            ..LinePrinter::default()
+        };
+
+        buf.clear();
+        line.print_line(&mut buf)?;
+
+        assert_eq!(format!("_C(9)_{}_C(11)_Object", COLLAPSED_CONTAINER), buf);
+
+        line.focused = true;
+
+        buf.clear();
+        line.print_line(&mut buf)?;
+
+        assert_eq!(
+            format!("_C(9)_{}_C(11)_Object", FOCUSED_COLLAPSED_CONTAINER),
+            buf
+        );
+
+        Ok(())
     }
 
     #[test]
     fn test_fill_label_basic() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
-        line.label = Some(LineLabel::Key {
-            quoted: true,
-            key: "hello",
-        });
+        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+            label: Some(LineLabel::Key {
+                quoted: true,
+                key: "hello",
+            }),
+            ..LinePrinter::default()
+        };
 
         let mut buf = String::new();
         let used_space = line.fill_in_label(&mut buf, 100)?;
 
-        assert_eq!("\"hello\": ", buf);
+        assert_eq!(format!("_FG({:?})_\"hello\"_R_: ", LABEL_COLOR), buf);
         assert_eq!(9, used_space);
 
+        line.focused = true;
         line.label = Some(LineLabel::Key {
             quoted: false,
             key: "hello",
@@ -650,7 +752,13 @@ mod tests {
         buf.clear();
         let used_space = line.fill_in_label(&mut buf, 100)?;
 
-        assert_eq!("hello: ", buf);
+        assert_eq!(
+            format!(
+                "_FG({:?})__BG({:?})_hello_R_: ",
+                FOCUSED_LABEL_COLOR, FOCUSED_LABEL_BG_COLOR
+            ),
+            buf
+        );
         assert_eq!(7, used_space);
 
         line.label = Some(LineLabel::Index { index: "12345" });
@@ -658,7 +766,14 @@ mod tests {
         buf.clear();
         let used_space = line.fill_in_label(&mut buf, 100)?;
 
-        assert_eq!("[12345]: ", buf);
+        assert_eq!("_B_[12345]_R_: ", buf);
+        assert_eq!(9, used_space);
+
+        line.focused = false;
+        buf.clear();
+        let used_space = line.fill_in_label(&mut buf, 100)?;
+
+        assert_eq!(format!("_FG({:?})_[12345]_R_: ", DIMMED), buf);
         assert_eq!(9, used_space);
 
         Ok(())
@@ -732,19 +847,20 @@ mod tests {
 
     #[test]
     fn test_fill_value_basic() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
         let color = Color::Black;
-
-        line.value = LineValue::Value {
-            s: "hello",
-            quotes: true,
-            color,
+        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+            value: LineValue::Value {
+                s: "hello",
+                quotes: true,
+                color,
+            },
+            ..LinePrinter::default()
         };
 
         let mut buf = String::new();
         let used_space = line.fill_in_value(&mut buf, 100)?;
 
-        assert_eq!("\"hello\"", buf);
+        assert_eq!("_FG(Black)_\"hello\"", buf);
         assert_eq!(7, used_space);
 
         line.trailing_comma = true;
@@ -757,7 +873,7 @@ mod tests {
         buf.clear();
         let used_space = line.fill_in_value(&mut buf, 100)?;
 
-        assert_eq!("null,", buf);
+        assert_eq!("_FG(Black)_null_R_,", buf);
         assert_eq!(5, used_space);
 
         Ok(())

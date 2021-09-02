@@ -120,28 +120,75 @@ pub mod test {
         }
     }
 
-    #[derive(Default)]
-    pub struct VisibleEscapes {}
+    pub struct VisibleEscapes {
+        pub position: bool,
+        pub style: bool,
+    }
+
+    impl VisibleEscapes {
+        pub fn position_only() -> Self {
+            VisibleEscapes {
+                position: true,
+                style: false,
+            }
+        }
+
+        pub fn style_only() -> Self {
+            VisibleEscapes {
+                position: false,
+                style: true,
+            }
+        }
+    }
+
+    impl Default for VisibleEscapes {
+        fn default() -> Self {
+            VisibleEscapes {
+                position: true,
+                style: true,
+            }
+        }
+    }
 
     impl TUIControl for VisibleEscapes {
         fn position_cursor<W: Write>(&self, buf: &mut W, col: u16) -> Result {
-            write!(buf, "_COL({})_", col)
+            if self.position {
+                write!(buf, "_C({})_", col)
+            } else {
+                Ok(())
+            }
         }
 
         fn fg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result {
-            write!(buf, "_FG({:?})_", color)
+            if self.style {
+                write!(buf, "_FG({:?})_", color)
+            } else {
+                Ok(())
+            }
         }
 
         fn bg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result {
-            write!(buf, "_BG({:?})_", color)
+            if self.style {
+                write!(buf, "_BG({:?})_", color)
+            } else {
+                Ok(())
+            }
         }
 
         fn bold<W: Write>(&self, buf: &mut W) -> Result {
-            write!(buf, "_BOLD_")
+            if self.style {
+                write!(buf, "_B_")
+            } else {
+                Ok(())
+            }
         }
 
         fn reset_style<W: Write>(&self, buf: &mut W) -> Result {
-            write!(buf, "_RESET_")
+            if self.style {
+                write!(buf, "_R_")
+            } else {
+                Ok(())
+            }
         }
     }
 }
