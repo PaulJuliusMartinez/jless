@@ -95,6 +95,27 @@ macro_rules! define_truncate {
 define_truncate!(truncate_right_to_fit, next_back);
 define_truncate!(truncate_left_to_fit, next);
 
+// Returns the minimum required
+pub fn min_required_width_for_str(s: &str) -> usize {
+    // Empty keys and empty identifiers are always displayed with quotes.
+    if s.is_empty() {
+        return 2;
+    }
+
+    let mut graphemes = s.graphemes(true);
+    let first_grapheme = graphemes.next().unwrap();
+    let first_grapheme_width = UnicodeWidthStr::width(first_grapheme);
+
+    // If the string is a single grapheme, then we only need the width of that
+    // grapheme, but if it's more than that, we'll also need 1 character
+    //
+    if first_grapheme == s {
+        return first_grapheme_width;
+    } else {
+        first_grapheme_width + 1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

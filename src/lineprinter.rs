@@ -1,9 +1,12 @@
 use std::fmt;
 use std::fmt::Write;
 
-use crate::flatjson::{FlatJson, Index, Row};
-use crate::truncate::truncate_right_to_fit;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
+
+use crate::flatjson::{FlatJson, Index, OptionIndex, Row, Value};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
+use crate::truncate::{min_required_width_for_str, truncate_right_to_fit};
 use crate::tuicontrol::{Color, TUIControl};
 use crate::viewer::Mode;
 
@@ -476,7 +479,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_value<W: Write>(
         &self,
         buf: &mut W,
-        mut available_space: usize,
+        available_space: usize,
         flatjson: &FlatJson,
         index: Index,
         row: &Row,
@@ -551,34 +554,223 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_preview<W: Write>(
         &self,
         buf: &mut W,
-        available_space: usize,
-        _flatjson: &FlatJson,
+        mut available_space: usize,
+        flatjson: &FlatJson,
         _index: Index,
         row: &Row,
     ) -> Result<usize, fmt::Error> {
-        let type_str = row.value.container_type().unwrap().type_str();
-        let mut needed_space = type_str.len();
+        if self.trailing_comma {
+            available_space -= 1;
+        }
+
+        if !self.focused {
+            self.tui.fg_color(buf, DIMMED)?;
+        }
+        let mut used_space =
+            LinePrinter::<TUI>::generate_container_preview(buf, flatjson, row, available_space)?;
 
         if self.trailing_comma {
-            needed_space += 1;
+            self.tui.reset_style(buf)?;
+            used_space += 1;
+            buf.write_char(',')?;
         }
 
-        if available_space >= needed_space {
-            if !self.focused {
-                self.tui.fg_color(buf, DIMMED)?;
-            }
+        Ok(used_space)
+    }
 
-            write!(buf, "{}", type_str)?;
+    fn generate_container_preview<W: Write>(
+        buf: &mut W,
+        flatjson: &FlatJson,
+        row: &Row,
+        mut available_space: usize,
+    ) -> Result<usize, fmt::Error> {
+        debug_assert!(row.is_opening_of_container());
 
-            if self.trailing_comma {
-                self.tui.reset_style(buf)?;
-                buf.write_char(',')?;
-            }
-
-            Ok(needed_space)
-        } else {
-            Ok(0)
+        // Minimum amount of space required == 3: […]
+        if available_space < 3 {
+            return Ok(0);
         }
+
+        let container_type = row.value.container_type().unwrap();
+        available_space -= 2;
+        let mut num_printed = 2;
+
+        buf.write_char(container_type.open_char())?;
+
+        let mut next_sibling = row.first_child();
+        while let OptionIndex::Index(child) = next_sibling {
+            next_sibling = flatjson[child].next_sibling;
+
+            // If there are still more elements, we'll print out ", …" at the end,
+            let space_needed_at_end_of_container = if next_sibling.is_some() { 3 } else { 0 };
+
+            let used_space = LinePrinter::<TUI>::fill_in_container_elem_preview(
+                buf,
+                &flatjson[child],
+                available_space.saturating_sub(space_needed_at_end_of_container),
+            )?;
+
+            if used_space == 0 {
+                // No room for anything else, let's close out the object.
+                // If we're not the first child, the previous elem will have
+                // printed the ", " separator.
+                buf.write_char('…')?;
+                available_space -= 1;
+                num_printed += 1;
+                break;
+            } else {
+                // Successfully printed elem out, let's print a separator.
+                if next_sibling.is_some() {
+                    write!(buf, ", ")?;
+                    available_space -= 2;
+                    num_printed += 2;
+                }
+            }
+
+            available_space -= used_space;
+            num_printed += used_space;
+        }
+
+        buf.write_char(container_type.close_char())?;
+
+        Ok(num_printed)
+    }
+
+    // {a…: …, …}
+    //
+    // […, …]
+    fn fill_in_container_elem_preview<W: Write>(
+        buf: &mut W,
+        row: &Row,
+        mut available_space: usize,
+    ) -> Result<usize, fmt::Error> {
+        // One character required for the value.
+        let mut required_characters = 1;
+
+        if let Some(key) = &row.key {
+            // Need to display the key
+            required_characters += min_required_width_for_str(key);
+            // Two characters required for the ": "
+            required_characters += 2;
+        }
+
+        if available_space < required_characters {
+            return Ok(0);
+        }
+
+        let mut used_space = 0;
+
+        // Let's print out the object key
+        if let Some(key) = &row.key {
+            let mut key_ref = key.as_str();
+            let mut key_truncated = false;
+
+            // TODO: Check if identifier needs to be quoted.
+
+            // Remove 2 for ": "
+            let space_available_for_key = available_space - 2;
+            match truncate_right_to_fit(key, space_available_for_key, "…") {
+                NoTruncation(width) => {
+                    available_space -= width;
+                    used_space += width;
+                }
+                Truncated(key_prefix, width) => {
+                    available_space -= width;
+                    used_space += width;
+                    key_ref = key_prefix;
+                    key_truncated = true;
+                }
+                DoesntFit => panic!("We just checked that available_space >= min_required_width!"),
+            }
+
+            write!(buf, "{}", key_ref)?;
+            if key_truncated {
+                buf.write_char('…')?;
+            }
+
+            write!(buf, ": ")?;
+            available_space -= 2;
+            used_space += 2;
+        }
+
+        used_space += LinePrinter::<TUI>::fill_in_value_preview(buf, &row.value, available_space)?;
+
+        Ok(used_space)
+    }
+
+    fn fill_in_value_preview<W: Write>(
+        buf: &mut W,
+        value: &Value,
+        mut available_space: usize,
+    ) -> Result<usize, fmt::Error> {
+        let number_value: String;
+        let mut quoted = false;
+
+        let mut value_ref = match value {
+            Value::OpenContainer { container_type, .. } => container_type.collapsed_preview(),
+            Value::CloseContainer { .. } => panic!("CloseContainer cannot be child value."),
+            Value::Null => "null",
+            Value::Boolean(b) => {
+                if *b {
+                    "true"
+                } else {
+                    "false"
+                }
+            }
+            Value::Number(n) => {
+                number_value = n.to_string();
+                &number_value
+            }
+            Value::String(s) => {
+                quoted = true;
+                s
+            }
+            Value::EmptyObject => "{}",
+            Value::EmptyArray => "[]",
+        };
+
+        let mut required_characters = min_required_width_for_str(value_ref);
+        if quoted {
+            required_characters += 2;
+        }
+
+        if available_space < required_characters {
+            return Ok(0);
+        }
+
+        if quoted {
+            available_space -= 2;
+        }
+
+        let mut value_truncated = false;
+        let mut used_space = if quoted { 2 } else { 0 };
+
+        match truncate_right_to_fit(value_ref, available_space, "…") {
+            NoTruncation(width) => {
+                used_space += width;
+            }
+            Truncated(value_prefix, width) => {
+                used_space += width;
+                value_ref = value_prefix;
+                value_truncated = true;
+            }
+            DoesntFit => {
+                return Ok(0);
+            }
+        }
+
+        if quoted {
+            buf.write_char('"')?;
+        }
+        write!(buf, "{}", value_ref)?;
+        if value_truncated {
+            buf.write_char('…')?;
+        }
+        if quoted {
+            buf.write_char('"')?;
+        }
+
+        Ok(used_space)
     }
 
     fn print_truncated_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {

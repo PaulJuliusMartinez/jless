@@ -234,6 +234,13 @@ impl ContainerType {
             ContainerType::Array => "Array",
         }
     }
+
+    pub fn collapsed_preview(&self) -> &'static str {
+        match self {
+            ContainerType::Object => "{…}",
+            ContainerType::Array => "[…]",
+        }
+    }
 }
 
 #[derive(Debug)]
