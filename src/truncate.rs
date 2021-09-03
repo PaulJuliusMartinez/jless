@@ -16,8 +16,8 @@ use unicode_width::UnicodeWidthStr;
 
 #[derive(Eq, PartialEq, Debug)]
 pub enum TruncationResult<'a> {
-    NoTruncation(usize),
-    Truncated(&'a str, usize),
+    NoTruncation(isize),
+    Truncated(&'a str, isize),
     DoesntFit,
 }
 
@@ -47,11 +47,17 @@ macro_rules! define_truncate {
     ($fn_name:ident, $iter_fn:ident) => {
         pub fn $fn_name<'a>(
             input: &'a str,
-            available_space: usize,
+            available_space: isize,
             replacement: &'a str,
         ) -> TruncationResult<'a> {
-            let input_width = UnicodeWidthStr::width(input);
-            let replacement_width = UnicodeWidthStr::width(replacement);
+            // Negative available space means NOTHING can fit, but 0 available_space
+            // means a empty string may still fit.
+            if available_space < 0 {
+                return TruncationResult::DoesntFit;
+            }
+
+            let input_width = UnicodeWidthStr::width(input) as isize;
+            let replacement_width = UnicodeWidthStr::width(replacement) as isize;
 
             // Not quite as fast base case.
             if input_width <= available_space {
@@ -71,7 +77,7 @@ macro_rules! define_truncate {
             // https://unicode-rs.github.io/unicode-segmentation/unicode_segmentation/trait.UnicodeSegmentation.html#tymethod.graphemes
             let mut graphemes = input.graphemes(true);
             while let Some(grapheme) = graphemes.$iter_fn() {
-                let grapheme_width = UnicodeWidthStr::width(grapheme);
+                let grapheme_width = UnicodeWidthStr::width(grapheme) as isize;
                 current_width -= grapheme_width;
                 remaining_width -= grapheme_width;
 
@@ -95,16 +101,21 @@ macro_rules! define_truncate {
 define_truncate!(truncate_right_to_fit, next_back);
 define_truncate!(truncate_left_to_fit, next);
 
-// Returns the minimum required
-pub fn min_required_width_for_str(s: &str) -> usize {
-    // Empty keys and empty identifiers are always displayed with quotes.
+// Returns the minimum number of columns required to display a string
+// that could be truncated.
+//
+// This function is useful because longer strings will always require at
+// least two columns (one for the first character, then one for the ellipsis),
+// but single character strings only need one column (unless that one character
+// is a wide character!).
+pub fn min_required_columns_for_str(s: &str) -> isize {
     if s.is_empty() {
-        return 2;
+        return 0;
     }
 
     let mut graphemes = s.graphemes(true);
     let first_grapheme = graphemes.next().unwrap();
-    let first_grapheme_width = UnicodeWidthStr::width(first_grapheme);
+    let first_grapheme_width = UnicodeWidthStr::width(first_grapheme) as isize;
 
     // If the string is a single grapheme, then we only need the width of that
     // grapheme, but if it's more than that, we'll also need 1 character
@@ -129,6 +140,10 @@ mod tests {
         // Can't display half of the eyes.
         assert_doesnt_fit_right("👀abc", 1, "");
 
+        // Handle empty strings.
+        assert_doesnt_fit_right("", -1, ".");
+        assert_not_right_truncated("", 0, ".");
+
         assert_truncated_right("hello, world", 10, "", "hello, wor", 10);
         assert_truncated_right("hello, world", 10, "...", "hello, ", 10);
         // Can't display half of the emojis.
@@ -145,6 +160,10 @@ mod tests {
         // Can't display half of the eyes.
         assert_doesnt_fit_left("abc👀", 1, "");
 
+        // Handle empty strings.
+        assert_doesnt_fit_left("", -1, ".");
+        assert_not_left_truncated("", 0, ".");
+
         assert_truncated_left("hello, world", 10, "", "llo, world", 10);
         assert_truncated_left("hello, world", 10, "...", ", world", 10);
         // Can't display half of the emojis.
@@ -160,7 +179,7 @@ mod tests {
             $truncate_fn:ident,
         ) => {
             #[track_caller]
-            fn $assert_not_truncated(input: &str, available_space: usize, replacement: &str) {
+            fn $assert_not_truncated(input: &str, available_space: isize, replacement: &str) {
                 assert!(matches!(
                     $truncate_fn(input, available_space, replacement),
                     TruncationResult::NoTruncation(_),
@@ -168,7 +187,7 @@ mod tests {
             }
 
             #[track_caller]
-            fn $assert_doesnt_fit(input: &str, available_space: usize, replacement: &str) {
+            fn $assert_doesnt_fit(input: &str, available_space: isize, replacement: &str) {
                 assert_eq!(
                     TruncationResult::DoesntFit,
                     $truncate_fn(input, available_space, replacement)
@@ -178,10 +197,10 @@ mod tests {
             #[track_caller]
             fn $assert_truncated(
                 input: &str,
-                available_space: usize,
+                available_space: isize,
                 replacement: &str,
                 truncated: &str,
-                width: usize,
+                width: isize,
             ) {
                 assert_eq!(
                     TruncationResult::Truncated(truncated, width),
@@ -203,4 +222,14 @@ mod tests {
         assert_truncated_left,
         truncate_left_to_fit,
     );
+
+    #[test]
+    fn test_min_required_columns() {
+        assert_eq!(0, min_required_columns_for_str(""));
+        assert_eq!(1, min_required_columns_for_str("a"));
+        assert_eq!(2, min_required_columns_for_str("👍"));
+        assert_eq!(2, min_required_columns_for_str("ab"));
+        assert_eq!(2, min_required_columns_for_str("hello, world!"));
+        assert_eq!(3, min_required_columns_for_str("👍 we're good!"));
+    }
 }

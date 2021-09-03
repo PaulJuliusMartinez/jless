@@ -6,7 +6,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::flatjson::{FlatJson, Index, OptionIndex, Row, Value};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
-use crate::truncate::{min_required_width_for_str, truncate_right_to_fit};
+use crate::truncate::{min_required_columns_for_str, truncate_right_to_fit};
 use crate::tuicontrol::{Color, TUIControl};
 use crate::viewer::Mode;
 
@@ -168,7 +168,7 @@ impl LabelStyle {
         }
     }
 
-    fn width(&self) -> usize {
+    fn width(&self) -> isize {
         match self {
             LabelStyle::None => 0,
             _ => 2,
@@ -218,11 +218,11 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
         self.tui.position_cursor(buf, (1 + label_depth) as u16)?;
 
-        let mut available_space = self.width.saturating_sub(label_depth);
+        let mut available_space = self.width as isize - label_depth as isize;
 
         let space_used_for_label = self.fill_in_label(buf, available_space)?;
 
-        available_space = available_space.saturating_sub(space_used_for_label);
+        available_space -= space_used_for_label;
 
         if self.label.is_some() && space_used_for_label == 0 {
             self.print_truncated_indicator(buf)?;
@@ -285,8 +285,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     pub fn fill_in_label<W: Write>(
         &self,
         buf: &mut W,
-        mut available_space: usize,
-    ) -> Result<usize, fmt::Error> {
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
         let label_style: LabelStyle;
         let mut label_ref: &str;
         let mut label_truncated = false;
@@ -328,15 +328,15 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
         // Remove two characters for either "" or [].
         if label_style != LabelStyle::None {
-            available_space = available_space.saturating_sub(2);
+            available_space -= 2;
         }
 
         // Remove two characters for ": "
-        available_space = available_space.saturating_sub(2);
+        available_space -= 2;
 
         // Remove one character for either ">" or a single character
         // of the value.
-        available_space = available_space.saturating_sub(1);
+        available_space -= 1;
 
         match truncate_right_to_fit(label_ref, available_space, "…") {
             NoTruncation(width) => {
@@ -378,8 +378,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_value<W: Write>(
         &self,
         buf: &mut W,
-        mut available_space: usize,
-    ) -> Result<usize, fmt::Error> {
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
         // Object values are sufficiently complicated that we'll handle them
         // in a separate function.
         if let LineValue::Container {
@@ -412,11 +412,11 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         let mut used_space = 0;
 
         if quoted {
-            available_space = available_space.saturating_sub(2);
+            available_space -= 2;
         }
 
         if self.trailing_comma {
-            available_space = available_space.saturating_sub(1);
+            available_space -= 1;
         }
 
         match truncate_right_to_fit(value_ref, available_space, "…") {
@@ -479,11 +479,11 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_value<W: Write>(
         &self,
         buf: &mut W,
-        available_space: usize,
+        available_space: isize,
         flatjson: &FlatJson,
         index: Index,
         row: &Row,
-    ) -> Result<usize, fmt::Error> {
+    ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_container());
 
         let mode = self.mode;
@@ -512,9 +512,9 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_open_char<W: Write>(
         &self,
         buf: &mut W,
-        available_space: usize,
+        available_space: isize,
         row: &Row,
-    ) -> Result<usize, fmt::Error> {
+    ) -> Result<isize, fmt::Error> {
         if available_space > 0 {
             if self.focused || self.secondarily_focused {
                 self.tui.bold(buf)?;
@@ -529,9 +529,9 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_close_char<W: Write>(
         &self,
         buf: &mut W,
-        available_space: usize,
+        available_space: isize,
         row: &Row,
-    ) -> Result<usize, fmt::Error> {
+    ) -> Result<isize, fmt::Error> {
         let needed_space = if self.trailing_comma { 2 } else { 1 };
 
         if available_space >= needed_space {
@@ -554,11 +554,11 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_preview<W: Write>(
         &self,
         buf: &mut W,
-        mut available_space: usize,
+        mut available_space: isize,
         flatjson: &FlatJson,
         _index: Index,
         row: &Row,
-    ) -> Result<usize, fmt::Error> {
+    ) -> Result<isize, fmt::Error> {
         if self.trailing_comma {
             available_space -= 1;
         }
@@ -582,8 +582,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         buf: &mut W,
         flatjson: &FlatJson,
         row: &Row,
-        mut available_space: usize,
-    ) -> Result<usize, fmt::Error> {
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
         // Minimum amount of space required == 3: […]
@@ -607,7 +607,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             let used_space = LinePrinter::<TUI>::fill_in_container_elem_preview(
                 buf,
                 &flatjson[child],
-                available_space.saturating_sub(space_needed_at_end_of_container),
+                available_space - space_needed_at_end_of_container,
             )?;
 
             if used_space == 0 {
@@ -642,14 +642,14 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_container_elem_preview<W: Write>(
         buf: &mut W,
         row: &Row,
-        mut available_space: usize,
-    ) -> Result<usize, fmt::Error> {
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
         // One character required for the value.
         let mut required_characters = 1;
 
         if let Some(key) = &row.key {
             // Need to display the key
-            required_characters += min_required_width_for_str(key);
+            required_characters += min_required_columns_for_str(key);
             // Two characters required for the ": "
             required_characters += 2;
         }
@@ -701,8 +701,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     fn fill_in_value_preview<W: Write>(
         buf: &mut W,
         value: &Value,
-        mut available_space: usize,
-    ) -> Result<usize, fmt::Error> {
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
         let number_value: String;
         let mut quoted = false;
 
@@ -729,7 +729,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             Value::EmptyArray => "[]",
         };
 
-        let mut required_characters = min_required_width_for_str(value_ref);
+        let mut required_characters = min_required_columns_for_str(value_ref);
         if quoted {
             required_characters += 2;
         }
@@ -1098,6 +1098,24 @@ mod tests {
         assert_eq!("", buf);
         assert_eq!(0, used_space);
 
+        // QUOTED EMPTY STRING
+
+        line.value = LineValue::Value {
+            s: "",
+            quotes: true,
+            color,
+        };
+
+        buf.clear();
+        let used_space = line.fill_in_value(&mut buf, 2)?;
+        assert_eq!("\"\"", buf);
+        assert_eq!(2, used_space);
+
+        buf.clear();
+        let used_space = line.fill_in_value(&mut buf, 1)?;
+        assert_eq!("", buf);
+        assert_eq!(0, used_space);
+
         // UNQUOTED VALUE, TRAILING COMMA
 
         // Minimum space is: 't…,', which has a length of 3.
@@ -1108,7 +1126,7 @@ mod tests {
             color,
         };
 
-        let mut buf = String::new();
+        buf.clear();
 
         let used_space = line.fill_in_value(&mut buf, 3)?;
         assert_eq!("t…,", buf);

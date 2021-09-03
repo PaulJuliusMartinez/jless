@@ -45,7 +45,7 @@ pub struct ScreenWriter {
 }
 
 const PATH_BASE: &'static str = "input";
-const SPACE_BETWEEN_PATH_AND_FILENAME: usize = 3;
+const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 lazy_static! {
     static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
@@ -296,7 +296,7 @@ impl ScreenWriter {
         self.print_path_to_node_and_file_name(
             &path_to_node,
             &input_filename,
-            viewer.dimensions.width as usize,
+            viewer.dimensions.width as isize,
         )?;
 
         self.reset_style()?;
@@ -323,11 +323,11 @@ impl ScreenWriter {
         &mut self,
         path_to_node: &str,
         file_name: &str,
-        width: usize,
+        width: isize,
     ) -> std::io::Result<()> {
-        let base_len = PATH_BASE.len();
-        let path_display_width = UnicodeWidthStr::width(path_to_node);
-        let file_display_width = UnicodeWidthStr::width(file_name);
+        let base_len = PATH_BASE.len() as isize;
+        let path_display_width = UnicodeWidthStr::width(path_to_node) as isize;
+        let file_display_width = UnicodeWidthStr::width(file_name) as isize;
 
         let mut base_visible = true;
         let mut base_truncated = false;
@@ -340,10 +340,8 @@ impl ScreenWriter {
         let mut file_ref = file_name;
         let mut file_offset = file_display_width;
 
-        let space_available_for_filename = width
-            .saturating_sub(base_len)
-            .saturating_sub(path_display_width)
-            .saturating_sub(SPACE_BETWEEN_PATH_AND_FILENAME);
+        let space_available_for_filename =
+            width - base_len - path_display_width - SPACE_BETWEEN_PATH_AND_FILENAME;
 
         match truncate_right_to_fit(file_name, space_available_for_filename, ">") {
             NoTruncation(_) => { /* Don't need to truncate filename */ }
@@ -359,7 +357,7 @@ impl ScreenWriter {
 
         // Might need to truncate path if we're not showing the file.
         if !file_visible {
-            let space_available_for_base = width.saturating_sub(path_display_width);
+            let space_available_for_base = width - path_display_width;
 
             match truncate_left_to_fit(PATH_BASE, space_available_for_base, "<") {
                 NoTruncation(_) => { /* Don't need to truncate base */ }
