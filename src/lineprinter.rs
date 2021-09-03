@@ -655,10 +655,12 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         // One character required for the value.
         let mut required_characters = 1;
         let mut quoted_object_key = quoted_object_keys;
+        let mut space_available_for_key = available_space - 1;
 
         if let Some(key) = &row.key {
             if quoted_object_keys || !JS_IDENTIFIER.is_match(key) {
                 required_characters += 2;
+                space_available_for_key -= 2;
                 quoted_object_key = true;
             }
 
@@ -666,6 +668,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             required_characters += min_required_columns_for_str(key);
             // Two characters required for the ": "
             required_characters += 2;
+            space_available_for_key -= 2;
         }
 
         if available_space < required_characters {
@@ -680,7 +683,6 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             let mut key_truncated = false;
 
             // Remove 2 for ": "
-            let space_available_for_key = available_space - 2;
             match truncate_right_to_fit(key, space_available_for_key, "…") {
                 NoTruncation(width) => {
                     available_space -= width;
@@ -706,12 +708,27 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 buf.write_char('"')?;
             }
 
+            if quoted_object_key {
+                available_space -= 2;
+                used_space += 2;
+            }
+
             write!(buf, ": ")?;
             available_space -= 2;
             used_space += 2;
         }
 
-        used_space += LinePrinter::<TUI>::fill_in_value_preview(buf, &row.value, available_space)?;
+        let space_used_for_value =
+            LinePrinter::<TUI>::fill_in_value_preview(buf, &row.value, available_space)?;
+        used_space += space_used_for_value;
+
+        // Make sure to print out ellipsis for the value if we printed out an
+        // object key, but couldn't print out the value. Space was already
+        // allocated for this at the start of the function.
+        if row.key.is_some() && space_used_for_value == 0 {
+            buf.write_char('…')?;
+            used_space += 1;
+        }
 
         Ok(used_space)
     }
@@ -723,9 +740,13 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     ) -> Result<isize, fmt::Error> {
         let number_value: String;
         let mut quoted = false;
+        let mut can_be_truncated = true;
 
         let mut value_ref = match value {
-            Value::OpenContainer { container_type, .. } => container_type.collapsed_preview(),
+            Value::OpenContainer { container_type, .. } => {
+                can_be_truncated = false;
+                container_type.collapsed_preview()
+            }
             Value::CloseContainer { .. } => panic!("CloseContainer cannot be child value."),
             Value::Null => "null",
             Value::Boolean(b) => {
@@ -768,9 +789,13 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 used_space += width;
             }
             Truncated(value_prefix, width) => {
-                used_space += width;
-                value_ref = value_prefix;
-                value_truncated = true;
+                if can_be_truncated {
+                    used_space += width;
+                    value_ref = value_prefix;
+                    value_truncated = true;
+                } else {
+                    return Ok(0);
+                }
             }
             DoesntFit => {
                 return Ok(0);
@@ -805,6 +830,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
 #[cfg(test)]
 mod tests {
+    use unicode_width::UnicodeWidthStr;
+
     use crate::flatjson::parse_top_level_json;
     use crate::tuicontrol::test::{EmptyControl, VisibleEscapes};
 
@@ -1169,6 +1196,100 @@ mod tests {
         assert_eq!(0, used_space);
 
         Ok(())
+    }
+
+    #[test]
+    fn test_generate_object_preview() -> std::fmt::Result {
+        let json = r#"{"a": 1, "d": {"x": true}, "b c": null}"#;
+        //            {"a": 1, "d": {…}, "b c": null}
+        //           01234567890123456789012345678901 (31 characters)
+        //            {a: 1, d: {…}, "b c": null}
+        //           0123456789012345678901234567 (27 characters)
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
+
+        for (available_space, used_space, quoted_object_keys, expected) in vec![
+            (50, 31, true, r#"{"a": 1, "d": {…}, "b c": null}"#),
+            (50, 27, false, r#"{a: 1, d: {…}, "b c": null}"#),
+            (26, 26, false, r#"{a: 1, d: {…}, "b c": nu…}"#),
+            (25, 25, false, r#"{a: 1, d: {…}, "b c": n…}"#),
+            (24, 24, false, r#"{a: 1, d: {…}, "b c": …}"#),
+            (23, 23, false, r#"{a: 1, d: {…}, "b…": …}"#),
+            (22, 17, false, r#"{a: 1, d: {…}, …}"#),
+            (16, 15, false, r#"{a: 1, d: …, …}"#),
+            (14, 9, false, r#"{a: 1, …}"#),
+            (8, 3, false, r#"{…}"#),
+            (2, 0, false, r#""#),
+        ]
+        .into_iter()
+        {
+            let (buf, used) = generate_container_preview(&fj, available_space, quoted_object_keys)?;
+            assert_eq!(
+                expected,
+                buf,
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(buf.as_str()),
+            );
+            assert_eq!(used_space, used);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_array_preview() -> fmt::Result {
+        let json = r#"[1, {"x": true}, null, "hello", true]"#;
+        //            [1, {…}, null, "hello", true]
+        //           012345678901234567890123456789 (29 characters)
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
+
+        for (available_space, used_space, expected) in vec![
+            (50, 29, r#"[1, {…}, null, "hello", true]"#),
+            (28, 28, r#"[1, {…}, null, "hello", tr…]"#),
+            (27, 27, r#"[1, {…}, null, "hello", t…]"#),
+            (26, 26, r#"[1, {…}, null, "hello", …]"#),
+            (25, 25, r#"[1, {…}, null, "hel…", …]"#),
+            (24, 24, r#"[1, {…}, null, "he…", …]"#),
+            (23, 23, r#"[1, {…}, null, "h…", …]"#),
+            (22, 17, r#"[1, {…}, null, …]"#),
+            (16, 16, r#"[1, {…}, nu…, …]"#),
+            (15, 15, r#"[1, {…}, n…, …]"#),
+            (14, 11, r#"[1, {…}, …]"#),
+            (10, 6, r#"[1, …]"#),
+            (5, 3, r#"[…]"#),
+            (2, 0, r#""#),
+        ]
+        .into_iter()
+        {
+            let quoted_object_keys = false;
+            let (buf, used) = generate_container_preview(&fj, available_space, quoted_object_keys)?;
+            assert_eq!(
+                expected,
+                buf,
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(buf.as_str()),
+            );
+            assert_eq!(used_space, used);
+        }
+
+        Ok(())
+    }
+
+    fn generate_container_preview(
+        flatjson: &FlatJson,
+        available_space: isize,
+        quoted_object_keys: bool,
+    ) -> Result<(String, isize), fmt::Error> {
+        let mut buf = String::new();
+        let used = LinePrinter::<EmptyControl>::generate_container_preview(
+            &mut buf,
+            flatjson,
+            &flatjson[0],
+            available_space,
+            quoted_object_keys,
+        )?;
+        Ok((buf, used))
     }
 
     #[track_caller]
