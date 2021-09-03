@@ -140,6 +140,8 @@ impl JLess {
                         Key::Left | Key::Char('h') => Some(Action::MoveLeft),
                         Key::Right | Key::Char('l') => Some(Action::MoveRight),
                         Key::Char('H') => Some(Action::FocusParent),
+                        Key::Char('c') => Some(Action::CollapseNodeAndSiblings),
+                        Key::Char('e') => Some(Action::ExpandNodeAndSiblings),
                         Key::Char('i') => Some(Action::ToggleCollapsed),
                         Key::Char('^') => Some(Action::FocusFirstSibling),
                         Key::Char('$') => Some(Action::FocusLastSibling),
