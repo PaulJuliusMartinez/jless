@@ -1,10 +1,7 @@
 use std::fmt;
 use std::fmt::Write;
 
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
-
-use crate::flatjson::{FlatJson, Index, OptionIndex, Row, Value};
+use crate::flatjson::{FlatJson, OptionIndex, Row, Value};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{min_required_columns_for_str, truncate_right_to_fit};
 use crate::tuicontrol::{Color, TUIControl};
@@ -180,7 +177,6 @@ pub enum LineValue<'a> {
     Container {
         flatjson: &'a FlatJson,
         row: &'a Row,
-        index: Index,
     },
     Value {
         s: &'a str,
@@ -382,13 +378,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     ) -> Result<isize, fmt::Error> {
         // Object values are sufficiently complicated that we'll handle them
         // in a separate function.
-        if let LineValue::Container {
-            flatjson,
-            index,
-            row,
-        } = self.value
-        {
-            return self.fill_in_container_value(buf, available_space, flatjson, index, row);
+        if let LineValue::Container { flatjson, row } = self.value {
+            return self.fill_in_container_value(buf, available_space, flatjson, row);
         }
 
         let mut value_ref: &str;
@@ -481,7 +472,6 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         buf: &mut W,
         available_space: isize,
         flatjson: &FlatJson,
-        index: Index,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_container());
@@ -501,7 +491,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(buf, available_space, row),
             (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(buf, available_space, row),
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
-                self.fill_in_container_preview(buf, available_space, flatjson, index, row)
+                self.fill_in_container_preview(buf, available_space, flatjson, row)
             }
             // Impossible states
             (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
@@ -556,7 +546,6 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         buf: &mut W,
         mut available_space: isize,
         flatjson: &FlatJson,
-        _index: Index,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         if self.trailing_comma {
@@ -865,7 +854,6 @@ mod tests {
             tui: VisibleEscapes::position_only(),
             value: LineValue::Container {
                 flatjson: &fj,
-                index: 0,
                 row: &fj[0],
             },
             ..LinePrinter::default()
@@ -895,7 +883,6 @@ mod tests {
             tab_size: 4,
             value: LineValue::Container {
                 flatjson: &fj,
-                index: 0,
                 row: &fj[0],
             },
             ..LinePrinter::default()

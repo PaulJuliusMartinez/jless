@@ -92,7 +92,7 @@ impl ScreenWriter {
                 }
                 OptionIndex::Index(index) => {
                     let row = &viewer.flatjson[index];
-                    self.print_line(viewer, index, row_index, row, index == viewer.focused_row)?;
+                    self.print_line(viewer, row_index, row, index == viewer.focused_row)?;
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
                         Mode::Data => viewer.flatjson.next_item(index),
@@ -138,7 +138,6 @@ impl ScreenWriter {
     fn print_line(
         &mut self,
         viewer: &JsonViewer,
-        flatjson_index: Index,
         screen_index: u16,
         row: &Row,
         is_focused: bool,
@@ -182,7 +181,6 @@ impl ScreenWriter {
                 lp::LineValue::Container {
                     flatjson: &viewer.flatjson,
                     row,
-                    index: flatjson_index,
                 }
             }
             Value::Null => lp::LineValue::Value {
