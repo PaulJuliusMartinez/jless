@@ -863,17 +863,16 @@ mod tests {
         line.depth = 1;
         line.print_line(&mut buf)?;
 
-        assert_eq!(format!("_C(3)_{}_C(5)_Object", EXPANDED_CONTAINER), buf);
+        let expected_prefix = format!("_C(3)_{}_C(5)_{{", EXPANDED_CONTAINER);
+        assert_starts_with(&buf, &expected_prefix);
 
         line.focused = true;
 
         buf.clear();
         line.print_line(&mut buf)?;
 
-        assert_eq!(
-            format!("_C(3)_{}_C(5)_Object", FOCUSED_EXPANDED_CONTAINER),
-            buf
-        );
+        let expected_prefix = format!("_C(3)_{}_C(5)_{{", FOCUSED_EXPANDED_CONTAINER);
+        assert_starts_with(&buf, &expected_prefix);
 
         fj.collapse(0);
         // Need to create a new LinePrinter so I can modify fj on the line above.
@@ -891,17 +890,16 @@ mod tests {
         buf.clear();
         line.print_line(&mut buf)?;
 
-        assert_eq!(format!("_C(9)_{}_C(11)_Object", COLLAPSED_CONTAINER), buf);
+        let expected_prefix = format!("_C(9)_{}_C(11)_{{", COLLAPSED_CONTAINER);
+        assert_starts_with(&buf, &expected_prefix);
 
         line.focused = true;
 
         buf.clear();
         line.print_line(&mut buf)?;
 
-        assert_eq!(
-            format!("_C(9)_{}_C(11)_Object", FOCUSED_COLLAPSED_CONTAINER),
-            buf
-        );
+        let expected_prefix = format!("_C(9)_{}_C(11)_{{", FOCUSED_COLLAPSED_CONTAINER);
+        assert_starts_with(&buf, &expected_prefix);
 
         Ok(())
     }
@@ -1127,5 +1125,15 @@ mod tests {
         assert_eq!(0, used_space);
 
         Ok(())
+    }
+
+    #[track_caller]
+    fn assert_starts_with(s: &str, prefix: &str) {
+        assert!(
+            s.starts_with(prefix),
+            "Expected {} to start with {}",
+            s,
+            prefix,
+        );
     }
 }
