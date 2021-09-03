@@ -1,6 +1,8 @@
 use std::fmt;
 use std::fmt::Write;
 
+use regex::Regex;
+
 use crate::flatjson::{FlatJson, OptionIndex, Row, Value};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{min_required_columns_for_str, truncate_right_to_fit};
@@ -136,8 +138,12 @@ const FOCUSED_LABEL_COLOR: Color = Color::Blue;
 const FOCUSED_LABEL_BG_COLOR: Color = Color::LightWhite;
 const DIMMED: Color = Color::LightBlack;
 
+lazy_static! {
+    pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
+}
+
 pub enum LineLabel<'a> {
-    Key { quoted: bool, key: &'a str },
+    Key { key: &'a str },
     Index { index: &'a str },
 }
 
@@ -295,12 +301,15 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
         match self.label {
             None => return Ok(0),
-            Some(LineLabel::Key { quoted, key }) => {
-                label_style = if quoted {
+            Some(LineLabel::Key { key }) => {
+                // Quote keys in line mode or if they're not valid JS identifiers.
+                let should_be_quoted = self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key);
+                label_style = if should_be_quoted {
                     LabelStyle::Quote
                 } else {
                     LabelStyle::None
                 };
+
                 label_ref = key;
 
                 if self.focused {
@@ -905,12 +914,10 @@ mod tests {
     }
 
     #[test]
-    fn test_fill_label_basic() -> std::fmt::Result {
+    fn test_fill_key_label_basic() -> std::fmt::Result {
         let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
-            label: Some(LineLabel::Key {
-                quoted: true,
-                key: "hello",
-            }),
+            mode: Mode::Line,
+            label: Some(LineLabel::Key { key: "hello" }),
             ..LinePrinter::default()
         };
 
@@ -921,10 +928,8 @@ mod tests {
         assert_eq!(9, used_space);
 
         line.focused = true;
-        line.label = Some(LineLabel::Key {
-            quoted: false,
-            key: "hello",
-        });
+        line.mode = Mode::Data;
+        line.label = Some(LineLabel::Key { key: "hello" });
 
         buf.clear();
         let used_space = line.fill_in_label(&mut buf, 100)?;
@@ -938,19 +943,42 @@ mod tests {
         );
         assert_eq!(7, used_space);
 
-        line.label = Some(LineLabel::Index { index: "12345" });
+        // Non JS identifiers (including empty-string) get quoted.
+        line.label = Some(LineLabel::Key { key: "" });
 
+        buf.clear();
+        let used_space = line.fill_in_label(&mut buf, 100)?;
+
+        assert_eq!(
+            format!(
+                "_FG({:?})__BG({:?})_\"\"_R_: ",
+                FOCUSED_LABEL_COLOR, FOCUSED_LABEL_BG_COLOR
+            ),
+            buf
+        );
+        assert_eq!(4, used_space);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_fill_index_label_basic() -> std::fmt::Result {
+        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+            label: Some(LineLabel::Index { index: "12345" }),
+            ..LinePrinter::default()
+        };
+
+        let mut buf = String::new();
+
+        let used_space = line.fill_in_label(&mut buf, 100)?;
+        assert_eq!(format!("_FG({:?})_[12345]_R_: ", DIMMED), buf);
+        assert_eq!(9, used_space);
+
+        line.focused = true;
         buf.clear();
         let used_space = line.fill_in_label(&mut buf, 100)?;
 
         assert_eq!("_B_[12345]_R_: ", buf);
-        assert_eq!(9, used_space);
-
-        line.focused = false;
-        buf.clear();
-        let used_space = line.fill_in_label(&mut buf, 100)?;
-
-        assert_eq!(format!("_FG({:?})_[12345]_R_: ", DIMMED), buf);
         assert_eq!(9, used_space);
 
         Ok(())
@@ -959,10 +987,8 @@ mod tests {
     #[test]
     fn test_fill_label_not_enough_space() -> std::fmt::Result {
         let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
-        line.label = Some(LineLabel::Key {
-            quoted: true,
-            key: "hello",
-        });
+        line.mode = Mode::Line;
+        line.label = Some(LineLabel::Key { key: "hello" });
 
         // QUOTED STRING KEY
 
@@ -983,10 +1009,8 @@ mod tests {
         // UNQUOTED STRING KEY
 
         // Minimum space is: "h…: ", which has a length of 4, plus extra space for value char.
-        line.label = Some(LineLabel::Key {
-            quoted: false,
-            key: "hello",
-        });
+        line.mode = Mode::Data;
+        line.label = Some(LineLabel::Key { key: "hello" });
 
         buf.clear();
 

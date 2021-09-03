@@ -1,6 +1,6 @@
-use regex::Regex;
-use rustyline::Editor;
 use std::fmt::Write;
+
+use rustyline::Editor;
 use termion::{clear, cursor};
 use termion::{color, style};
 use unicode_width::UnicodeWidthStr;
@@ -8,6 +8,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::flatjson::{Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
 use crate::lineprinter as lp;
+use crate::lineprinter::JS_IDENTIFIER;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::tuicontrol::{Color as TUIColor, ColorControl};
@@ -46,10 +47,6 @@ pub struct ScreenWriter {
 
 const PATH_BASE: &'static str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
-
-lazy_static! {
-    static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
-}
 
 impl ScreenWriter {
     pub fn print(&mut self, viewer: &JsonViewer, input_buffer: &[u8], input_filename: &str) {
@@ -156,10 +153,7 @@ impl ScreenWriter {
 
         // Set up key label.
         if let Some(key) = &row.key {
-            label = Some(lp::LineLabel::Key {
-                key,
-                quoted: viewer.mode == Mode::Line || !JS_IDENTIFIER.is_match(key),
-            });
+            label = Some(lp::LineLabel::Key { key });
         }
 
         // Set up index label.
