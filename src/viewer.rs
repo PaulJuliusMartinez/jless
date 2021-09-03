@@ -493,6 +493,10 @@ impl JsonViewer {
     // change where the focused row is) and makes sure that it isn't within SCROLLOFF
     // lines of the top or bottom of the screen.
     fn ensure_focused_row_is_visible(&mut self) {
+        // First make sure that the top row is visible. It may no longer be visible
+        // after performing an action like CollapseNodeAndSiblings.
+        self.ensure_top_row_is_visible();
+
         // height; scrolloff; actual scrolloff; max_padding
         //   100       3              3            96
         //   15        7              7             7
@@ -588,6 +592,35 @@ impl JsonViewer {
                 (self.dimensions.height - bottom_padding - 1) as usize,
                 self.mode,
             );
+        }
+    }
+
+    // Makes sure that the top row is visible. If not, the top row will be updated
+    // to the first visible parent of the top row.
+    //
+    // We need to consider both the case that a parent of the top row has been
+    // collapsed, and the case that the top row is the closing brace of a container
+    // that has been collapsed.
+    //
+    // In this second (much less likely) case, we'll set the top row to the opening
+    // of the container (but then still make sure all of its parents are visible).
+    fn ensure_top_row_is_visible(&mut self) {
+        // Check rare case that top row is closing of container that is now collapsed.
+        if self.flatjson[self.top_row].is_closing_of_container() {
+            let opening = self.flatjson[self.top_row].pair_index().unwrap();
+            if self.flatjson[opening].is_collapsed() {
+                self.top_row = opening;
+            }
+        }
+
+        // Now make sure all ancestors are visible.
+        let mut ancestor = self.top_row;
+        while let OptionIndex::Index(ancestor_index) = self.flatjson[ancestor].parent {
+            if self.flatjson[ancestor_index].is_collapsed() {
+                self.top_row = ancestor_index;
+            }
+
+            ancestor = ancestor_index;
         }
     }
 
