@@ -564,8 +564,15 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         if !self.focused {
             self.tui.fg_color(buf, DIMMED)?;
         }
-        let mut used_space =
-            LinePrinter::<TUI>::generate_container_preview(buf, flatjson, row, available_space)?;
+
+        let quoted_object_keys = self.mode == Mode::Line;
+        let mut used_space = LinePrinter::<TUI>::generate_container_preview(
+            buf,
+            flatjson,
+            row,
+            available_space,
+            quoted_object_keys,
+        )?;
 
         if self.trailing_comma {
             self.tui.reset_style(buf)?;
@@ -581,6 +588,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
+        quoted_object_keys: bool,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
@@ -606,6 +614,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 buf,
                 &flatjson[child],
                 available_space - space_needed_at_end_of_container,
+                quoted_object_keys,
             )?;
 
             if used_space == 0 {
@@ -641,11 +650,18 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         buf: &mut W,
         row: &Row,
         mut available_space: isize,
+        quoted_object_keys: bool,
     ) -> Result<isize, fmt::Error> {
         // One character required for the value.
         let mut required_characters = 1;
+        let mut quoted_object_key = quoted_object_keys;
 
         if let Some(key) = &row.key {
+            if quoted_object_keys || !JS_IDENTIFIER.is_match(key) {
+                required_characters += 2;
+                quoted_object_key = true;
+            }
+
             // Need to display the key
             required_characters += min_required_columns_for_str(key);
             // Two characters required for the ": "
@@ -663,8 +679,6 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             let mut key_ref = key.as_str();
             let mut key_truncated = false;
 
-            // TODO: Check if identifier needs to be quoted.
-
             // Remove 2 for ": "
             let space_available_for_key = available_space - 2;
             match truncate_right_to_fit(key, space_available_for_key, "…") {
@@ -681,9 +695,15 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 DoesntFit => panic!("We just checked that available_space >= min_required_width!"),
             }
 
+            if quoted_object_key {
+                buf.write_char('"')?;
+            }
             write!(buf, "{}", key_ref)?;
             if key_truncated {
                 buf.write_char('…')?;
+            }
+            if quoted_object_key {
+                buf.write_char('"')?;
             }
 
             write!(buf, ": ")?;
