@@ -84,7 +84,9 @@ impl ScreenWriter {
         for row_index in 0..viewer.dimensions.height {
             match line {
                 OptionIndex::Nil => {
+                    self.reset_style()?;
                     self.tty_writer.position_cursor(1, row_index + 1)?;
+                    self.tty_writer.set_fg_color(LightBlack)?;
                     write!(self.tty_writer, "~")?;
                 }
                 OptionIndex::Index(index) => {
