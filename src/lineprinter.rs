@@ -604,17 +604,22 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         buf.write_char(container_type.open_char())?;
 
         let mut next_sibling = row.first_child();
+        let mut is_first_child = true;
         while let OptionIndex::Index(child) = next_sibling {
             next_sibling = flatjson[child].next_sibling;
 
             // If there are still more elements, we'll print out ", …" at the end,
             let space_needed_at_end_of_container = if next_sibling.is_some() { 3 } else { 0 };
+            let space_available_for_elem = available_space - space_needed_at_end_of_container;
+            let is_only_child = is_first_child && next_sibling.is_nil();
 
             let used_space = LinePrinter::<TUI>::fill_in_container_elem_preview(
                 buf,
+                flatjson,
                 &flatjson[child],
-                available_space - space_needed_at_end_of_container,
+                space_available_for_elem,
                 quoted_object_keys,
+                is_only_child,
             )?;
 
             if used_space == 0 {
@@ -636,6 +641,8 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
             available_space -= used_space;
             num_printed += used_space;
+
+            is_first_child = false;
         }
 
         buf.write_char(container_type.close_char())?;
@@ -648,9 +655,11 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     // […, …]
     fn fill_in_container_elem_preview<W: Write>(
         buf: &mut W,
+        flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
         quoted_object_keys: bool,
+        is_only_child: bool,
     ) -> Result<isize, fmt::Error> {
         // One character required for the value.
         let mut required_characters = 1;
@@ -718,8 +727,17 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             used_space += 2;
         }
 
-        let space_used_for_value =
-            LinePrinter::<TUI>::fill_in_value_preview(buf, &row.value, available_space)?;
+        let space_used_for_value = if is_only_child && row.value.is_container() {
+            LinePrinter::<TUI>::generate_container_preview(
+                buf,
+                flatjson,
+                &row,
+                available_space,
+                quoted_object_keys,
+            )?
+        } else {
+            LinePrinter::<TUI>::fill_in_value_preview(buf, &row.value, available_space)?
+        };
         used_space += space_used_for_value;
 
         // Make sure to print out ellipsis for the value if we printed out an
@@ -1272,6 +1290,37 @@ mod tests {
             );
             assert_eq!(used_space, used);
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_container_preview_single_container_child() -> fmt::Result {
+        let json = r#"{"a": [1, {"x": true}, null, "hello", true]}"#;
+        //            {a: [1, {…}, null, "hello", true]}
+        //           01234567890123456789012345678901234 (34 characters)
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
+
+        let (buf, used) = generate_container_preview(&fj, 34, false)?;
+        assert_eq!(r#"{a: [1, {…}, null, "hello", true]}"#, buf);
+        assert_eq!(34, used);
+
+        let (buf, used) = generate_container_preview(&fj, 33, false)?;
+        assert_eq!(r#"{a: [1, {…}, null, "hello", tr…]}"#, buf);
+        assert_eq!(33, used);
+
+        let json = r#"[{"a": 1, "d": {"x": true}, "b c": null}]"#;
+        //            [{a: 1, d: {…}, "b c": null}]
+        //           012345678901234567890123456789 (29 characters)
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
+
+        let (buf, used) = generate_container_preview(&fj, 29, false)?;
+        assert_eq!(r#"[{a: 1, d: {…}, "b c": null}]"#, buf);
+        assert_eq!(29, used);
+
+        let (buf, used) = generate_container_preview(&fj, 28, false)?;
+        assert_eq!(r#"[{a: 1, d: {…}, "b c": nu…}]"#, buf);
+        assert_eq!(28, used);
 
         Ok(())
     }
