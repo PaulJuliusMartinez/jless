@@ -30,7 +30,7 @@ pub fn new(
     input_filename: String,
     stdout: Box<dyn Write>,
 ) -> Result<JLess, String> {
-    let flatjson = match flatjson::parse_top_level_json(json) {
+    let flatjson = match flatjson::parse_top_level_json2(json) {
         Ok(flatjson) => flatjson,
         Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
     };

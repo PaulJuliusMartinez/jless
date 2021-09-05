@@ -1,5 +1,8 @@
-use serde_json::value::{Number, Value as SerdeValue};
 use std::fmt::Debug;
+
+use serde_json::value::{Number, Value as SerdeValue};
+
+use crate::jsonparser;
 
 pub type Index = usize;
 
@@ -42,7 +45,14 @@ impl From<usize> for OptionIndex {
 }
 
 #[derive(Debug)]
-pub struct FlatJson(Vec<Row>);
+pub struct FlatJson(
+    Vec<Row>,
+    // Single-line pretty printed version of the JSON.
+    // Rows will contain references into this.
+    String,
+    // Max nesting depth.
+    usize,
+);
 
 impl FlatJson {
     pub fn last_visible_index(&self) -> Index {
@@ -380,7 +390,13 @@ pub fn parse_top_level_json(json: String) -> serde_json::Result<FlatJson> {
 
     flatten_json(serde_value, &mut flat_json, &mut parents);
 
-    Ok(FlatJson(flat_json))
+    Ok(FlatJson(flat_json, "".to_string(), 0))
+}
+
+pub fn parse_top_level_json2(json: String) -> Result<FlatJson, String> {
+    let (rows, pretty, depth) = jsonparser::parse(json)?;
+    eprintln!("Pretty printed version of input JSON:\n{}", pretty);
+    Ok(FlatJson(rows, pretty, depth))
 }
 
 fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut Vec<OptionIndex>) {
