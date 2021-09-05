@@ -82,6 +82,7 @@ impl<'a> JsonParser<'a> {
                 break;
             }
 
+            self.pretty_printed.push('\n');
             let next_top_level = self.parse_elem()?;
             num_child += 1;
 
