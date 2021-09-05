@@ -52,11 +52,6 @@ impl<'a> JsonParser<'a> {
             self.peeked_token = Some(self.tokenizer.next());
         }
 
-        // eprintln!(
-        //     "Peeked: {:?} ({:?})",
-        //     self.peeked_token.unwrap(),
-        //     self.tokenizer.span()
-        // );
         self.peeked_token.unwrap()
     }
 
@@ -76,20 +71,25 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_top_level_json(&mut self) -> Result<(), String> {
+        self.consume_whitespace();
+        let mut prev_top_level = self.parse_elem()?;
+        let mut num_child = 0;
+
         loop {
             self.consume_whitespace();
 
-            let top_level_elem = if self.peek_token_or_eof().is_none() {
-                None
-            } else {
-                Some(self.parse_elem()?)
-            };
-
-            match top_level_elem {
-                // Wire up top_level object siblings.
-                Some(_elem) => {}
-                None => break,
+            if self.peek_token_or_eof().is_none() {
+                break;
             }
+
+            let next_top_level = self.parse_elem()?;
+            num_child += 1;
+
+            self.rows[next_top_level].prev_sibling = OptionIndex::Index(prev_top_level);
+            self.rows[next_top_level].index = num_child;
+            self.rows[prev_top_level].next_sibling = OptionIndex::Index(next_top_level);
+
+            prev_top_level = next_top_level;
         }
 
         Ok(())
@@ -205,6 +205,8 @@ impl<'a> JsonParser<'a> {
             prev_sibling = OptionIndex::Index(child);
         }
 
+        self.parents.pop();
+
         if num_children == 0 {
             self.rows[array_open_index].value = Value::EmptyArray;
         } else {
@@ -229,7 +231,6 @@ impl<'a> JsonParser<'a> {
         }
 
         self.pretty_printed.push(']');
-        self.parents.pop();
         Ok(array_open_index)
     }
 
@@ -321,6 +322,8 @@ impl<'a> JsonParser<'a> {
             prev_sibling = OptionIndex::Index(child);
         }
 
+        self.parents.pop();
+
         if num_children == 0 {
             self.rows[object_open_index].value = Value::EmptyObject;
         } else {
@@ -348,7 +351,6 @@ impl<'a> JsonParser<'a> {
         }
 
         self.pretty_printed.push('}');
-        self.parents.pop();
         Ok(object_open_index)
     }
 

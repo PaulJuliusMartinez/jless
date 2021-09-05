@@ -235,7 +235,8 @@ impl ScreenWriter {
                 row
             };
 
-            if row_root.next_sibling.is_some() {
+            // Don't print trailing commas after top level elements.
+            if row_root.parent.is_some() && row_root.next_sibling.is_some() {
                 if row.is_opening_of_container() && row.is_expanded() {
                     // Don't print trailing commas after { or [, but
                     // if it's collapsed, we do print one after the } or ].
