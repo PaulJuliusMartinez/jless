@@ -169,6 +169,7 @@ pub struct Row {
     pub depth: usize,
     pub index: Index,
     pub range: Range<usize>,
+    pub key_range: Option<Range<usize>>,
     pub key: Option<String>,
     pub value: Value,
 }
@@ -410,6 +411,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
         depth,
         index: 0,
         range: 0..0, // Not populated in when using Serde
+        key_range: None, // Not populated in when using Serde
         key: None,
         value: Value::Null,
     };
@@ -478,6 +480,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     depth,
                     index: 0,
                     range: 0..0, // Not populated in when using Serde
+                    key_range: None, // Not populated in when using Serde
                     key: None,
                     value: Value::CloseContainer {
                         container_type: ContainerType::Array,
@@ -550,6 +553,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     depth,
                     index: 0,
                     range: 0..0, // Not populated in when using Serde
+                    key_range: None, // Not populated in when using Serde
                     key: None,
                     value: Value::CloseContainer {
                         container_type: ContainerType::Object,

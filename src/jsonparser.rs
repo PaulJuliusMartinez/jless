@@ -288,12 +288,15 @@ impl<'a> JsonParser<'a> {
                 return self.unexpected_token();
             }
 
-            let key = {
-                self.pretty_printed.push_str(self.tokenizer.slice());
+            let (key, key_range) = {
+                let key_range_start = self.pretty_printed.len();
                 let key_span_len = self.tokenizer.span().len();
+                let key_range = key_range_start..key_range_start + key_span_len;
+
+                self.pretty_printed.push_str(self.tokenizer.slice());
                 let actual_key = self.tokenizer.slice()[1..key_span_len - 1].to_string();
                 self.advance_and_consume_whitespace();
-                actual_key
+                (actual_key, key_range)
             };
 
             if self.peek_token()? != JsonToken::Colon {
@@ -304,6 +307,7 @@ impl<'a> JsonParser<'a> {
 
             let child = self.parse_elem()?;
             self.rows[child].key = Some(key);
+            self.rows[child].key_range = Some(key_range);
             self.consume_whitespace();
 
             if num_children == 0 {
@@ -445,6 +449,7 @@ impl<'a> JsonParser<'a> {
             next_sibling: OptionIndex::Nil,
             index: 0,
             key: None,
+            key_range: None,
         });
 
         index
@@ -461,8 +466,11 @@ mod tests {
         let (rows, _, _) = parse(json).unwrap();
 
         assert_eq!(rows[0].range, 0..43); // Object
+        assert_eq!(rows[1].key_range, Some(2..5)); // "a": 1
         assert_eq!(rows[1].range, 7..8); // "a": 1
+        assert_eq!(rows[2].key_range, Some(10..13)); // "b": true
         assert_eq!(rows[2].range, 15..19); // "b": true
+        assert_eq!(rows[3].key_range, Some(21..24)); // "c": null
         assert_eq!(rows[3].range, 26..30); // "c": null
         assert_eq!(rows[4].range, 39..41); // "ddd": []
         assert_eq!(rows[5].range, 42..43); // }
@@ -484,8 +492,11 @@ mod tests {
 
         assert_eq!(rows[0].range, 0..52); // Array
         assert_eq!(rows[1].range, 1..38); // Object
+        assert_eq!(rows[2].key_range, Some(3..8)); // "abc": "str"
         assert_eq!(rows[2].range, 10..15); // "abc": "str"
+        assert_eq!(rows[3].key_range, Some(17..21)); // "de": 14
         assert_eq!(rows[3].range, 23..25); // "de": 14
+        assert_eq!(rows[4].key_range, Some(27..30)); // "f": null
         assert_eq!(rows[4].range, 32..36); // "f": null
         assert_eq!(rows[5].range, 37..38); // }
         assert_eq!(rows[6].range, 40..44); // true
