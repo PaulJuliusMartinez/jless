@@ -736,7 +736,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 quoted_object_keys,
             )?
         } else {
-            LinePrinter::<TUI>::fill_in_value_preview(buf, &row.value, available_space)?
+            LinePrinter::<TUI>::fill_in_value_preview(buf, &flatjson.1, &row, available_space)?
         };
         used_space += space_used_for_value;
 
@@ -753,37 +753,25 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
     fn fill_in_value_preview<W: Write>(
         buf: &mut W,
-        value: &Value,
+        pretty_printed_json: &str,
+        row: &Row,
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
-        let number_value: String;
         let mut quoted = false;
         let mut can_be_truncated = true;
 
-        let mut value_ref = match value {
+        let mut value_ref = match &row.value {
             Value::OpenContainer { container_type, .. } => {
                 can_be_truncated = false;
                 container_type.collapsed_preview()
             }
             Value::CloseContainer { .. } => panic!("CloseContainer cannot be child value."),
-            Value::Null => "null",
-            Value::Boolean(b) => {
-                if *b {
-                    "true"
-                } else {
-                    "false"
-                }
-            }
-            Value::Number(n) => {
-                number_value = n.to_string();
-                &number_value
-            }
-            Value::String(s) => {
+            Value::String => {
                 quoted = true;
-                s
+                let range = row.range.clone();
+                &pretty_printed_json[range.start + 1..range.end - 1]
             }
-            Value::EmptyObject => "{}",
-            Value::EmptyArray => "[]",
+            _ => &pretty_printed_json[row.range.clone()],
         };
 
         let mut required_characters = min_required_columns_for_str(value_ref);
@@ -850,7 +838,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 mod tests {
     use unicode_width::UnicodeWidthStr;
 
-    use crate::flatjson::parse_top_level_json;
+    use crate::flatjson::parse_top_level_json2;
     use crate::tuicontrol::test::{EmptyControl, VisibleEscapes};
 
     use super::*;
@@ -923,7 +911,7 @@ mod tests {
 
     #[test]
     fn test_data_mode_focus_indicators() -> std::fmt::Result {
-        let mut fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut fj = parse_top_level_json2(OBJECT.to_owned()).unwrap();
         let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
             tui: VisibleEscapes::position_only(),
             value: LineValue::Container {
@@ -1223,7 +1211,7 @@ mod tests {
         //           01234567890123456789012345678901 (31 characters)
         //            {a: 1, d: {…}, "b c": null}
         //           0123456789012345678901234567 (27 characters)
-        let fj = parse_top_level_json(json.to_owned()).unwrap();
+        let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
         for (available_space, used_space, quoted_object_keys, expected) in vec![
             (50, 31, true, r#"{"a": 1, "d": {…}, "b c": null}"#),
@@ -1259,7 +1247,7 @@ mod tests {
         let json = r#"[1, {"x": true}, null, "hello", true]"#;
         //            [1, {…}, null, "hello", true]
         //           012345678901234567890123456789 (29 characters)
-        let fj = parse_top_level_json(json.to_owned()).unwrap();
+        let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
         for (available_space, used_space, expected) in vec![
             (50, 29, r#"[1, {…}, null, "hello", true]"#),
@@ -1299,7 +1287,7 @@ mod tests {
         let json = r#"{"a": [1, {"x": true}, null, "hello", true]}"#;
         //            {a: [1, {…}, null, "hello", true]}
         //           01234567890123456789012345678901234 (34 characters)
-        let fj = parse_top_level_json(json.to_owned()).unwrap();
+        let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
         let (buf, used) = generate_container_preview(&fj, 34, false)?;
         assert_eq!(r#"{a: [1, {…}, null, "hello", true]}"#, buf);
@@ -1312,7 +1300,7 @@ mod tests {
         let json = r#"[{"a": 1, "d": {"x": true}, "b c": null}]"#;
         //            [{a: 1, d: {…}, "b c": null}]
         //           012345678901234567890123456789 (29 characters)
-        let fj = parse_top_level_json(json.to_owned()).unwrap();
+        let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
         let (buf, used) = generate_container_preview(&fj, 29, false)?;
         assert_eq!(r#"[{a: 1, d: {…}, "b c": null}]"#, buf);

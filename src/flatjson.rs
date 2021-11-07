@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 use std::ops::Range;
 
-use serde_json::value::{Number, Value as SerdeValue};
+use serde_json::value::Value as SerdeValue;
 
 use crate::jsonparser;
 
@@ -50,7 +50,7 @@ pub struct FlatJson(
     Vec<Row>,
     // Single-line pretty printed version of the JSON.
     // Rows will contain references into this.
-    String,
+    pub String,
     // Max nesting depth.
     usize,
 );
@@ -257,9 +257,9 @@ impl ContainerType {
 #[derive(Debug)]
 pub enum Value {
     Null,
-    Boolean(bool),
-    Number(Number),
-    String(String),
+    Boolean,
+    Number,
+    String,
     EmptyObject,
     EmptyArray,
     OpenContainer {
@@ -410,7 +410,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
         next_sibling: OptionIndex::Nil,
         depth,
         index: 0,
-        range: 0..0, // Not populated in when using Serde
+        range: 0..0,     // Not populated in when using Serde
         key_range: None, // Not populated in when using Serde
         key: None,
         value: Value::Null,
@@ -418,16 +418,16 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
 
     match serde_value {
         SerdeValue::Null => flat_json.push(row),
-        SerdeValue::Bool(b) => flat_json.push(Row {
-            value: Value::Boolean(b),
+        SerdeValue::Bool(_) => flat_json.push(Row {
+            value: Value::Boolean,
             ..row
         }),
-        SerdeValue::Number(n) => flat_json.push(Row {
-            value: Value::Number(n),
+        SerdeValue::Number(_) => flat_json.push(Row {
+            value: Value::Number,
             ..row
         }),
-        SerdeValue::String(s) => flat_json.push(Row {
-            value: Value::String(s),
+        SerdeValue::String(_) => flat_json.push(Row {
+            value: Value::String,
             ..row
         }),
         SerdeValue::Array(vs) => {
@@ -479,7 +479,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     next_sibling: OptionIndex::Nil,
                     depth,
                     index: 0,
-                    range: 0..0, // Not populated in when using Serde
+                    range: 0..0,     // Not populated in when using Serde
                     key_range: None, // Not populated in when using Serde
                     key: None,
                     value: Value::CloseContainer {
@@ -552,7 +552,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     next_sibling: OptionIndex::Nil,
                     depth,
                     index: 0,
-                    range: 0..0, // Not populated in when using Serde
+                    range: 0..0,     // Not populated in when using Serde
                     key_range: None, // Not populated in when using Serde
                     key: None,
                     value: Value::CloseContainer {

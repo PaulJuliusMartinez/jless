@@ -179,39 +179,26 @@ impl ScreenWriter {
                     row,
                 }
             }
-            Value::Null => lp::LineValue::Value {
-                s: "null",
-                quotes: false,
-                color: TUIColor::LightBlack,
-            },
-            Value::Boolean(b) => lp::LineValue::Value {
-                s: if *b { "true" } else { "false" },
-                quotes: false,
-                color: TUIColor::Yellow,
-            },
-            Value::Number(n) => {
-                number_value = n.to_string();
-                lp::LineValue::Value {
-                    s: &number_value,
-                    quotes: false,
-                    color: TUIColor::Magenta,
-                }
+            _ => {
+                let color = match &row.value {
+                    Value::Null => TUIColor::LightBlack,
+                    Value::Boolean => TUIColor::Yellow,
+                    Value::Number => TUIColor::Magenta,
+                    Value::String => TUIColor::Green,
+                    Value::EmptyObject => TUIColor::White,
+                    Value::EmptyArray => TUIColor::White,
+                    _ => TUIColor::White,
+                };
+
+                let range = row.range.clone();
+                let (s, quotes) = if let Value::String = &row.value {
+                    (&viewer.flatjson.1[range.start + 1..range.end - 1], true)
+                } else {
+                    (&viewer.flatjson.1[range], false)
+                };
+
+                lp::LineValue::Value { s, quotes, color }
             }
-            Value::String(s) => lp::LineValue::Value {
-                s,
-                quotes: true,
-                color: TUIColor::Green,
-            },
-            Value::EmptyObject => lp::LineValue::Value {
-                s: "{}",
-                quotes: false,
-                color: TUIColor::White,
-            },
-            Value::EmptyArray => lp::LineValue::Value {
-                s: "[]",
-                quotes: false,
-                color: TUIColor::White,
-            },
         };
 
         let mut secondarily_focused = false;

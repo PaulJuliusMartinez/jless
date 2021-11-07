@@ -1,5 +1,4 @@
 use logos::{Lexer, Logos};
-use serde_json::Number;
 
 use crate::flatjson::{ContainerType, Index, OptionIndex, Row, Value};
 use crate::jsontokenizer::JsonToken;
@@ -380,7 +379,7 @@ impl<'a> JsonParser<'a> {
     fn parse_bool(&mut self, b: bool) -> Result<usize, String> {
         self.advance();
 
-        let row_index = self.create_row(Value::Boolean(b));
+        let row_index = self.create_row(Value::Boolean);
         let (bool_str, len) = if b { ("true", 4) } else { ("false", 5) };
 
         self.rows[row_index].range.end = self.rows[row_index].range.start + len;
@@ -391,9 +390,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_number(&mut self) -> Result<usize, String> {
-        let row_index = self.create_row(Value::Number(Number::from_string_unchecked(
-            self.tokenizer.slice().to_string(),
-        )));
+        let row_index = self.create_row(Value::Number);
         self.pretty_printed.push_str(self.tokenizer.slice());
 
         self.rows[row_index].range.end =
@@ -405,8 +402,7 @@ impl<'a> JsonParser<'a> {
 
     fn parse_string(&mut self) -> Result<usize, String> {
         let span_len = self.tokenizer.span().len();
-        let actual_str = &self.tokenizer.slice()[1..span_len - 1];
-        let row_index = self.create_row(Value::String(actual_str.to_string()));
+        let row_index = self.create_row(Value::String);
 
         // The token includes the quotation marks.
         self.pretty_printed.push_str(self.tokenizer.slice());
