@@ -287,15 +287,14 @@ impl<'a> JsonParser<'a> {
                 return self.unexpected_token();
             }
 
-            let (key, key_range) = {
+            let key_range = {
                 let key_range_start = self.pretty_printed.len();
                 let key_span_len = self.tokenizer.span().len();
                 let key_range = key_range_start..key_range_start + key_span_len;
 
                 self.pretty_printed.push_str(self.tokenizer.slice());
-                let actual_key = self.tokenizer.slice()[1..key_span_len - 1].to_string();
                 self.advance_and_consume_whitespace();
-                (actual_key, key_range)
+                key_range
             };
 
             if self.peek_token()? != JsonToken::Colon {
@@ -305,7 +304,6 @@ impl<'a> JsonParser<'a> {
             self.pretty_printed.push_str(": ");
 
             let child = self.parse_elem()?;
-            self.rows[child].key = Some(key);
             self.rows[child].key_range = Some(key_range);
             self.consume_whitespace();
 
@@ -444,7 +442,6 @@ impl<'a> JsonParser<'a> {
             prev_sibling: OptionIndex::Nil,
             next_sibling: OptionIndex::Nil,
             index: 0,
-            key: None,
             key_range: None,
         });
 

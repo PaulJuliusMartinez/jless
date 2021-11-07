@@ -154,7 +154,8 @@ impl ScreenWriter {
         let number_value: String;
 
         // Set up key label.
-        if let Some(key) = &row.key {
+        if let Some(key_range) = &row.key_range {
+            let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
             label = Some(lp::LineLabel::Key { key });
         }
 
@@ -420,7 +421,9 @@ impl ScreenWriter {
             ScreenWriter::build_path_to_focused_node(viewer, buf, parent_index);
         }
 
-        if let Some(key) = &row.key {
+        if let Some(key_range) = &row.key_range {
+            let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
+
             if JS_IDENTIFIER.is_match(key) {
                 write!(buf, ".{}", key).unwrap();
             } else {

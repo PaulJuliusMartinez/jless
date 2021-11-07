@@ -599,9 +599,10 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
 
         let container_type = row.value.container_type().unwrap();
         available_space -= 2;
-        let mut num_printed = 2;
+        let mut num_printed = 0;
 
         buf.write_char(container_type.open_char())?;
+        num_printed += 1;
 
         let mut next_sibling = row.first_child();
         let mut is_first_child = true;
@@ -646,6 +647,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         }
 
         buf.write_char(container_type.close_char())?;
+        num_printed += 1;
 
         Ok(num_printed)
     }
@@ -666,7 +668,9 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         let mut quoted_object_key = quoted_object_keys;
         let mut space_available_for_key = available_space - 1;
 
-        if let Some(key) = &row.key {
+        if let Some(key_range) = &row.key_range {
+            let key = &flatjson.1[key_range.start + 1..key_range.end - 1];
+
             if quoted_object_keys || !JS_IDENTIFIER.is_match(key) {
                 required_characters += 2;
                 space_available_for_key -= 2;
@@ -687,12 +691,11 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         let mut used_space = 0;
 
         // Let's print out the object key
-        if let Some(key) = &row.key {
-            let mut key_ref = key.as_str();
+        if let Some(key_range) = &row.key_range {
+            let mut key_ref = &flatjson.1[key_range.start + 1..key_range.end - 1];
             let mut key_truncated = false;
 
-            // Remove 2 for ": "
-            match truncate_right_to_fit(key, space_available_for_key, "…") {
+            match truncate_right_to_fit(key_ref, space_available_for_key, "…") {
                 NoTruncation(width) => {
                     available_space -= width;
                     used_space += width;
@@ -743,7 +746,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         // Make sure to print out ellipsis for the value if we printed out an
         // object key, but couldn't print out the value. Space was already
         // allocated for this at the start of the function.
-        if row.key.is_some() && space_used_for_value == 0 {
+        if row.key_range.is_some() && space_used_for_value == 0 {
             buf.write_char('…')?;
             used_space += 1;
         }

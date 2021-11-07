@@ -170,7 +170,6 @@ pub struct Row {
     pub index: Index,
     pub range: Range<usize>,
     pub key_range: Option<Range<usize>>,
-    pub key: Option<String>,
     pub value: Value,
 }
 
@@ -412,7 +411,6 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
         index: 0,
         range: 0..0,     // Not populated in when using Serde
         key_range: None, // Not populated in when using Serde
-        key: None,
         value: Value::Null,
     };
 
@@ -481,7 +479,6 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     index: 0,
                     range: 0..0,     // Not populated in when using Serde
                     key_range: None, // Not populated in when using Serde
-                    key: None,
                     value: Value::CloseContainer {
                         container_type: ContainerType::Array,
                         collapsed: false,
@@ -534,7 +531,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
 
                     child.index = i;
                     child.prev_sibling = prev_sibling;
-                    child.key = Some(k);
+                    child.key_range = Some(0..0);
 
                     if let OptionIndex::Index(prev_sibling_index) = prev_sibling {
                         flat_json[prev_sibling_index].next_sibling =
@@ -554,7 +551,6 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     index: 0,
                     range: 0..0,     // Not populated in when using Serde
                     key_range: None, // Not populated in when using Serde
-                    key: None,
                     value: Value::CloseContainer {
                         container_type: ContainerType::Object,
                         collapsed: false,
