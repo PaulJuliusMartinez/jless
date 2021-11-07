@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::ops::Range;
 
 use serde_json::value::{Number, Value as SerdeValue};
 
@@ -167,8 +168,7 @@ pub struct Row {
 
     pub depth: usize,
     pub index: Index,
-    // start_index: usize
-    // end_index: usize
+    pub range: Range<usize>,
     pub key: Option<String>,
     pub value: Value,
 }
@@ -395,7 +395,7 @@ pub fn parse_top_level_json(json: String) -> serde_json::Result<FlatJson> {
 
 pub fn parse_top_level_json2(json: String) -> Result<FlatJson, String> {
     let (rows, pretty, depth) = jsonparser::parse(json)?;
-    eprintln!("Pretty printed version of input JSON:\n{}", pretty);
+    // eprintln!("Pretty printed version of input JSON:\n{}", pretty);
     Ok(FlatJson(rows, pretty, depth))
 }
 
@@ -409,6 +409,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
         next_sibling: OptionIndex::Nil,
         depth,
         index: 0,
+        range: 0..0, // Not populated in when using Serde
         key: None,
         value: Value::Null,
     };
@@ -476,6 +477,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     next_sibling: OptionIndex::Nil,
                     depth,
                     index: 0,
+                    range: 0..0, // Not populated in when using Serde
                     key: None,
                     value: Value::CloseContainer {
                         container_type: ContainerType::Array,
@@ -547,6 +549,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                     next_sibling: OptionIndex::Nil,
                     depth,
                     index: 0,
+                    range: 0..0, // Not populated in when using Serde
                     key: None,
                     value: Value::CloseContainer {
                         container_type: ContainerType::Object,

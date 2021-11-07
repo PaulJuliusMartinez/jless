@@ -61,7 +61,7 @@ impl<'a> JsonParser<'a> {
     }
 
     fn unexpected_token(&mut self) -> Result<usize, String> {
-        Err(format!("Unexpected_token: {:?}", self.tokenizer.span()))
+        Err(format!("Unexpected token: {:?}", self.peek_token()))
     }
 
     fn consume_whitespace(&mut self) {
@@ -210,6 +210,7 @@ impl<'a> JsonParser<'a> {
 
         if num_children == 0 {
             self.rows[array_open_index].value = Value::EmptyArray;
+            self.rows[array_open_index].range.end = self.rows[array_open_index].range.start + 2;
         } else {
             let close_value = Value::CloseContainer {
                 container_type: ContainerType::Array,
@@ -219,6 +220,10 @@ impl<'a> JsonParser<'a> {
             };
 
             let array_close_index = self.create_row(close_value);
+
+            // Update end of the Array range; we add the ']' to pretty_printed
+            // below, hence the + 1.
+            self.rows[array_open_index].range.end = self.pretty_printed.len() + 1;
 
             match self.rows[array_open_index].value {
                 Value::OpenContainer {
@@ -327,7 +332,11 @@ impl<'a> JsonParser<'a> {
 
         if num_children == 0 {
             self.rows[object_open_index].value = Value::EmptyObject;
+            self.rows[object_open_index].range.end = self.rows[object_open_index].range.start + 2;
         } else {
+            // Print space inside closing brace.
+            self.pretty_printed.push_str(" ");
+
             let close_value = Value::CloseContainer {
                 container_type: ContainerType::Object,
                 collapsed: false,
@@ -336,6 +345,10 @@ impl<'a> JsonParser<'a> {
             };
 
             let object_close_index = self.create_row(close_value);
+
+            // Update end of the Object range; we add the '}' to pretty_printed
+            // below, hence the + 1.
+            self.rows[object_open_index].range.end = self.pretty_printed.len() + 1;
 
             match self.rows[object_open_index].value {
                 Value::OpenContainer {
@@ -346,9 +359,6 @@ impl<'a> JsonParser<'a> {
                 }
                 _ => panic!("Must be Object!"),
             }
-
-            // Print space inside closing brace.
-            self.pretty_printed.push_str(" ");
         }
 
         self.pretty_printed.push('}');
@@ -357,34 +367,57 @@ impl<'a> JsonParser<'a> {
 
     fn parse_null(&mut self) -> Result<usize, String> {
         self.advance();
+        let row_index = self.create_row(Value::Null);
+        self.rows[row_index].range.end = self.rows[row_index].range.start + 4;
         self.pretty_printed.push_str("null");
-        Ok(self.create_row(Value::Null))
+        Ok(row_index)
     }
 
     fn parse_bool(&mut self, b: bool) -> Result<usize, String> {
         self.advance();
+
+        let row_index = self.create_row(Value::Boolean(b));
+        let (bool_str, len) = if b { ("true", 4) } else { ("false", 5) };
+
+        self.rows[row_index].range.end = self.rows[row_index].range.start + len;
         self.pretty_printed
-            .push_str(if b { "true" } else { "false" });
-        Ok(self.create_row(Value::Boolean(b)))
+            .push_str(if b { bool_str } else { bool_str });
+
+        Ok(row_index)
     }
 
     fn parse_number(&mut self) -> Result<usize, String> {
-        self.pretty_printed.push_str(self.tokenizer.slice());
-        self.advance();
-        Ok(self.create_row(Value::Number(Number::from_string_unchecked(
+        let row_index = self.create_row(Value::Number(Number::from_string_unchecked(
             self.tokenizer.slice().to_string(),
-        ))))
+        )));
+        self.pretty_printed.push_str(self.tokenizer.slice());
+
+        self.rows[row_index].range.end =
+            self.rows[row_index].range.start + self.tokenizer.slice().len();
+
+        self.advance();
+        Ok(row_index)
     }
 
     fn parse_string(&mut self) -> Result<usize, String> {
-        // The token includes the quotation marks.
-        self.pretty_printed.push_str(self.tokenizer.slice());
         let span_len = self.tokenizer.span().len();
         let actual_str = &self.tokenizer.slice()[1..span_len - 1];
+        let row_index = self.create_row(Value::String(actual_str.to_string()));
+
+        // The token includes the quotation marks.
+        self.pretty_printed.push_str(self.tokenizer.slice());
+        self.rows[row_index].range.end =
+            self.rows[row_index].range.start + self.tokenizer.slice().len();
+
         self.advance();
-        Ok(self.create_row(Value::String(actual_str.to_string())))
+        Ok(row_index)
     }
 
+    // Add a new row to the FlatJson representation.
+    //
+    // self.pretty_printed should NOT include the added row yet;
+    // we use the current length of self.pretty_printed as the
+    // starting index of the row's range.
     fn create_row(&mut self, value: Value) -> usize {
         let index = self.rows.len();
 
@@ -393,11 +426,19 @@ impl<'a> JsonParser<'a> {
             Some(row_index) => OptionIndex::Index(*row_index),
         };
 
+        let range_start = self.pretty_printed.len();
+
         self.rows.push(Row {
             // Set correctly by us
             parent,
             depth: self.parents.len(),
             value,
+
+            // The start of this range is set by us, but then we set
+            // the end when we're done parsing the row. We'll set
+            // the default end to be one character so we don't have to
+            // update it after ']' and '}'.
+            range: range_start..range_start + 1,
 
             // To be filled in by caller
             prev_sibling: OptionIndex::Nil,
@@ -407,5 +448,48 @@ impl<'a> JsonParser<'a> {
         });
 
         index
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_row_ranges() {
+        //            0 2    7  10   15    21   26    32     39 42
+        let json = r#"{ "a": 1, "b": true, "c": null, "ddd": [] }"#.to_owned();
+        let (rows, _, _) = parse(json).unwrap();
+
+        assert_eq!(rows[0].range, 0..43); // Object
+        assert_eq!(rows[1].range, 7..8); // "a": 1
+        assert_eq!(rows[2].range, 15..19); // "b": true
+        assert_eq!(rows[3].range, 26..30); // "c": null
+        assert_eq!(rows[4].range, 39..41); // "ddd": []
+        assert_eq!(rows[5].range, 42..43); // }
+
+        //            01   5        14     21 23
+        let json = r#"[14, "apple", false, {}]"#.to_owned();
+        let (rows, _, _) = parse(json).unwrap();
+
+        assert_eq!(rows[0].range, 0..24); // Array
+        assert_eq!(rows[1].range, 1..3); // 14
+        assert_eq!(rows[2].range, 5..12); // "apple"
+        assert_eq!(rows[3].range, 14..19); // false
+        assert_eq!(rows[4].range, 21..23); // {}
+        assert_eq!(rows[5].range, 23..24); // ]
+
+        //            01 3      10     17    23  27   32   37 40    46   51
+        let json = r#"[{ "abc": "str", "de": 14, "f": null }, true, false]"#.to_owned();
+        let (rows, _, _) = parse(json).unwrap();
+
+        assert_eq!(rows[0].range, 0..52); // Array
+        assert_eq!(rows[1].range, 1..38); // Object
+        assert_eq!(rows[2].range, 10..15); // "abc": "str"
+        assert_eq!(rows[3].range, 23..25); // "de": 14
+        assert_eq!(rows[4].range, 32..36); // "f": null
+        assert_eq!(rows[5].range, 37..38); // }
+        assert_eq!(rows[6].range, 40..44); // true
+        assert_eq!(rows[7].range, 46..51); // false
+        assert_eq!(rows[8].range, 51..52); // ]
     }
 }
