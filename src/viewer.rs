@@ -54,10 +54,14 @@ impl JsonViewer {
 
 #[derive(Debug, Copy, Clone)]
 pub enum Action {
+    // Does nothing, for debugging, shouldn't modify any state.
+    NoOp,
+
     MoveUp(usize),
     MoveDown(usize),
     MoveLeft,
     MoveRight,
+    MoveTo(Index),
 
     FocusParent,
 
@@ -100,10 +104,12 @@ impl JsonViewer {
         let reset_desired_depth = JsonViewer::should_reset_desired_depth(&action);
 
         match action {
+            Action::NoOp => {}
             Action::MoveUp(n) => self.move_up(n),
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
+            Action::MoveTo(index) => self.focused_row = index,
             Action::FocusParent => self.focus_parent(),
             Action::FocusPrevSibling(n) => self.focus_prev_sibling(n),
             Action::FocusNextSibling(n) => self.focus_next_sibling(n),
@@ -141,10 +147,12 @@ impl JsonViewer {
 
     fn should_refocus_window(action: &Action) -> bool {
         match action {
+            Action::NoOp => false,
             Action::MoveUp(_) => true,
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
+            Action::MoveTo(_) => true,
             Action::FocusParent => true,
             Action::FocusPrevSibling(_) => true,
             Action::FocusNextSibling(_) => true,
@@ -171,6 +179,7 @@ impl JsonViewer {
 
     fn should_reset_desired_depth(action: &Action) -> bool {
         match action {
+            Action::NoOp => false,
             Action::FocusPrevSibling(_) => false,
             Action::FocusNextSibling(_) => false,
             Action::ScrollUp(_) => false,

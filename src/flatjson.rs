@@ -47,7 +47,7 @@ impl From<usize> for OptionIndex {
 
 #[derive(Debug)]
 pub struct FlatJson(
-    Vec<Row>,
+    pub Vec<Row>,
     // Single-line pretty printed version of the JSON.
     // Rows will contain references into this.
     pub String,
@@ -214,6 +214,13 @@ impl Row {
     }
     pub fn pair_index(&self) -> OptionIndex {
         self.value.pair_index()
+    }
+
+    pub fn full_range(&self) -> Range<usize> {
+        match &self.key_range {
+            Some(key_range) => key_range.start..self.range.end,
+            None => self.range.clone(),
+        }
     }
 }
 

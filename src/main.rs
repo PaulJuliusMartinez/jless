@@ -18,6 +18,7 @@ mod jsonparser;
 mod jsontokenizer;
 mod lineprinter;
 mod screenwriter;
+mod search;
 mod truncate;
 mod tuicontrol;
 mod types;

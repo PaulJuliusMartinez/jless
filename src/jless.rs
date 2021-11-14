@@ -10,6 +10,7 @@ use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
 use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
+use crate::search::{JumpDirection, SearchDirection, SearchMode, SearchState};
 use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer};
 use crate::Opt;
@@ -19,6 +20,7 @@ pub struct JLess {
     screen_writer: ScreenWriter,
     input_buffer: Vec<u8>,
     input_filename: String,
+    search_state: SearchState,
 }
 
 pub const MAX_BUFFER_SIZE: usize = 9;
@@ -54,6 +56,7 @@ pub fn new(
         screen_writer,
         input_buffer: vec![],
         input_filename,
+        search_state: SearchState::empty(),
     })
 }
 
@@ -120,6 +123,14 @@ impl JLess {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::FocusNextSibling(lines))
                         }
+                        Key::Char('n') => {
+                            let count = self.parse_input_buffer_as_number();
+                            Some(self.jump_to_next_search_match(count))
+                        }
+                        Key::Char('N') => {
+                            let count = self.parse_input_buffer_as_number();
+                            Some(self.jump_to_prev_search_match(count))
+                        }
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
                             if self.input_buffer == "z".as_bytes() {
@@ -162,6 +173,24 @@ impl JLess {
                             // Something like this?
                             // Some(Action::Command(parse_command(_readline))
                             None
+                        }
+                        Key::Char('/') => {
+                            let search_term = self.screen_writer.get_command().unwrap();
+                            self.initialize_freeform_search(SearchDirection::Forward, search_term);
+                            Some(self.jump_to_next_search_match(1))
+                        }
+                        Key::Char('?') => {
+                            let search_term = self.screen_writer.get_command().unwrap();
+                            self.initialize_freeform_search(SearchDirection::Reverse, search_term);
+                            Some(self.jump_to_next_search_match(1))
+                        }
+                        Key::Char('*') => {
+                            self.initialize_object_key_search(SearchDirection::Forward);
+                            Some(self.jump_to_next_search_match(1))
+                        }
+                        Key::Char('#') => {
+                            self.initialize_object_key_search(SearchDirection::Reverse);
+                            Some(self.jump_to_next_search_match(1))
                         }
                         _ => {
                             print!("{}Got: {:?}\r", BELL, event);
@@ -237,5 +266,34 @@ impl JLess {
         let n = str::parse::<usize>(std::str::from_utf8(&self.input_buffer).unwrap());
         self.input_buffer.clear();
         n.unwrap_or(1)
+    }
+
+    fn initialize_freeform_search(&mut self, direction: SearchDirection, search_term: String) {
+        self.search_state = SearchState::initialize_search(
+            &search_term,
+            &self.viewer.flatjson.1,
+            SearchMode::Freeform,
+            direction,
+        );
+    }
+
+    fn initialize_object_key_search(&mut self, direction: SearchDirection) {}
+
+    fn jump_to_next_search_match(&mut self, jumps: usize) -> Action {
+        let destination = self.search_state.jump_to_match(
+            self.viewer.focused_row,
+            &self.viewer.flatjson,
+            JumpDirection::Next,
+        );
+        Action::MoveTo(destination)
+    }
+
+    fn jump_to_prev_search_match(&mut self, jumps: usize) -> Action {
+        let destination = self.search_state.jump_to_match(
+            self.viewer.focused_row,
+            &self.viewer.flatjson,
+            JumpDirection::Prev,
+        );
+        Action::MoveTo(destination)
     }
 }
