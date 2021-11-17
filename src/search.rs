@@ -56,16 +56,16 @@ impl SearchState {
     }
 
     pub fn initialize_search(
-        needle: &str,
+        needle: String,
         haystack: &str,
         direction: SearchDirection,
     ) -> SearchState {
-        let regex = Regex::new(needle).unwrap();
+        let regex = Regex::new(&needle).unwrap();
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 
         SearchState {
             direction,
-            search_term: needle.to_owned(),
+            search_term: needle,
             compiled_regex: regex,
             matches,
             immediate_state: ImmediateSearchState::NotSearching,

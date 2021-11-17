@@ -309,10 +309,19 @@ impl JLess {
 
     fn initialize_freeform_search(&mut self, direction: SearchDirection, search_term: String) {
         self.search_state =
-            SearchState::initialize_search(&search_term, &self.viewer.flatjson.1, direction);
+            SearchState::initialize_search(search_term, &self.viewer.flatjson.1, direction);
     }
 
-    fn initialize_object_key_search(&mut self, direction: SearchDirection) {}
+    fn initialize_object_key_search(&mut self, direction: SearchDirection) {
+        if let Some(key_range) = &self.viewer.flatjson[self.viewer.focused_row].key_range {
+            // Note key_range already includes quotes around key.
+            let needle = format!("{}: ", &self.viewer.flatjson.1[key_range.clone()]);
+            self.search_state =
+                SearchState::initialize_search(dbg!(needle), &self.viewer.flatjson.1, direction);
+        } else {
+            panic!("Handle object key search initialized not on object key");
+        }
+    }
 
     fn jump_to_next_search_match(&mut self, jumps: usize) -> Action {
         let destination = self.search_state.jump_to_match(
