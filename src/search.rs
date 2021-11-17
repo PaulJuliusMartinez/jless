@@ -111,8 +111,19 @@ impl SearchState {
         let next_focused_row = flatjson.first_visible_ancestor(row_containing_match);
 
         let wrapped = if focused_row == next_focused_row {
-            // If we end up the same place we started, we must have wrapped.
-            true
+            // Usually, if we end up the same place we started, that means that we
+            // wrapped around because there's only a single (visible) match.
+            //
+            // But this can also occur if the opening of a collapsed container matches the
+            // search term AND the search term appears inside the collapsed container.
+            //
+            // We can detect this checking if the next_match_index is different than the
+            // last_jump_index.
+            if let Some((last_match_index, _)) = self.active_search_state() {
+                last_match_index == next_match_index
+            } else {
+                true
+            }
         } else {
             // Otherwise wrapping depends on which direction we were going.
             match true_direction {
@@ -276,9 +287,13 @@ mod tests {
         assert_eq!(search.jump_to_match(1, &fj, Next), 4);
         assert_eq!(search.jump_to_match(4, &fj, Next), 7);
         assert_eq!(search.jump_to_match(7, &fj, Next), 7);
+        assert_wrapped_state(&search, false);
         assert_eq!(search.jump_to_match(7, &fj, Next), 1);
+        assert_wrapped_state(&search, true);
         assert_eq!(search.jump_to_match(1, &fj, Prev), 7);
+        assert_wrapped_state(&search, true);
         assert_eq!(search.jump_to_match(7, &fj, Prev), 7);
+        assert_wrapped_state(&search, false);
         assert_eq!(search.jump_to_match(7, &fj, Prev), 4);
         assert_eq!(search.jump_to_match(4, &fj, Prev), 1);
         assert_eq!(search.jump_to_match(1, &fj, Prev), 7);
@@ -289,14 +304,18 @@ mod tests {
         let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
         let mut search = SearchState::initialize_search("aaa", &fj.1, Reverse);
         assert_eq!(search.jump_to_match(0, &fj, Next), 7);
+        assert_wrapped_state(&search, true);
         assert_eq!(search.jump_to_match(7, &fj, Next), 7);
         assert_eq!(search.jump_to_match(7, &fj, Next), 4);
         assert_eq!(search.jump_to_match(4, &fj, Next), 1);
+        assert_wrapped_state(&search, false);
         assert_eq!(search.jump_to_match(1, &fj, Prev), 4);
         assert_eq!(search.jump_to_match(4, &fj, Prev), 7);
         assert_eq!(search.jump_to_match(7, &fj, Prev), 7);
         assert_eq!(search.jump_to_match(7, &fj, Prev), 1);
+        assert_wrapped_state(&search, true);
         assert_eq!(search.jump_to_match(1, &fj, Prev), 4);
+        assert_wrapped_state(&search, false);
     }
 
     #[test]
@@ -327,5 +346,35 @@ mod tests {
         assert_eq!(search.jump_to_match(1, &fj, Prev), 4);
         assert_eq!(search.jump_to_match(4, &fj, Prev), 6);
         assert_eq!(search.jump_to_match(6, &fj, Prev), 1);
+    }
+
+    #[test]
+    fn test_no_wrap_when_opening_of_collapsed_container_and_contents_match_search() {
+        const TEST: &'static str = r#"{
+            "term": [
+                "term"
+            ],
+            "key": "term"
+        }"#;
+        let mut fj = parse_top_level_json2(TEST.to_owned()).unwrap();
+        let mut search = SearchState::initialize_search("term", &fj.1, Forward);
+        fj.collapse(1);
+        assert_eq!(search.jump_to_match(0, &fj, Next), 1);
+        assert_wrapped_state(&search, false);
+        assert_eq!(search.jump_to_match(1, &fj, Next), 1);
+        assert_wrapped_state(&search, false);
+        assert_eq!(search.jump_to_match(1, &fj, Next), 4);
+        assert_wrapped_state(&search, false);
+        assert_eq!(search.jump_to_match(4, &fj, Next), 1);
+        assert_wrapped_state(&search, true);
+    }
+
+    #[track_caller]
+    fn assert_wrapped_state(search: &SearchState, expected: bool) {
+        if let Some((_, wrapped)) = search.active_search_state() {
+            assert_eq!(wrapped, expected);
+        } else {
+            assert!(false, "Not in an active search state");
+        }
     }
 }
