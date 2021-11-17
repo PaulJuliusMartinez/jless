@@ -2,15 +2,6 @@ use regex::Regex;
 use std::ops::Range;
 
 use crate::flatjson::{FlatJson, Index};
-use crate::viewer::Action;
-
-#[derive(PartialEq, Eq, Debug, Copy, Clone)]
-pub enum SearchMode {
-    // Searching for an Object key, initiated by '*' or '#'.
-    ObjectKey,
-    // Searching for freeform text, initiated by / or ?
-    Freeform,
-}
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum SearchDirection {
@@ -25,7 +16,6 @@ pub enum JumpDirection {
 }
 
 pub struct SearchState {
-    mode: SearchMode,
     direction: SearchDirection,
 
     search_term: String,
@@ -47,7 +37,6 @@ pub enum ImmediateSearchState {
 impl SearchState {
     pub fn empty() -> SearchState {
         SearchState {
-            mode: SearchMode::Freeform,
             direction: SearchDirection::Forward,
             search_term: "".to_owned(),
             compiled_regex: Regex::new("").unwrap(),
@@ -59,20 +48,22 @@ impl SearchState {
     pub fn initialize_search(
         needle: &str,
         haystack: &str,
-        mode: SearchMode,
         direction: SearchDirection,
     ) -> SearchState {
         let regex = Regex::new(needle).unwrap();
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 
         SearchState {
-            mode,
             direction,
             search_term: needle.to_owned(),
             compiled_regex: regex,
             matches,
             immediate_state: ImmediateSearchState::NotSearching,
         }
+    }
+
+    pub fn set_no_longer_actively_searching(&mut self) {
+        self.immediate_state = ImmediateSearchState::NotSearching;
     }
 
     pub fn jump_to_match(
@@ -91,9 +82,17 @@ impl SearchState {
         let next_match_index = self.get_next_match(focused_row, flatjson, true_direction);
         let destination_row = self.compute_destination_row(flatjson, next_match_index);
 
-        // TODO: Need to make sure that destination_row is not in a collapsed container.
+        // If search takes inside a collapsed object, we will show the first visible ancestor.
+        let first_visible_ancestor = flatjson.first_visible_ancestor(destination_row);
 
-        destination_row
+        self.immediate_state = ImmediateSearchState::ActivelySearching {
+            last_match_jumped_to: next_match_index,
+            // We keep track of whether we searched into an object, so that
+            // the next time we jump, we can jump past the collapsed container.
+            last_search_into_collapsed_container: destination_row != first_visible_ancestor,
+        };
+
+        first_visible_ancestor
     }
 
     fn true_direction(&self, jump_direction: JumpDirection) -> SearchDirection {
@@ -163,13 +162,39 @@ impl SearchState {
                     SearchDirection::Reverse => -1,
                 };
 
-                let next_match = ((last_match_jumped_to + self.matches.len()) as isize + delta)
-                    as usize
-                    % self.matches.len();
+                if last_search_into_collapsed_container {
+                    let start_match = last_match_jumped_to;
+                    let mut next_match = self.cycle_match(start_match, delta);
 
-                next_match
+                    // Make sure we don't infinitely loop.
+                    while next_match != start_match {
+                        // Convert the next match to a destination row.
+                        let next_destination_row =
+                            self.compute_destination_row(flatjson, next_match);
+                        // Get the first visible ancestor of the next destination
+                        // row, and make sure it isn't the same as the row we're
+                        // currently viewing. If they're different, we've broken
+                        // out of the current collapsed container.
+                        let next_match_visible_ancestor =
+                            flatjson.first_visible_ancestor(next_destination_row);
+                        if next_match_visible_ancestor != focused_row {
+                            break;
+                        }
+                        next_match = self.cycle_match(next_match, delta);
+                    }
+
+                    next_match
+                } else {
+                    self.cycle_match(last_match_jumped_to, delta)
+                }
             }
         }
+    }
+
+    // Helper for modifying a match_index that handles wrapping around the start or end of the
+    // matches.
+    fn cycle_match(&self, match_index: usize, delta: isize) -> usize {
+        ((match_index + self.matches.len()) as isize + delta) as usize % self.matches.len()
     }
 
     fn compute_destination_row(&self, flatjson: &FlatJson, match_index: usize) -> Index {
@@ -180,5 +205,89 @@ impl SearchState {
             .0
             .partition_point(|row| row.full_range().start <= match_range.start)
             - 1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::flatjson::parse_top_level_json2;
+
+    use super::JumpDirection::*;
+    use super::SearchDirection::*;
+    use super::SearchState;
+
+    const SEARCHABLE: &'static str = r#"{
+        "1": "aaa",
+        "2": [
+            "3 bbb",
+            "4 aaa"
+        ],
+        "6": {
+            "7": "aaa aaa",
+            "8": "ccc",
+            "9": "ddd"
+        },
+        "11": "bbb"
+    }"#;
+
+    #[test]
+    fn test_basic_search_forward() {
+        let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
+        let mut search = SearchState::initialize_search("aaa", &fj.1, Forward);
+        assert_eq!(search.jump_to_match(0, &fj, Next), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Next), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Next), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Next), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Next), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Prev), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Prev), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Prev), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Prev), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Prev), 7);
+    }
+
+    #[test]
+    fn test_basic_search_backwards() {
+        let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
+        let mut search = SearchState::initialize_search("aaa", &fj.1, Reverse);
+        assert_eq!(search.jump_to_match(0, &fj, Next), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Next), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Next), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Next), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Prev), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Prev), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Prev), 7);
+        assert_eq!(search.jump_to_match(7, &fj, Prev), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Prev), 4);
+    }
+
+    #[test]
+    fn test_search_collapsed_forward() {
+        let mut fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
+        let mut search = SearchState::initialize_search("aaa", &fj.1, Forward);
+        fj.collapse(6);
+        assert_eq!(search.jump_to_match(0, &fj, Next), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Next), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Next), 6);
+        assert_eq!(search.jump_to_match(6, &fj, Next), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Next), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Prev), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Prev), 6);
+        assert_eq!(search.jump_to_match(6, &fj, Prev), 4);
+    }
+
+    #[test]
+    fn test_search_collapsed_backwards() {
+        let mut fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
+        let mut search = SearchState::initialize_search("aaa", &fj.1, Reverse);
+        fj.collapse(6);
+        assert_eq!(search.jump_to_match(0, &fj, Next), 6);
+        assert_eq!(search.jump_to_match(6, &fj, Next), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Next), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Next), 6);
+        assert_eq!(search.jump_to_match(6, &fj, Prev), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Prev), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Prev), 6);
+        assert_eq!(search.jump_to_match(6, &fj, Prev), 1);
     }
 }

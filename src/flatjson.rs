@@ -143,6 +143,17 @@ impl FlatJson {
         }
         self.0[index].toggle_collapsed();
     }
+
+    pub fn first_visible_ancestor(&self, mut index: Index) -> Index {
+        let mut visible_ancestor = index;
+        while let OptionIndex::Index(parent) = self[index].parent {
+            if self[parent].is_collapsed() {
+                visible_ancestor = parent;
+            }
+            index = parent;
+        }
+        visible_ancestor
+    }
 }
 
 impl std::ops::Index<usize> for FlatJson {
@@ -689,6 +700,22 @@ mod tests {
                 i,
             );
         }
+    }
+
+    #[test]
+    fn test_first_visible_ancestor() {
+        let mut fj = parse_top_level_json(NESTED_OBJECT.to_owned()).unwrap();
+        assert_eq!(fj.first_visible_ancestor(3), 3);
+        assert_eq!(fj.first_visible_ancestor(6), 6);
+        fj.collapse(5);
+        assert_eq!(fj.first_visible_ancestor(6), 5);
+        assert_eq!(fj.first_visible_ancestor(5), 5);
+        fj.collapse(1);
+        assert_eq!(fj.first_visible_ancestor(6), 1);
+        fj.expand(5);
+        assert_eq!(fj.first_visible_ancestor(6), 1);
+        fj.collapse(0);
+        assert_eq!(fj.first_visible_ancestor(6), 0);
     }
 
     #[test]

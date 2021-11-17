@@ -10,7 +10,7 @@ use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
 use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
-use crate::search::{JumpDirection, SearchDirection, SearchMode, SearchState};
+use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer};
 use crate::Opt;
@@ -69,6 +69,23 @@ impl JLess {
             .print(&self.viewer, &self.input_buffer, &self.input_filename);
 
         for event in input {
+            // When "actively" searching, we want to show highlighted search terms.
+            // We consider someone "actively" searching immediately after the start
+            // of a search, and while they navigate between matches using n/N.
+            //
+            // Once the user moves the focused row via another input, we will no longer
+            // consider them actively searching. (So scrolling, as long as it doesn't
+            // result in the cursor moving, does not stop the "active" search.)
+            //
+            // If a user expands a node that contained a search match, then we want
+            // the next jump to go to that match inside the container. To handle this
+            // we'll also stop considering the search active if the collapsed state
+            // of the focused row changes.
+            let mut jumped_to_search_match = false;
+            let focused_row_before = self.viewer.focused_row;
+            let focused_row_collapsed_state_before =
+                self.viewer.flatjson[focused_row_before].is_collapsed();
+
             let event = event.unwrap();
             let action = match event {
                 // These inputs quit.
@@ -125,10 +142,12 @@ impl JLess {
                         }
                         Key::Char('n') => {
                             let count = self.parse_input_buffer_as_number();
+                            jumped_to_search_match = true;
                             Some(self.jump_to_next_search_match(count))
                         }
                         Key::Char('N') => {
                             let count = self.parse_input_buffer_as_number();
+                            jumped_to_search_match = true;
                             Some(self.jump_to_prev_search_match(count))
                         }
                         // These may interpret the input buffer some other way
@@ -229,6 +248,17 @@ impl JLess {
             if let Some(action) = action {
                 self.viewer.perform_action(action);
             }
+
+            // Check whether we're still actively searching
+            if !jumped_to_search_match
+                && (focused_row_before != self.viewer.focused_row
+                    || focused_row_collapsed_state_before
+                        != self.viewer.flatjson[focused_row_before].is_collapsed())
+            {
+                eprintln!("No longer actively searching");
+                self.search_state.set_no_longer_actively_searching();
+            }
+
             self.screen_writer.print_viewer(&self.viewer);
             self.screen_writer.print_status_bar(
                 &self.viewer,
@@ -269,12 +299,8 @@ impl JLess {
     }
 
     fn initialize_freeform_search(&mut self, direction: SearchDirection, search_term: String) {
-        self.search_state = SearchState::initialize_search(
-            &search_term,
-            &self.viewer.flatjson.1,
-            SearchMode::Freeform,
-            direction,
-        );
+        self.search_state =
+            SearchState::initialize_search(&search_term, &self.viewer.flatjson.1, direction);
     }
 
     fn initialize_object_key_search(&mut self, direction: SearchDirection) {}
