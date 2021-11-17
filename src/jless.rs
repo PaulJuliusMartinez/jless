@@ -65,8 +65,12 @@ impl JLess {
         let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
         self.viewer.dimensions = dimensions.without_status_bar();
         self.screen_writer.dimensions = dimensions;
-        self.screen_writer
-            .print(&self.viewer, &self.input_buffer, &self.input_filename);
+        self.screen_writer.print(
+            &self.viewer,
+            &self.input_buffer,
+            &self.input_filename,
+            &self.search_state,
+        );
 
         for event in input {
             // When "actively" searching, we want to show highlighted search terms.
@@ -188,27 +192,31 @@ impl JLess {
                             None
                         }
                         Key::Char(':') => {
-                            let _readline = self.screen_writer.get_command();
+                            let _readline = self.screen_writer.get_command(":");
                             // Something like this?
                             // Some(Action::Command(parse_command(_readline))
                             None
                         }
                         Key::Char('/') => {
-                            let search_term = self.screen_writer.get_command().unwrap();
+                            let search_term = self.screen_writer.get_command("/").unwrap();
                             self.initialize_freeform_search(SearchDirection::Forward, search_term);
+                            jumped_to_search_match = true;
                             Some(self.jump_to_next_search_match(1))
                         }
                         Key::Char('?') => {
-                            let search_term = self.screen_writer.get_command().unwrap();
+                            let search_term = self.screen_writer.get_command("?").unwrap();
                             self.initialize_freeform_search(SearchDirection::Reverse, search_term);
+                            jumped_to_search_match = true;
                             Some(self.jump_to_next_search_match(1))
                         }
                         Key::Char('*') => {
                             self.initialize_object_key_search(SearchDirection::Forward);
+                            jumped_to_search_match = true;
                             Some(self.jump_to_next_search_match(1))
                         }
                         Key::Char('#') => {
                             self.initialize_object_key_search(SearchDirection::Reverse);
+                            jumped_to_search_match = true;
                             Some(self.jump_to_next_search_match(1))
                         }
                         _ => {
@@ -264,6 +272,7 @@ impl JLess {
                 &self.viewer,
                 &self.input_buffer,
                 &self.input_filename,
+                &self.search_state,
             );
         }
     }

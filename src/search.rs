@@ -9,6 +9,15 @@ pub enum SearchDirection {
     Reverse,
 }
 
+impl SearchDirection {
+    pub fn prompt_char(&self) -> char {
+        match self {
+            SearchDirection::Forward => '/',
+            SearchDirection::Reverse => '?',
+        }
+    }
+}
+
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum JumpDirection {
     Next,
@@ -16,9 +25,9 @@ pub enum JumpDirection {
 }
 
 pub struct SearchState {
-    direction: SearchDirection,
+    pub direction: SearchDirection,
 
-    search_term: String,
+    pub search_term: String,
     compiled_regex: Regex,
 
     matches: Vec<Range<usize>>,
@@ -31,6 +40,7 @@ pub enum ImmediateSearchState {
     ActivelySearching {
         last_match_jumped_to: usize,
         last_search_into_collapsed_container: bool,
+        just_wrapped: bool,
     },
 }
 
@@ -62,6 +72,21 @@ impl SearchState {
         }
     }
 
+    pub fn active_search_state(&self) -> Option<(usize, bool)> {
+        match self.immediate_state {
+            ImmediateSearchState::NotSearching => None,
+            ImmediateSearchState::ActivelySearching {
+                last_match_jumped_to,
+                just_wrapped,
+                ..
+            } => Some((last_match_jumped_to, just_wrapped)),
+        }
+    }
+
+    pub fn num_matches(&self) -> usize {
+        self.matches.len()
+    }
+
     pub fn set_no_longer_actively_searching(&mut self) {
         self.immediate_state = ImmediateSearchState::NotSearching;
     }
@@ -80,19 +105,31 @@ impl SearchState {
         let true_direction = self.true_direction(jump_direction);
 
         let next_match_index = self.get_next_match(focused_row, flatjson, true_direction);
-        let destination_row = self.compute_destination_row(flatjson, next_match_index);
+        let row_containing_match = self.compute_destination_row(flatjson, next_match_index);
 
         // If search takes inside a collapsed object, we will show the first visible ancestor.
-        let first_visible_ancestor = flatjson.first_visible_ancestor(destination_row);
+        let next_focused_row = flatjson.first_visible_ancestor(row_containing_match);
+
+        let wrapped = if focused_row == next_focused_row {
+            // If we end up the same place we started, we must have wrapped.
+            true
+        } else {
+            // Otherwise wrapping depends on which direction we were going.
+            match true_direction {
+                SearchDirection::Forward => next_focused_row < focused_row,
+                SearchDirection::Reverse => next_focused_row > focused_row,
+            }
+        };
 
         self.immediate_state = ImmediateSearchState::ActivelySearching {
             last_match_jumped_to: next_match_index,
             // We keep track of whether we searched into an object, so that
             // the next time we jump, we can jump past the collapsed container.
-            last_search_into_collapsed_container: destination_row != first_visible_ancestor,
+            last_search_into_collapsed_container: row_containing_match != next_focused_row,
+            just_wrapped: wrapped,
         };
 
-        first_visible_ancestor
+        next_focused_row
     }
 
     fn true_direction(&self, jump_direction: JumpDirection) -> SearchDirection {
@@ -156,6 +193,7 @@ impl SearchState {
             ImmediateSearchState::ActivelySearching {
                 last_match_jumped_to,
                 last_search_into_collapsed_container,
+                ..
             } => {
                 let delta: isize = match true_direction {
                     SearchDirection::Forward => 1,

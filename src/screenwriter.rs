@@ -9,6 +9,7 @@ use crate::flatjson::{Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
 use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
+use crate::search::SearchState;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::tuicontrol::{Color as TUIColor, ColorControl};
@@ -49,9 +50,15 @@ const PATH_BASE: &'static str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {
-    pub fn print(&mut self, viewer: &JsonViewer, input_buffer: &[u8], input_filename: &str) {
+    pub fn print(
+        &mut self,
+        viewer: &JsonViewer,
+        input_buffer: &[u8],
+        input_filename: &str,
+        search_state: &SearchState,
+    ) {
         self.print_viewer(viewer);
-        self.print_status_bar(viewer, input_buffer, input_filename);
+        self.print_status_bar(viewer, input_buffer, input_filename, search_state);
     }
 
     pub fn print_viewer(&mut self, viewer: &JsonViewer) {
@@ -68,8 +75,9 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         input_buffer: &[u8],
         input_filename: &str,
+        search_state: &SearchState,
     ) {
-        match self.print_status_bar_impl(viewer, input_buffer, input_filename) {
+        match self.print_status_bar_impl(viewer, input_buffer, input_filename, search_state) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("Error while printing status bar: {}", e);
@@ -103,10 +111,10 @@ impl ScreenWriter {
         self.tty_writer.flush()
     }
 
-    pub fn get_command(&mut self) -> rustyline::Result<String> {
+    pub fn get_command(&mut self, prompt: &str) -> rustyline::Result<String> {
         write!(self.tty_writer, "{}", termion::cursor::Show)?;
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
-        let result = self.command_editor.readline(":");
+        let result = self.command_editor.readline(prompt);
         write!(self.tty_writer, "{}", termion::cursor::Hide)?;
 
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
@@ -267,6 +275,7 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         input_buffer: &[u8],
         input_filename: &str,
+        search_state: &SearchState,
     ) -> std::io::Result<()> {
         self.tty_writer
             .position_cursor(1, self.dimensions.height - 1)?;
@@ -284,7 +293,26 @@ impl ScreenWriter {
 
         self.reset_style()?;
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
-        write!(self.tty_writer, ":")?;
+
+        if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
+            self.tty_writer
+                .write_char(search_state.direction.prompt_char())?;
+            write!(self.tty_writer, "{}", &search_state.search_term)?;
+
+            // Print out which match we're on:
+            let match_tracker = format!("[{}/{}]", match_num + 1, search_state.num_matches());
+            self.tty_writer.position_cursor(
+                self.dimensions.width
+                    - (1 + MAX_BUFFER_SIZE as u16)
+                    - (3 + match_tracker.len() as u16 + 3),
+                self.dimensions.height,
+            )?;
+
+            let wrapped_char = if just_wrapped { 'W' } else { ' ' };
+            write!(self.tty_writer, " {} {}", wrapped_char, match_tracker)?;
+        } else {
+            write!(self.tty_writer, ":")?;
+        }
 
         self.tty_writer.position_cursor(
             self.dimensions.width - (1 + MAX_BUFFER_SIZE as u16),
