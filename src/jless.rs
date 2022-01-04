@@ -166,11 +166,11 @@ impl JLess {
                             if self.input_buffer == "z".as_bytes() {
                                 Some(Action::MoveFocusedLineToBottom)
                             } else {
-                                // Action::MoveUpAtDepth
-                                None
+                                Some(Action::MoveUpUntilDepthChange)
                             }
                         }
                         // These ignore the input buffer
+                        Key::Char('w') => Some(Action::MoveDownUntilDepthChange),
                         Key::Left | Key::Char('h') => Some(Action::MoveLeft),
                         Key::Right | Key::Char('l') => Some(Action::MoveRight),
                         Key::Char('H') => Some(Action::FocusParent),

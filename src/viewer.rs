@@ -63,6 +63,16 @@ pub enum Action {
     MoveRight,
     MoveTo(Index),
 
+    // TODO: Come up with better names for these. Their behavior is
+    // a little subtle. When moving down it'll move forward until
+    // the depth changes. If the depth increases (because it got to
+    // an expanded container) it'll stop on the line of the opening
+    // of the container, but if the depth decreases (because we moved
+    // past the last child of the current container) it'll focus the
+    // line after.
+    MoveUpUntilDepthChange,
+    MoveDownUntilDepthChange,
+
     FocusParent,
 
     // The behavior of these is subtle and stateful. These move to the previous/next sibling of the
@@ -110,6 +120,8 @@ impl JsonViewer {
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
             Action::MoveTo(index) => self.focused_row = index,
+            Action::MoveUpUntilDepthChange => self.move_up_until_depth_change(),
+            Action::MoveDownUntilDepthChange => self.move_down_until_depth_change(),
             Action::FocusParent => self.focus_parent(),
             Action::FocusPrevSibling(n) => self.focus_prev_sibling(n),
             Action::FocusNextSibling(n) => self.focus_next_sibling(n),
@@ -153,6 +165,8 @@ impl JsonViewer {
             Action::MoveLeft => true,
             Action::MoveRight => true,
             Action::MoveTo(_) => true,
+            Action::MoveUpUntilDepthChange => true,
+            Action::MoveDownUntilDepthChange => true,
             Action::FocusParent => true,
             Action::FocusPrevSibling(_) => true,
             Action::FocusNextSibling(_) => true,
@@ -269,6 +283,92 @@ impl JsonViewer {
         }
 
         self.focus_parent();
+    }
+
+    fn move_up_until_depth_change(&mut self) {
+        let mut row = self.focused_row;
+        let mut current_depth = self.flatjson[row].depth;
+
+        // We *will* change depths if the very next row is
+        // at a different depth.
+        let mut moved_yet = false;
+
+        loop {
+            let prev_row = match self.mode {
+                Mode::Line => self.flatjson.prev_visible_row(row),
+                Mode::Data => self.flatjson.prev_item(row),
+            };
+
+            match prev_row {
+                OptionIndex::Nil => break,
+                OptionIndex::Index(prev_row_index) => {
+                    let prev_row_depth = self.flatjson[prev_row_index].depth;
+                    if prev_row_depth != current_depth {
+                        // If the line immediately above the starting one
+                        // is at greater depth, then we won't stop immediately.
+                        // We will keep moving along the new depth until it changes.
+                        //
+                        // This makes sure that this action acts like the inverse
+                        // of move_down_until_depth_change, which will focus
+                        // focus to a less indented line, but not a more indented one.
+                        if !moved_yet && prev_row_depth > current_depth {
+                            current_depth = prev_row_depth;
+                        } else {
+                            // If we're not in the above special case, then we do
+                            // want to stop because the depth changed. The only
+                            // question then is whether we keep the focus at the
+                            // current depth or choose to focus the line with the
+                            // different depth. We will only focus the line with
+                            // the different depth if we haven't moved yet to ensure
+                            // we move at least one row.
+                            if !moved_yet {
+                                row = prev_row_index;
+                            }
+                            break;
+                        }
+                    }
+                    row = prev_row_index;
+                    moved_yet = true;
+                }
+            }
+        }
+
+        self.focused_row = row;
+    }
+
+    fn move_down_until_depth_change(&mut self) {
+        let mut row = self.focused_row;
+        let current_depth = self.flatjson[row].depth;
+
+        // We *will* move down into a child if that's the
+        // very next line.
+        let mut moved_yet = false;
+
+        loop {
+            let next_row = match self.mode {
+                Mode::Line => self.flatjson.next_visible_row(row),
+                Mode::Data => self.flatjson.next_item(row),
+            };
+
+            match next_row {
+                OptionIndex::Nil => break,
+                OptionIndex::Index(next_row_index) => {
+                    let next_row_depth = self.flatjson[next_row_index].depth;
+                    if next_row_depth != current_depth {
+                        // Do move to parent nodes, but don't move into
+                        // child nodes (unless we haven't moved yet).
+                        if next_row_depth < current_depth || !moved_yet {
+                            row = next_row_index;
+                        }
+                        break;
+                    }
+                    row = next_row_index;
+                    moved_yet = true;
+                }
+            }
+        }
+
+        self.focused_row = row;
     }
 
     fn focus_parent(&mut self) {
@@ -881,6 +981,62 @@ mod tests {
 
         assert!(viewer.flatjson[0].is_expanded());
         assert_movements(&mut viewer, vec![(Action::MoveLeft, 0)]);
+    }
+
+    #[test]
+    fn test_move_up_down_until_depth_change_line_mode() {
+        let fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::MoveDownUntilDepthChange, 1),
+                (Action::MoveDownUntilDepthChange, 2),
+                (Action::MoveDownUntilDepthChange, 3),
+                (Action::MoveDownUntilDepthChange, 5),
+                (Action::MoveDownUntilDepthChange, 6),
+                (Action::MoveDownUntilDepthChange, 7),
+                (Action::MoveDownUntilDepthChange, 10),
+                (Action::MoveDownUntilDepthChange, 12),
+                (Action::MoveDownUntilDepthChange, 12),
+                (Action::MoveUpUntilDepthChange, 10),
+                (Action::MoveUpUntilDepthChange, 7),
+                (Action::MoveUpUntilDepthChange, 6),
+                (Action::MoveUpUntilDepthChange, 5),
+                (Action::MoveUpUntilDepthChange, 3),
+                (Action::MoveUpUntilDepthChange, 2),
+                (Action::MoveUpUntilDepthChange, 1),
+                (Action::MoveUpUntilDepthChange, 0),
+                (Action::MoveUpUntilDepthChange, 0),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_move_up_down_until_depth_change_data_mode() {
+        let fj = parse_top_level_json(DATA_OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Data);
+
+        assert_movements(
+            &mut viewer,
+            vec![
+                (Action::MoveDownUntilDepthChange, 1),
+                (Action::MoveDownUntilDepthChange, 2),
+                (Action::MoveDownUntilDepthChange, 3),
+                (Action::MoveDownUntilDepthChange, 6),
+                (Action::MoveDownUntilDepthChange, 7),
+                (Action::MoveDownUntilDepthChange, 11),
+                (Action::MoveDownUntilDepthChange, 11),
+                (Action::MoveUpUntilDepthChange, 7),
+                (Action::MoveUpUntilDepthChange, 6),
+                (Action::MoveUpUntilDepthChange, 3),
+                (Action::MoveUpUntilDepthChange, 2),
+                (Action::MoveUpUntilDepthChange, 1),
+                (Action::MoveUpUntilDepthChange, 0),
+                (Action::MoveUpUntilDepthChange, 0),
+            ],
+        );
     }
 
     #[track_caller]

@@ -282,7 +282,7 @@ mod tests {
     #[test]
     fn test_basic_search_forward() {
         let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa", &fj.1, Forward);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Forward);
         assert_eq!(search.jump_to_match(0, &fj, Next), 1);
         assert_eq!(search.jump_to_match(1, &fj, Next), 4);
         assert_eq!(search.jump_to_match(4, &fj, Next), 7);
@@ -302,7 +302,7 @@ mod tests {
     #[test]
     fn test_basic_search_backwards() {
         let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa", &fj.1, Reverse);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Reverse);
         assert_eq!(search.jump_to_match(0, &fj, Next), 7);
         assert_wrapped_state(&search, true);
         assert_eq!(search.jump_to_match(7, &fj, Next), 7);
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn test_search_collapsed_forward() {
         let mut fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa", &fj.1, Forward);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Forward);
         fj.collapse(6);
         assert_eq!(search.jump_to_match(0, &fj, Next), 1);
         assert_eq!(search.jump_to_match(1, &fj, Next), 4);
@@ -336,7 +336,7 @@ mod tests {
     #[test]
     fn test_search_collapsed_backwards() {
         let mut fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa", &fj.1, Reverse);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Reverse);
         fj.collapse(6);
         assert_eq!(search.jump_to_match(0, &fj, Next), 6);
         assert_eq!(search.jump_to_match(6, &fj, Next), 4);
@@ -357,7 +357,7 @@ mod tests {
             "key": "term"
         }"#;
         let mut fj = parse_top_level_json2(TEST.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("term", &fj.1, Forward);
+        let mut search = SearchState::initialize_search("term".to_owned(), &fj.1, Forward);
         fj.collapse(1);
         assert_eq!(search.jump_to_match(0, &fj, Next), 1);
         assert_wrapped_state(&search, false);
