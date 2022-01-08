@@ -40,7 +40,7 @@ pub enum TruncationResult<'a> {
 // and a replacement string of "...", this will return Truncated(&"hel", 3),
 // because "hel..." has a length of 6.
 //
-// This function is Unicode aware an will handle full-width characters, such as
+// This function is Unicode aware and will handle full-width characters, such as
 // emoji.
 
 macro_rules! define_truncate {

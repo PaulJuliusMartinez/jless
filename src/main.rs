@@ -12,6 +12,7 @@ use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
 mod flatjson;
+mod horizontalscrollstate;
 mod input;
 mod jless;
 mod jsonparser;
