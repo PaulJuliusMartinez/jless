@@ -184,7 +184,8 @@ impl JLess {
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
                         Key::Char('<') => {
-                            self.screen_writer.decrease_indentation_level();
+                            self.screen_writer
+                                .decrease_indentation_level(self.viewer.flatjson.2 as u16);
                             None
                         }
                         Key::Char('>') => {

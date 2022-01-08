@@ -466,8 +466,8 @@ impl ScreenWriter {
         }
     }
 
-    pub fn decrease_indentation_level(&mut self) {
-        self.indentation_reduction = self.indentation_reduction.saturating_add(1)
+    pub fn decrease_indentation_level(&mut self, max_depth: u16) {
+        self.indentation_reduction = self.indentation_reduction.saturating_add(1).min(max_depth);
     }
 
     pub fn increase_indentation_level(&mut self) {

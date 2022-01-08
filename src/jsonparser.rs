@@ -98,6 +98,8 @@ impl<'a> JsonParser<'a> {
     fn parse_elem(&mut self) -> Result<usize, String> {
         self.consume_whitespace();
 
+        self.max_depth = self.max_depth.max(self.parents.len());
+
         loop {
             match self.peek_token()? {
                 JsonToken::OpenCurly => {

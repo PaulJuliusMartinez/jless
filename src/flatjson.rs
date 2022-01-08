@@ -52,7 +52,7 @@ pub struct FlatJson(
     // Rows will contain references into this.
     pub String,
     // Max nesting depth.
-    usize,
+    pub usize,
 );
 
 impl FlatJson {
