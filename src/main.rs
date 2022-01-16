@@ -21,6 +21,7 @@ mod lineprinter;
 mod screenwriter;
 mod search;
 mod truncate;
+mod truncatedstrview;
 mod tuicontrol;
 mod types;
 mod viewer;

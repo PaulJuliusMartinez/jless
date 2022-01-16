@@ -785,6 +785,22 @@ mod tests {
                 "a…",
             ],
         );
+
+        let s = "🦀abc";
+        assert_shrinks(
+            s,
+            HorizontalScrollState::init(s, 5),
+            5,
+            vec!["🦀abc", "🦀a…", "🦀…", "�…", "…"],
+        );
+
+        let s = "abc🦀";
+        assert_shrinks(
+            s,
+            HorizontalScrollState::init_back(s, 4),
+            4,
+            vec!["…c🦀", "…🦀", "…�", "…"],
+        );
     }
 
     #[track_caller]
