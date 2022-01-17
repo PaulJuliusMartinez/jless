@@ -6,6 +6,7 @@ use regex::Regex;
 use crate::flatjson::{FlatJson, OptionIndex, Row, Value};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{min_required_columns_for_str, truncate_right_to_fit};
+use crate::truncatedstrview::{TruncatedStrSlice, TruncatedStrView};
 use crate::tuicontrol::{Color, TUIControl};
 use crate::viewer::Mode;
 
@@ -203,7 +204,7 @@ pub struct LinePrinter<'a, TUI: TUIControl> {
 
     // Line-by-line formatting options
     pub focused: bool,
-    pub secondarily_focused: bool,
+    pub focused_because_matching_container_pair: bool,
     pub trailing_comma: bool,
 
     // Stuff to actually print out
@@ -290,8 +291,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
         let label_style: LabelStyle;
-        let mut label_ref: &str;
-        let mut label_truncated = false;
+        let label_ref: &str;
 
         let mut fg_label_color = None;
         let mut bg_label_color = None;
@@ -343,19 +343,14 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         // of the value.
         available_space -= 1;
 
-        match truncate_right_to_fit(label_ref, available_space, "…") {
-            NoTruncation(width) => {
-                used_space += width;
-            }
-            Truncated(label_prefix, width) => {
-                used_space += width;
-                label_ref = label_prefix;
-                label_truncated = true;
-            }
-            DoesntFit => {
-                return Ok(0);
-            }
+        let truncated_view = TruncatedStrView::init_start(label_ref, available_space);
+        let space_used_for_label = truncated_view.used_space();
+        if space_used_for_label.is_none() {
+            return Ok(0);
         }
+        let space_used_for_label = space_used_for_label.unwrap();
+
+        used_space += space_used_for_label;
 
         // Actually print out the label!
         self.tui.maybe_fg_color(buf, fg_label_color)?;
@@ -365,10 +360,14 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         }
 
         write!(buf, "{}", label_style.left())?;
-        write!(buf, "{}", label_ref)?;
-        if label_truncated {
-            write!(buf, "…")?;
-        }
+        write!(
+            buf,
+            "{}",
+            TruncatedStrSlice {
+                s: label_ref,
+                truncated_view: &truncated_view,
+            }
+        )?;
         write!(buf, "{}", label_style.right())?;
 
         self.tui.reset_style(buf)?;
@@ -515,7 +514,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         if available_space > 0 {
-            if self.focused || self.secondarily_focused {
+            if self.focused || self.focused_because_matching_container_pair {
                 self.tui.bold(buf)?;
             }
             buf.write_char(row.value.container_type().unwrap().open_char())?;
@@ -534,7 +533,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         let needed_space = if self.trailing_comma { 2 } else { 1 };
 
         if available_space >= needed_space {
-            if self.focused || self.secondarily_focused {
+            if self.focused || self.focused_because_matching_container_pair {
                 self.tui.bold(buf)?;
             }
             buf.write_char(row.value.container_type().unwrap().close_char())?;
@@ -869,7 +868,7 @@ mod tests {
                 width: 100,
                 tab_size: 2,
                 focused: false,
-                secondarily_focused: false,
+                focused_because_matching_container_pair: false,
                 trailing_comma: false,
                 label: None,
                 value: LineValue::Value {
@@ -1057,8 +1056,15 @@ mod tests {
 
         buf.clear();
 
-        // Not enough room, returns 0.
+        // Elide the whole key
         let used_space = line.fill_in_label(&mut buf, 6)?;
+        assert_eq!("\"…\": ", buf);
+        assert_eq!(5, used_space);
+
+        buf.clear();
+
+        // Can't fit at all
+        let used_space = line.fill_in_label(&mut buf, 5)?;
         assert_eq!("", buf);
         assert_eq!(0, used_space);
 
@@ -1076,8 +1082,15 @@ mod tests {
 
         buf.clear();
 
-        // Not enough room, returns 0.
+        // Elide the whole key.
         let used_space = line.fill_in_label(&mut buf, 4)?;
+        assert_eq!("…: ", buf);
+        assert_eq!(3, used_space);
+
+        buf.clear();
+
+        // Not enough room, returns 0.
+        let used_space = line.fill_in_label(&mut buf, 3)?;
         assert_eq!("", buf);
         assert_eq!(0, used_space);
 
@@ -1096,6 +1109,13 @@ mod tests {
 
         // Not enough room, returns 0.
         let used_space = line.fill_in_label(&mut buf, 6)?;
+        assert_eq!("[…]: ", buf);
+        assert_eq!(5, used_space);
+
+        buf.clear();
+
+        // Not enough room, returns 0.
+        let used_space = line.fill_in_label(&mut buf, 5)?;
         assert_eq!("", buf);
         assert_eq!(0, used_space);
 

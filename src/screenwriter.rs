@@ -223,11 +223,11 @@ impl ScreenWriter {
             }
         };
 
-        let mut secondarily_focused = false;
+        let mut focused_because_matching_container_pair = false;
         if row.is_container() {
             let pair_index = row.pair_index().unwrap();
             if is_focused || viewer.focused_row == pair_index {
-                secondarily_focused = true;
+                focused_because_matching_container_pair = true;
             }
         }
 
@@ -264,7 +264,7 @@ impl ScreenWriter {
             tab_size: 2,
 
             focused,
-            secondarily_focused,
+            focused_because_matching_container_pair,
             trailing_comma,
 
             label,
@@ -328,6 +328,7 @@ impl ScreenWriter {
         }
 
         self.tty_writer.position_cursor(
+            // TODO: This can overflow on very skinny screens (2-3 columns).
             self.dimensions.width - (1 + MAX_BUFFER_SIZE as u16),
             self.dimensions.height,
         )?;
