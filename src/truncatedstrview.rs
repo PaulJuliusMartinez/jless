@@ -3,129 +3,254 @@ use std::fmt;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+/// This module provides functionality for truncating strings,
+/// displaying them, and manipulating which portion of the string
+/// is visible.
+
+/// A TruncatedStrView represents an attempt to fit a string within
+/// a given amount of available space. When `range` is None, it
+/// signifies that the string cannot be represented at all in the
+/// given space.
+///
+/// If the available space is negative, no string can be represented.
+/// If there is 0 available space, then only an empty string can be
+/// represented. Above that, every string can be represented with
+/// ellipses representing truncated content.
+///
+/// When the string is representable, the view will also track how
+/// much space the view takes up, including ellipses.
 #[derive(Debug, Copy, Clone)]
 pub struct TruncatedStrView {
-    view: Option<TruncatedRange>,
+    range: Option<TruncatedRange>,
     available_space: isize,
 }
 
+/// A TruncatedRange is a range intended to represent a slice of
+/// a string, along with some additional metadata that is useful
+/// when manipulating a range.
+///
+/// The visible portion of the string is represented by the
+/// range [start..end).
+///
+/// When we are representing a string in just 2 or 3 columns,
+/// wide characters are unrepresentable. For example, while we can
+/// represent the prefix of the string "abc🦀" in just two columns
+/// ("a…"), we cannot represent the suffix because the '🦀'
+/// character is two columns wide, so we wouldn't have room for the
+/// ellipsis.
+///
+/// In this situation we choose to display the Unicode replacement
+/// character: '�', which is to be used for unrepresentable
+/// characters.
+///
+/// A similar situation occurs when a wide character appears in the
+/// middle of a string and we have just 3 columns to display the
+/// character.
+///
+/// Since showing a replacement character is less than ideal, when
+/// we are showing other chracters, we will opt for not using the
+/// entire available space, rather than including the replacment
+/// character.
+///
+/// This range also keeps track of how much space it takes up.
 #[derive(Debug, Copy, Clone)]
 struct TruncatedRange {
     start: usize,
     end: usize,
-    used_space: isize,
     showing_replacement_character: bool,
+    used_space: isize,
 }
 
-// Helper struct that implements Display for printing
-// out TruncatedStrViews.
+/// A TruncatedStrView doesn't keep a reference to the `str` it
+/// is intended to display.
+///
+/// This is a helper struct used to actually generate the printed
+/// intended representation of the TruncatedStrView.
 pub struct TruncatedStrSlice<'a, 'b> {
     pub s: &'a str,
     pub truncated_view: &'b TruncatedStrView,
 }
 
+// When manipulating a TruncatedStrView, we use this helper struct
+// to keep track of state and maintain a reference to the string
+// the view is representing.
+//
+// Note that the RangeAdjuster does *not* keep track of whether it is
+// showing a replacement character. We can determine whether or
+// not to display a replacement character when we decide we want to
+// "materialize" the RangeAdjuster into a TruncatedStrView based on
+// whether the visible portion is "empty" and there is space to
+// display a replacement character.
+#[derive(Debug)]
+struct RangeAdjuster<'a> {
+    s: &'a str,
+    used_space: isize,
+    available_space: isize,
+
+    start: usize,
+    end: usize,
+}
+
+impl TruncatedRange {
+    // Create a RangeAdjuster representing the current state of the
+    // TruncatedRange.
+    fn to_adjuster<'a, 'b>(&'a self, s: &'b str, available_space: isize) -> RangeAdjuster<'b> {
+        let mut used_space = self.used_space;
+        // The adjuster doesn't keep track of the replacement character.
+        if self.showing_replacement_character {
+            used_space -= 1;
+        }
+
+        RangeAdjuster {
+            s,
+            used_space,
+            available_space,
+            start: self.start,
+            end: self.end,
+        }
+    }
+}
+
 impl TruncatedStrView {
+    /// If we have a least one column, we can always represent a string
+    /// by at least an ellipsis that represents the entirety of the string.
+    ///
+    /// If we have exactly 0 columns, then only an empty string can be
+    /// represented. (We take the conservative approach here and ignore
+    /// the possibility of strings solely consisting of zero-width spaces
+    /// and other zero-width Unicode oddities.)
+    ///
+    /// The `range` of a TruncatedStrView should be present if and only if
+    /// this function, when called on the string the TruncatedStrView is
+    /// associated with, returns true.
     pub fn can_str_fit_at_all(s: &str, available_space: isize) -> bool {
         available_space > 0 || (available_space == 0 && s.len() == 0)
     }
 
+    /// Create a truncated view of a string that shows the beginning of
+    /// the string and elides the end if there is not sufficient space.
     pub fn init_start(s: &str, available_space: isize) -> TruncatedStrView {
         if !Self::can_str_fit_at_all(s, available_space) {
             return Self::init_no_view(available_space);
         }
 
-        let mut adj = Adjuster::init_start(s, available_space);
+        let mut adj = RangeAdjuster::init_start(s, available_space);
         adj.fill_right();
         adj.to_view()
     }
 
+    /// Create a truncated view of a string that shows the end of the
+    /// string and elides the beginning if there is not sufficient space.
     pub fn init_back(s: &str, available_space: isize) -> TruncatedStrView {
         if !Self::can_str_fit_at_all(s, available_space) {
             return Self::init_no_view(available_space);
         }
 
-        let mut adj = Adjuster::init_back(s, available_space);
+        let mut adj = RangeAdjuster::init_back(s, available_space);
         adj.fill_left();
         adj.to_view()
     }
 
-    pub fn init_no_view(available_space: isize) -> TruncatedStrView {
+    // Create a TruncatedStrView that indicates that the string cannot
+    // be represented in the available space.
+    fn init_no_view(available_space: isize) -> TruncatedStrView {
         TruncatedStrView {
-            view: None,
+            range: None,
             available_space,
         }
     }
 
+    /// Return the amount of space used by a string view, if the string
+    /// is representable.
     pub fn used_space(&self) -> Option<isize> {
-        match self.view {
+        match self.range {
             None => None,
             Some(TruncatedRange { used_space, .. }) => Some(used_space),
         }
     }
 
-    fn to_adjuster<'a, 'b>(&'a self, s: &'b str) -> Adjuster<'b> {
-        let TruncatedRange {
-            start,
-            end,
-            mut used_space,
-            showing_replacement_character,
-        } = self.view.unwrap_or(TruncatedRange {
-            start: 0,
-            end: 0,
-            used_space: 0,
-            showing_replacement_character: false,
-        });
-
-        // The adjuster doesn't keep track of the replacement character.
-        if showing_replacement_character {
-            used_space -= 1;
-        }
-
-        Adjuster {
-            s,
-            used_space,
-            available_space: self.available_space,
-            start,
-            end,
-        }
+    // Creates a RangeAdjuster that represents the current state of
+    // the TruncatedStrView. This should only be called when the string
+    // is representable and we have a view.
+    fn range_adjuster<'a, 'b>(&'a self, s: &'b str) -> RangeAdjuster<'b> {
+        debug_assert!(self.range.is_some());
+        self.range.unwrap().to_adjuster(s, self.available_space)
     }
 
-    fn scroll_right(&self, s: &str) -> TruncatedStrView {
-        if self.view.is_none() {
+    /// Scrolls a string view to the right by at least one character.
+    pub fn scroll_right(&self, s: &str) -> TruncatedStrView {
+        if self.range.is_none() {
             return self.clone();
         }
 
-        let mut adjuster = self.to_adjuster(s);
+        // If we only have two columns, we can't represent the middle
+        // of the string, so when we scroll right we'll just jump to
+        // the end.
+        if self.available_space <= 2 {
+            return Self::init_back(s, self.available_space);
+        }
+
+        let mut adjuster = self.range_adjuster(s);
+        // Show another character on the right.
         adjuster.expand_right();
+        // Shrink from the left to fit in available space again.
         adjuster.shrink_left_to_fit();
-        // If start == end, that means we shrunk past a multi-width
-        // character, so don't fill up again, otherwise we'll completely
-        // move past it, but we want to show the replacement character.
+        // Since we might have gotten rid of a wide character on
+        // the left, we might still have space to fill, so let's
+        // expand on the right more.
+        //
+        // But, if start == end, that means we expanded to show
+        // a multi-width character, and then shrunk past it because
+        // there wasn't enough space. In this case, don't fill because
+        // then we'll just skip that character. We actually want to show
+        // a replacement character in this case.
         if adjuster.start != adjuster.end {
             adjuster.fill_right();
         }
         adjuster.to_view()
     }
 
+    /// Scrolls a string view to the left by at least one character.
     fn scroll_left(&self, s: &str) -> TruncatedStrView {
-        if self.view.is_none() {
+        if self.range.is_none() {
             return self.clone();
         }
 
-        let mut adjuster = self.to_adjuster(s);
+        // If we only have two columns, we can't represent the middle
+        // of the string, so when we scroll left we'll just jump to
+        // the start.
+        if self.available_space <= 2 {
+            return Self::init_start(s, self.available_space);
+        }
+
+        let mut adjuster = self.range_adjuster(s);
+        // Show another character on the left.
         adjuster.expand_left();
+        // Shrink from the right to fit in available space again.
         adjuster.shrink_right_to_fit();
-        // If start == end, that means we shrunk past a multi-width
-        // character, so don't fill up again, otherwise we'll completely
-        // move past it, but we want to show the replacement character.
+        // Since we might have gotten rid of a wide character on
+        // the right, we might still have space to fill, so let's
+        // expand on the left more.
+        //
+        // But, if start == end, that means we expanded to show
+        // a multi-width character, and then shrunk past it because
+        // there wasn't enough space. In this case, don't fill because
+        // then we'll just skip that character. We actually want to show
+        // a replacement character in this case.
         if adjuster.start != adjuster.end {
             adjuster.fill_left();
         }
         adjuster.to_view()
     }
 
+    /// Jump from whatever portion of the string is currently represented
+    /// to showing either the start or the end of the string.
+    ///
+    /// Normally we will always jump to the back of the string, unless
+    /// we are already showing the back of the string, in which case we
+    /// will jump to the front.
     fn jump_to_an_end(&self, s: &str) -> TruncatedStrView {
-        match self.view {
+        match self.range {
             None => self.clone(),
             Some(range) => {
                 if range.end < s.len() {
@@ -137,8 +262,9 @@ impl TruncatedStrView {
         }
     }
 
+    /// Update the string view with a new amount of available space.
     fn resize(&self, s: &str, available_space: isize) -> TruncatedStrView {
-        if self.view.is_none() {
+        if self.range.is_none() {
             return TruncatedStrView::init_start(s, available_space);
         }
 
@@ -155,20 +281,21 @@ impl TruncatedStrView {
         }
     }
 
+    /// Expand a view to fit into more available space.
     fn expand(&self, s: &str, available_space: isize) -> TruncatedStrView {
         debug_assert!(available_space > self.available_space);
-        let mut adjuster = self.to_adjuster(s);
+        let mut adjuster = self.range_adjuster(s);
         adjuster.available_space = available_space;
 
-        // When showing a prefix, we want to fill on the right.
-        // When showing a suffix, we want to fill on the left.
+        // When showing a prefix, we want to fill on the right:
+        //   a… -> abc…
+        // When showing a suffix, we want to fill on the left:
+        //   …z -> …xyz
         // When showing the middle of the string, we want to fill
         // along the right, and then if we still have space available,
-        // fill back on the left.
-        //
-        // Because fill_right on a suffix is a no-op, and fill_left on
-        // a prefix is also a no-op, we can handle all the cases together
-        // by just filling on the right, then the left.
+        // fill back on the left:
+        //   …m… -> …mno…
+        //   …x… -> …wxyz
         if adjuster.end == s.len() {
             adjuster.fill_left();
         } else {
@@ -176,7 +303,12 @@ impl TruncatedStrView {
             // Only try to then fill in the left if we reached all the way
             // to the right. Otherwise, we might not expand to the right
             // because the next character is wide, but we could expand to
-            // the left.
+            // the left. Without this we'd do something like this:
+            //
+            // s = "a👍b👀c😱d"
+            //
+            // When expanding "…👀c…" by one column, we can't add the '😱',
+            // but we don't to expand on the left and show "…b👀c…".
             if adjuster.end == s.len() {
                 adjuster.fill_left();
             }
@@ -184,14 +316,15 @@ impl TruncatedStrView {
         adjuster.to_view()
     }
 
+    /// Shrink a view to fit into less available space.
     fn shrink(&self, s: &str, available_space: isize) -> TruncatedStrView {
         debug_assert!(available_space < self.available_space);
-        debug_assert!(self.view.is_some());
+        debug_assert!(self.range.is_some());
 
         // Won't be enough room for multiple ellipses and a middle character
         // so just init from the beginning (or end, if we're showing a suffix).
         if available_space < 3 {
-            let TruncatedRange { start, end, .. } = self.view.unwrap();
+            let TruncatedRange { start, end, .. } = self.range.unwrap();
             if start > 0 && end == s.len() {
                 return Self::init_back(s, available_space);
             } else {
@@ -199,7 +332,7 @@ impl TruncatedStrView {
             }
         }
 
-        let mut adjuster = self.to_adjuster(s);
+        let mut adjuster = self.range_adjuster(s);
         adjuster.available_space = available_space;
 
         // If we're showing a suffix of the string, shrink from the left
@@ -214,26 +347,21 @@ impl TruncatedStrView {
     }
 }
 
-// Helper struct to manage state while adjusting a TruncatedStrView.
-#[derive(Debug)]
-struct Adjuster<'a> {
-    s: &'a str,
-    used_space: isize,
-    available_space: isize,
-
-    start: usize,
-    end: usize,
-}
-
-impl<'a> Adjuster<'a> {
+impl<'a> RangeAdjuster<'a> {
+    /// Initialize a RangeAdjuster at the beginning of a string, but is
+    /// not showing any part of the string.
     pub fn init_start(s: &'a str, available_space: isize) -> Self {
-        Adjuster::init_at_index(s, available_space, 0)
+        RangeAdjuster::init_at_index(s, available_space, 0)
     }
 
+    /// Initialize a RangeAdjuster at the end of a string, but is not showing
+    /// any part of the string.
     pub fn init_back(s: &'a str, available_space: isize) -> Self {
-        Adjuster::init_at_index(s, available_space, s.len())
+        RangeAdjuster::init_at_index(s, available_space, s.len())
     }
 
+    /// Initialize a RangeAdjuster at an arbitrary spot in a string, but
+    /// is not showing any part of the string.
     pub fn init_at_index(s: &'a str, available_space: isize, index: usize) -> Self {
         let mut space_for_ellipses = 0;
         if index > 0 {
@@ -245,7 +373,7 @@ impl<'a> Adjuster<'a> {
             space_for_ellipses += 1;
         }
 
-        Adjuster {
+        RangeAdjuster {
             s,
             used_space: space_for_ellipses,
             available_space,
@@ -254,6 +382,7 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Update the range to show another character on the right side.
     pub fn expand_right(&mut self) {
         let mut right_graphemes = self.s[self.end..].graphemes(true);
         if let Some(grapheme) = right_graphemes.next() {
@@ -266,6 +395,7 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Update the range to show another character on the left side.
     pub fn expand_left(&mut self) {
         let mut left_graphemes = self.s[..self.start].graphemes(true);
         if let Some(grapheme) = left_graphemes.next_back() {
@@ -278,8 +408,16 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Add as many characters to the right side of the string as we
+    /// can without exceeding the available space.
     pub fn fill_right(&mut self) {
         let mut right_graphemes = self.s[self.end..].graphemes(true);
+        // Note that we should consider the next grapheme even if we
+        // have already used up all the available space, because the
+        // next grapheme might be the end of the string, and we'd no
+        // longer have to show the ellipsis.
+        //
+        // This allows converting "…xy…" to "…xyz".
         while let Some(grapheme) = right_graphemes.next() {
             let new_end = self.end + grapheme.len();
             let mut new_used_space = self.used_space + UnicodeWidthStr::width(grapheme) as isize;
@@ -298,8 +436,16 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Add as many characters to the left side of the string as we
+    /// can without exceeding the available space.
     pub fn fill_left(&mut self) {
         let mut left_graphemes = self.s[..self.start].graphemes(true);
+        // Note that we should consider the previous grapheme even if
+        // we have already used up all the available space, because
+        // the previous grapheme might be the start of the string, and
+        // we'd no longer have to show the ellipsis.
+        //
+        // This allows converting "…bc…" to "abc…".
         while let Some(grapheme) = left_graphemes.next_back() {
             let new_start = self.start - grapheme.len();
             let mut new_used_space = self.used_space + UnicodeWidthStr::width(grapheme) as isize;
@@ -318,9 +464,12 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Remove characters from the right side of the range until the
+    /// amount of used space is within the available space.
     pub fn shrink_right_to_fit(&mut self) {
         let mut visible_graphemes = self.s[self.start..self.end].graphemes(true);
         while self.used_space > self.available_space {
+            debug_assert!(self.start < self.end);
             let rightmost_grapheme = visible_graphemes.next_back().unwrap();
             if self.end == self.s.len() {
                 // Add trailing ellipsis.
@@ -331,9 +480,12 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Remove characters from the left side of the range until the
+    /// amount of used space is within the available space.
     pub fn shrink_left_to_fit(&mut self) {
         let mut visible_graphemes = self.s[self.start..self.end].graphemes(true);
         while self.used_space > self.available_space {
+            debug_assert!(self.start < self.end);
             let leftmost_grapheme = visible_graphemes.next().unwrap();
             if self.start == 0 {
                 // Add leading ellipsis.
@@ -344,48 +496,43 @@ impl<'a> Adjuster<'a> {
         }
     }
 
+    /// Convert a RangeAdjuster into a TruncatedStrView.
     pub fn to_view(&self) -> TruncatedStrView {
-        if self.available_space < 0 || (self.available_space == 0 && self.s.len() > 0) {
-            panic!("adjuster used when string can't fit");
-            // TruncatedStrView {
-            //     view: None,
-            //     available_space: self.available_space,
-            // }
-        } else {
-            let showing_replacement_character =
-                // We only show a repacement character if we're not
-                // showing anything at all...
-                self.start == self.end &&
-                    // But we have room to showing something...
-                    self.available_space > 1 &&
-                        // And there's something to show.
-                        self.s.len() > 0;
+        debug_assert!(TruncatedStrView::can_str_fit_at_all(
+            self.s,
+            self.available_space
+        ));
 
-            let mut used_space = self.used_space;
-            if showing_replacement_character {
-                if used_space >= self.available_space {
-                    dbg!(&self);
-                }
-                debug_assert!(dbg!(used_space) < dbg!(self.available_space));
-                used_space += 1;
-            };
+        let showing_replacement_character =
+            // We only show a repacement character if we're not
+            // showing anything at all...
+            self.start == self.end &&
+                // But we have room to showing something...
+                self.available_space > 1 &&
+                    // And there's something to show.
+                    self.s.len() > 0;
 
-            TruncatedStrView {
-                view: Some(TruncatedRange {
-                    start: self.start,
-                    end: self.end,
-                    used_space,
-                    showing_replacement_character,
-                }),
-                available_space: self.available_space,
-            }
+        let mut used_space = self.used_space;
+        if showing_replacement_character {
+            debug_assert!(used_space < self.available_space);
+            used_space += 1;
+        };
+
+        TruncatedStrView {
+            range: Some(TruncatedRange {
+                start: self.start,
+                end: self.end,
+                showing_replacement_character,
+                used_space,
+            }),
+            available_space: self.available_space,
         }
     }
 }
 
 impl<'a, 'b> fmt::Display for TruncatedStrSlice<'a, 'b> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        if self.truncated_view.view.is_none() {
+        if self.truncated_view.range.is_none() {
             return Ok(());
         }
 
@@ -394,7 +541,7 @@ impl<'a, 'b> fmt::Display for TruncatedStrSlice<'a, 'b> {
             end,
             showing_replacement_character,
             ..
-        } = self.truncated_view.view.unwrap();
+        } = self.truncated_view.range.unwrap();
 
         if start != 0 {
             f.write_str("…")?;
@@ -409,6 +556,7 @@ impl<'a, 'b> fmt::Display for TruncatedStrSlice<'a, 'b> {
         if end != self.s.len() {
             f.write_str("…")?;
         }
+
         Ok(())
     }
 }
@@ -505,6 +653,12 @@ mod tests {
 
         let s = "abc🦀def";
         assert_scroll_states(s, 3, vec!["ab…", "…c…", "…�…", "…d…", "…ef"]);
+
+        let s = "🦀z";
+        assert_scroll_states(s, 2, vec!["�…", "…z"]);
+
+        let s = "a🦀";
+        assert_scroll_states(s, 2, vec!["a…", "…�"]);
     }
 
     #[track_caller]
