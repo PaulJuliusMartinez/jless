@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use rustyline::Editor;
@@ -12,6 +13,7 @@ use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::SearchState;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
+use crate::truncatedstrview::TruncatedStrView;
 use crate::tuicontrol::{Color as TUIColor, ColorControl};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
@@ -43,13 +45,29 @@ pub struct ScreenWriter {
     pub tty_writer: AnsiTTYWriter,
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
-    pub indentation_reduction: u16,
+
+    indentation_reduction: u16,
+    truncated_row_value_views: HashMap<Index, TruncatedStrView>,
 }
 
 const PATH_BASE: &'static str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {
+    pub fn init(
+        tty_writer: AnsiTTYWriter,
+        command_editor: Editor<()>,
+        dimensions: TTYDimensions,
+    ) -> Self {
+        ScreenWriter {
+            tty_writer,
+            command_editor,
+            dimensions,
+            indentation_reduction: 0,
+            truncated_row_value_views: HashMap::new(),
+        }
+    }
+
     pub fn print(
         &mut self,
         viewer: &JsonViewer,
@@ -159,7 +177,6 @@ impl ScreenWriter {
 
         let mut label = None;
         let index_label: String;
-        let number_value: String;
 
         // Set up key label.
         if let Some(key_range) = &row.key_range {
@@ -177,10 +194,6 @@ impl ScreenWriter {
             }
         }
 
-        // TODO: It would be great if I could move this match out of here,
-        // but I need a reference to the string representation of the Value::Number
-        // value that lives long enough. The Container LineValue also uses some
-        // local variables.
         let value = match &row.value {
             Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
                 lp::LineValue::Container {
@@ -472,6 +485,18 @@ impl ScreenWriter {
 
     pub fn increase_indentation_level(&mut self) {
         self.indentation_reduction = self.indentation_reduction.saturating_sub(1)
+    }
+
+    pub fn scroll_focused_line_right(&mut self, viewer: &JsonViewer, count: usize) {
+        unimplemented!();
+    }
+
+    pub fn scroll_focused_line_left(&mut self, viewer: &JsonViewer, count: usize) {
+        unimplemented!();
+    }
+
+    pub fn scroll_focused_line_to_an_end(&mut self, viewer: &JsonViewer) {
+        unimplemented!();
     }
 }
 

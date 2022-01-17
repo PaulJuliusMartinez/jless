@@ -44,12 +44,8 @@ pub fn new(
         stdout,
         color: true,
     };
-    let screen_writer = ScreenWriter {
-        tty_writer,
-        command_editor: Editor::<()>::new(),
-        dimensions: TTYDimensions::default(),
-        indentation_reduction: 0,
-    };
+    let screen_writer =
+        ScreenWriter::init(tty_writer, Editor::<()>::new(), TTYDimensions::default());
 
     Ok(JLess {
         viewer,
@@ -154,6 +150,18 @@ impl JLess {
                             jumped_to_search_match = true;
                             Some(self.jump_to_prev_search_match(count))
                         }
+                        Key::Char('.') => {
+                            let count = self.parse_input_buffer_as_number();
+                            self.screen_writer
+                                .scroll_focused_line_right(&self.viewer, count);
+                            None
+                        }
+                        Key::Char(',') => {
+                            let count = self.parse_input_buffer_as_number();
+                            self.screen_writer
+                                .scroll_focused_line_left(&self.viewer, count);
+                            None
+                        }
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
                             if self.input_buffer == "z".as_bytes() {
@@ -190,6 +198,10 @@ impl JLess {
                         }
                         Key::Char('>') => {
                             self.screen_writer.increase_indentation_level();
+                            None
+                        }
+                        Key::Char(';') => {
+                            self.screen_writer.scroll_focused_line_to_an_end(&self.viewer);
                             None
                         }
                         Key::Char(':') => {
@@ -264,7 +276,6 @@ impl JLess {
                     || focused_row_collapsed_state_before
                         != self.viewer.flatjson[focused_row_before].is_collapsed())
             {
-                eprintln!("No longer actively searching");
                 self.search_state.set_no_longer_actively_searching();
             }
 
@@ -318,7 +329,7 @@ impl JLess {
             // Note key_range already includes quotes around key.
             let needle = format!("{}: ", &self.viewer.flatjson.1[key_range.clone()]);
             self.search_state =
-                SearchState::initialize_search(dbg!(needle), &self.viewer.flatjson.1, direction);
+                SearchState::initialize_search(needle, &self.viewer.flatjson.1, direction);
         } else {
             panic!("Handle object key search initialized not on object key");
         }
