@@ -275,7 +275,7 @@ impl TruncatedStrView {
     }
 
     /// Update the string view with a new amount of available space.
-    fn resize(&self, s: &str, available_space: isize) -> TruncatedStrView {
+    pub fn resize(&self, s: &str, available_space: isize) -> TruncatedStrView {
         if self.range.is_none() {
             return TruncatedStrView::init_start(s, available_space);
         }

@@ -425,16 +425,20 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         // Option<Entry<>>
         // - if no entry, then init_start
         // - if entry, but vacant, then init_start
-        // - if entry with value, then value
+        // - if entry with value, then value and resize
         let truncated_view = self
             .cached_formatted_value
             .take()
             .map(|entry| {
                 entry
+                    .and_modify(|tsv| {
+                        *tsv = tsv.resize(value_ref, available_space);
+                    })
                     .or_insert_with(|| TruncatedStrView::init_start(value_ref, available_space))
                     .clone()
             })
             .unwrap_or_else(|| TruncatedStrView::init_start(value_ref, available_space));
+
         let space_used_for_value = truncated_view.used_space();
         if space_used_for_value.is_none() {
             return Ok(0);
