@@ -201,7 +201,8 @@ impl JLess {
                             None
                         }
                         Key::Char(';') => {
-                            self.screen_writer.scroll_focused_line_to_an_end(&self.viewer);
+                            self.screen_writer
+                                .scroll_focused_line_to_an_end(&self.viewer);
                             None
                         }
                         Key::Char(':') => {

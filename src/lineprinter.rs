@@ -1,3 +1,5 @@
+use std::collections::hash_map::Entry;
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 
@@ -180,6 +182,7 @@ impl LabelStyle {
     }
 }
 
+#[derive(Debug)]
 pub enum LineValue<'a> {
     Container {
         flatjson: &'a FlatJson,
@@ -210,10 +213,12 @@ pub struct LinePrinter<'a, TUI: TUIControl> {
     // Stuff to actually print out
     pub label: Option<LineLabel<'a>>,
     pub value: LineValue<'a>,
+
+    pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
 impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
-    pub fn print_line<W: Write>(&self, buf: &mut W) -> fmt::Result {
+    pub fn print_line<W: Write>(&mut self, buf: &mut W) -> fmt::Result {
         self.tui.reset_style(buf)?;
 
         self.print_focus_and_container_indicators(buf)?;
@@ -380,7 +385,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     }
 
     fn fill_in_value<W: Write>(
-        &self,
+        &mut self,
         buf: &mut W,
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
@@ -417,7 +422,19 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             available_space -= 1;
         }
 
-        let truncated_view = TruncatedStrView::init_start(value_ref, available_space);
+        // Option<Entry<>>
+        // - if no entry, then init_start
+        // - if entry, but vacant, then init_start
+        // - if entry with value, then value
+        let truncated_view = self
+            .cached_formatted_value
+            .take()
+            .map(|entry| {
+                entry
+                    .or_insert_with(|| TruncatedStrView::init_start(value_ref, available_space))
+                    .clone()
+            })
+            .unwrap_or_else(|| TruncatedStrView::init_start(value_ref, available_space));
         let space_used_for_value = truncated_view.used_space();
         if space_used_for_value.is_none() {
             return Ok(0);
@@ -879,6 +896,7 @@ mod tests {
                     quotes: true,
                     color: Color::White,
                 },
+                cached_formatted_value: None,
             }
         }
     }

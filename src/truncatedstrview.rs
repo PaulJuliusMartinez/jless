@@ -21,7 +21,7 @@ use unicode_width::UnicodeWidthStr;
 /// much space the view takes up, including ellipses.
 #[derive(Debug, Copy, Clone)]
 pub struct TruncatedStrView {
-    range: Option<TruncatedRange>,
+    pub range: Option<TruncatedRange>,
     available_space: isize,
 }
 
@@ -54,7 +54,7 @@ pub struct TruncatedStrView {
 ///
 /// This range also keeps track of how much space it takes up.
 #[derive(Debug, Copy, Clone)]
-struct TruncatedRange {
+pub struct TruncatedRange {
     start: usize,
     end: usize,
     showing_replacement_character: bool,
@@ -223,7 +223,7 @@ impl TruncatedStrView {
     }
 
     /// Scrolls a string view to the left by at least one character.
-    fn scroll_left(&self, s: &str) -> TruncatedStrView {
+    pub fn scroll_left(&self, s: &str) -> TruncatedStrView {
         if self.range.is_none() {
             return self.clone();
         }
@@ -261,7 +261,7 @@ impl TruncatedStrView {
     /// Normally we will always jump to the back of the string, unless
     /// we are already showing the back of the string, in which case we
     /// will jump to the front.
-    fn jump_to_an_end(&self, s: &str) -> TruncatedStrView {
+    pub fn jump_to_an_end(&self, s: &str) -> TruncatedStrView {
         match self.range {
             None => self.clone(),
             Some(range) => {

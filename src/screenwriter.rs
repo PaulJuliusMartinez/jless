@@ -13,7 +13,7 @@ use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::SearchState;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
-use crate::truncatedstrview::TruncatedStrView;
+use crate::truncatedstrview::{TruncatedStrSlice, TruncatedStrView};
 use crate::tuicontrol::{Color as TUIColor, ColorControl};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
@@ -116,8 +116,7 @@ impl ScreenWriter {
                     write!(self.tty_writer, "~")?;
                 }
                 OptionIndex::Index(index) => {
-                    let row = &viewer.flatjson[index];
-                    self.print_line(viewer, row_index, row, index == viewer.focused_row)?;
+                    self.print_line(viewer, row_index, index, index == viewer.focused_row)?;
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
                         Mode::Data => viewer.flatjson.next_item(index),
@@ -164,10 +163,11 @@ impl ScreenWriter {
         &mut self,
         viewer: &JsonViewer,
         screen_index: u16,
-        row: &Row,
+        index: Index,
         is_focused: bool,
     ) -> std::io::Result<()> {
         self.tty_writer.position_cursor(1, screen_index + 1)?;
+        let row = &viewer.flatjson[index];
 
         let depth = row
             .depth
@@ -255,7 +255,7 @@ impl ScreenWriter {
             }
         }
 
-        let line = lp::LinePrinter {
+        let mut line = lp::LinePrinter {
             mode: viewer.mode,
             tui: ColorControl {},
 
@@ -269,6 +269,8 @@ impl ScreenWriter {
 
             label,
             value,
+
+            cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
         };
 
         let mut buf = String::new();
@@ -276,6 +278,24 @@ impl ScreenWriter {
         // to String should never fail?
         line.print_line(&mut buf).unwrap();
         write!(self.tty_writer, "{}", buf)
+    }
+
+    fn line_primitive_value_ref<'a, 'b>(
+        &'a self,
+        row: &'a Row,
+        viewer: &'b JsonViewer,
+    ) -> Option<&'b str> {
+        match &row.value {
+            Value::OpenContainer { .. } | Value::CloseContainer { .. } => None,
+            _ => {
+                let range = row.range.clone();
+                if let Value::String = &row.value {
+                    Some(&viewer.flatjson.1[range.start + 1..range.end - 1])
+                } else {
+                    Some(&viewer.flatjson.1[range])
+                }
+            }
+        }
     }
 
     // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.>
@@ -489,15 +509,57 @@ impl ScreenWriter {
     }
 
     pub fn scroll_focused_line_right(&mut self, viewer: &JsonViewer, count: usize) {
-        unimplemented!();
+        self.scroll_focused_line(viewer, count, true);
     }
 
     pub fn scroll_focused_line_left(&mut self, viewer: &JsonViewer, count: usize) {
-        unimplemented!();
+        self.scroll_focused_line(viewer, count, false);
+    }
+
+    pub fn scroll_focused_line(&mut self, viewer: &JsonViewer, count: usize, to_right: bool) {
+        let row = viewer.focused_row;
+        let tsv = self.truncated_row_value_views.get(&row);
+        if let Some(tsv) = tsv {
+            // Make tsv not a reference.
+            let mut tsv = *tsv;
+            let value_ref = self
+                .line_primitive_value_ref(&viewer.flatjson[row], &viewer)
+                .unwrap();
+            if tsv.range.is_none() {
+                return;
+            }
+            for _ in 0..count {
+                if to_right {
+                    tsv = tsv.scroll_right(value_ref);
+                } else {
+                    tsv = tsv.scroll_left(value_ref);
+                }
+            }
+            self.truncated_row_value_views
+                .insert(viewer.focused_row, tsv);
+        } else {
+            return;
+        }
     }
 
     pub fn scroll_focused_line_to_an_end(&mut self, viewer: &JsonViewer) {
-        unimplemented!();
+        let row = viewer.focused_row;
+        let tsv = self.truncated_row_value_views.get(&row);
+        if let Some(tsv) = tsv {
+            // Make tsv not a reference.
+            let mut tsv = *tsv;
+            let value_ref = self
+                .line_primitive_value_ref(&viewer.flatjson[row], &viewer)
+                .unwrap();
+            if tsv.range.is_none() {
+                return;
+            }
+            tsv = tsv.jump_to_an_end(value_ref);
+            self.truncated_row_value_views
+                .insert(viewer.focused_row, tsv);
+        } else {
+            return;
+        }
     }
 }
 
