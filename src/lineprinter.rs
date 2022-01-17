@@ -390,8 +390,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             return self.fill_in_container_value(buf, available_space, flatjson, row);
         }
 
-        let mut value_ref: &str;
-        let mut value_truncated = false;
+        let value_ref: &str;
         let quoted: bool;
         let color: Color;
 
@@ -418,18 +417,18 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             available_space -= 1;
         }
 
-        match truncate_right_to_fit(value_ref, available_space, "…") {
-            NoTruncation(width) => {
-                used_space += width;
-            }
-            Truncated(value_prefix, width) => {
-                used_space += width;
-                value_ref = value_prefix;
-                value_truncated = true;
-            }
-            DoesntFit => {
-                return Ok(0);
-            }
+        let truncated_view = TruncatedStrView::init_start(value_ref, available_space);
+        let space_used_for_value = truncated_view.used_space();
+        if space_used_for_value.is_none() {
+            return Ok(0);
+        }
+        let space_used_for_value = space_used_for_value.unwrap();
+        used_space += space_used_for_value;
+
+        // If we are just going to show a single ellipsis, we want
+        // to show a '>' instead.
+        if truncated_view.is_completely_elided() && !quoted && !self.trailing_comma {
+            return Ok(0);
         }
 
         // Print out the value.
@@ -438,10 +437,14 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             used_space += 1;
             buf.write_char('"')?;
         }
-        write!(buf, "{}", value_ref)?;
-        if value_truncated {
-            buf.write_char('…')?;
-        }
+        write!(
+            buf,
+            "{}",
+            TruncatedStrSlice {
+                s: value_ref,
+                truncated_view: &truncated_view,
+            }
+        )?;
         if quoted {
             used_space += 1;
             buf.write_char('"')?;
@@ -1180,6 +1183,13 @@ mod tests {
 
         // Not enough room, returns 0.
         let used_space = line.fill_in_value(&mut buf, 3)?;
+        assert_eq!("\"…\"", buf);
+        assert_eq!(3, used_space);
+
+        buf.clear();
+
+        // Not enough room, returns 0.
+        let used_space = line.fill_in_value(&mut buf, 2)?;
         assert_eq!("", buf);
         assert_eq!(0, used_space);
 
@@ -1219,8 +1229,24 @@ mod tests {
 
         buf.clear();
 
-        // Not enough room, returns 0.
         let used_space = line.fill_in_value(&mut buf, 2)?;
+        assert_eq!("…,", buf);
+        assert_eq!(2, used_space);
+
+        buf.clear();
+
+        // Not enough room, returns 0.
+        let used_space = line.fill_in_value(&mut buf, 1)?;
+        assert_eq!("", buf);
+        assert_eq!(0, used_space);
+
+        // UNQUOTED VALUE, NO TRAILING COMMA
+        line.trailing_comma = false;
+
+        buf.clear();
+
+        // Don't print just an ellipsis, print '>' instead.
+        let used_space = line.fill_in_value(&mut buf, 1)?;
         assert_eq!("", buf);
         assert_eq!(0, used_space);
 

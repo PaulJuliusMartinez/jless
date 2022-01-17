@@ -109,6 +109,12 @@ impl TruncatedRange {
             end: self.end,
         }
     }
+
+    /// Check whether this is a view of a string that is totally elided,
+    /// that is, it is represented by a single ellipsis.
+    pub fn is_completely_elided(&self) -> bool {
+        self.used_space == 1 && self.start == self.end
+    }
 }
 
 impl TruncatedStrView {
@@ -167,6 +173,12 @@ impl TruncatedStrView {
             None => None,
             Some(TruncatedRange { used_space, .. }) => Some(used_space),
         }
+    }
+
+    /// Check whether this is a view of a string that is totally elided,
+    /// that is, it is represented by a single ellipsis.
+    pub fn is_completely_elided(&self) -> bool {
+        self.range.map_or(false, |r| r.is_completely_elided())
     }
 
     // Creates a RangeAdjuster that represents the current state of
@@ -503,6 +515,10 @@ impl<'a> RangeAdjuster<'a> {
             self.available_space
         ));
 
+        // This DOESN'T consider the possibility that using a
+        // replacement character would remove the need for an
+        // ellipsis (because it's the last character), so
+        // something like "🦀" is represented as "…", not "�".
         let showing_replacement_character =
             // We only show a repacement character if we're not
             // showing anything at all...
@@ -612,6 +628,10 @@ mod tests {
 
         assert_init_states("a", 1, "a", "a", Some(1));
         assert_init_states("abc", 1, "…", "…", Some(1));
+        // Note comment in to_view to understand why
+        // this is a single ellipsis instead of a
+        // replacement character.
+        assert_init_states("🦀", 1, "…", "…", Some(1));
 
         assert_init_states("abc", 2, "a…", "…c", Some(2));
         assert_init_states("ab", 2, "ab", "ab", Some(2));
