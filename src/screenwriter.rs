@@ -528,12 +528,10 @@ impl ScreenWriter {
             if tsv.range.is_none() {
                 return;
             }
-            for _ in 0..count {
-                if to_right {
-                    tsv = tsv.scroll_right(value_ref);
-                } else {
-                    tsv = tsv.scroll_left(value_ref);
-                }
+            if to_right {
+                tsv = tsv.scroll_right(value_ref, count);
+            } else {
+                tsv = tsv.scroll_left(value_ref, count);
             }
             self.truncated_row_value_views
                 .insert(viewer.focused_row, tsv);

@@ -189,8 +189,9 @@ impl TruncatedStrView {
         self.range.unwrap().to_adjuster(s, self.available_space)
     }
 
-    /// Scrolls a string view to the right by at least one character.
-    pub fn scroll_right(&self, s: &str) -> TruncatedStrView {
+    /// Scrolls a string view to the right by at least the specified
+    /// number of characters (unless the end of the string is reached).
+    pub fn scroll_right(&self, s: &str, count: usize) -> TruncatedStrView {
         if self.range.is_none() {
             return self.clone();
         }
@@ -204,7 +205,7 @@ impl TruncatedStrView {
 
         let mut adjuster = self.range_adjuster(s);
         // Show another character on the right.
-        adjuster.expand_right();
+        adjuster.expand_right(count);
         // Shrink from the left to fit in available space again.
         adjuster.shrink_left_to_fit();
         // Since we might have gotten rid of a wide character on
@@ -222,8 +223,9 @@ impl TruncatedStrView {
         adjuster.to_view()
     }
 
-    /// Scrolls a string view to the left by at least one character.
-    pub fn scroll_left(&self, s: &str) -> TruncatedStrView {
+    /// Scrolls a string view to the left by at least the specified
+    /// number of characters (unless the start of the string is reached).
+    pub fn scroll_left(&self, s: &str, count: usize) -> TruncatedStrView {
         if self.range.is_none() {
             return self.clone();
         }
@@ -237,7 +239,7 @@ impl TruncatedStrView {
 
         let mut adjuster = self.range_adjuster(s);
         // Show another character on the left.
-        adjuster.expand_left();
+        adjuster.expand_left(count);
         // Shrink from the right to fit in available space again.
         adjuster.shrink_right_to_fit();
         // Since we might have gotten rid of a wide character on
@@ -395,27 +397,35 @@ impl<'a> RangeAdjuster<'a> {
     }
 
     /// Update the range to show another character on the right side.
-    pub fn expand_right(&mut self) {
+    pub fn expand_right(&mut self, count: usize) {
         let mut right_graphemes = self.s[self.end..].graphemes(true);
-        if let Some(grapheme) = right_graphemes.next() {
-            self.end += grapheme.len();
-            self.used_space += UnicodeWidthStr::width(grapheme) as isize;
-            if self.end == self.s.len() {
-                // No more trailing ellipsis.
-                self.used_space -= 1;
+        for _ in 0..count {
+            if let Some(grapheme) = right_graphemes.next() {
+                self.end += grapheme.len();
+                self.used_space += UnicodeWidthStr::width(grapheme) as isize;
+                if self.end == self.s.len() {
+                    // No more trailing ellipsis.
+                    self.used_space -= 1;
+                }
+            } else {
+                break;
             }
         }
     }
 
     /// Update the range to show another character on the left side.
-    pub fn expand_left(&mut self) {
+    pub fn expand_left(&mut self, count: usize) {
         let mut left_graphemes = self.s[..self.start].graphemes(true);
-        if let Some(grapheme) = left_graphemes.next_back() {
-            self.start -= grapheme.len();
-            self.used_space += UnicodeWidthStr::width(grapheme) as isize;
-            if self.start == 0 {
-                // No more leading ellipsis.
-                self.used_space -= 1;
+        for _ in 0..count {
+            if let Some(grapheme) = left_graphemes.next_back() {
+                self.start -= grapheme.len();
+                self.used_space += UnicodeWidthStr::width(grapheme) as isize;
+                if self.start == 0 {
+                    // No more leading ellipsis.
+                    self.used_space -= 1;
+                }
+            } else {
+                break;
             }
         }
     }
@@ -688,7 +698,7 @@ mod tests {
         assert_eq!(states[0], prev_formatted);
 
         for expected_state in states.iter().skip(1) {
-            let next_state = curr_state.scroll_right(s);
+            let next_state = curr_state.scroll_right(s, 1);
             let formatted = rendered(s, &next_state);
 
             assert_eq!(
@@ -705,7 +715,7 @@ mod tests {
         assert_eq!(states.last().unwrap(), &prev_formatted);
 
         for expected_state in states.iter().rev().skip(1) {
-            let next_state = curr_state.scroll_left(s);
+            let next_state = curr_state.scroll_left(s, 1);
             let formatted = rendered(s, &next_state);
 
             assert_eq!(
@@ -736,9 +746,7 @@ mod tests {
             ],
         );
 
-        let initial_state = TruncatedStrView::init_start(s, 5)
-            .scroll_right(s)
-            .scroll_right(s);
+        let initial_state = TruncatedStrView::init_start(s, 5).scroll_right(s, 2);
 
         assert_expansions(
             s,
@@ -772,9 +780,7 @@ mod tests {
 
         assert_expansions(
             s,
-            TruncatedStrView::init_start(s, 5)
-                .scroll_right(s)
-                .scroll_right(s),
+            TruncatedStrView::init_start(s, 5).scroll_right(s, 2),
             5,
             vec![
                 "…👀c…",
@@ -838,7 +844,7 @@ mod tests {
 
         assert_shrinks(
             s,
-            TruncatedStrView::init_start(s, 9).scroll_right(s),
+            TruncatedStrView::init_start(s, 9).scroll_right(s, 1),
             9,
             vec![
                 "…cdefghij",
@@ -855,7 +861,7 @@ mod tests {
 
         assert_shrinks(
             s,
-            TruncatedStrView::init_start(s, 8).scroll_right(s),
+            TruncatedStrView::init_start(s, 8).scroll_right(s, 1),
             8,
             vec![
                 "…cdefgh…",
@@ -871,7 +877,7 @@ mod tests {
         let s = "ab👍c👀d😱efg";
         assert_shrinks(
             s,
-            TruncatedStrView::init_start(s, 11).scroll_right(s),
+            TruncatedStrView::init_start(s, 11).scroll_right(s, 1),
             11,
             vec![
                 "…👍c👀d😱e…",
