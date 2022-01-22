@@ -336,7 +336,7 @@ impl JLess {
         }
     }
 
-    fn jump_to_next_search_match(&mut self, jumps: usize) -> Action {
+    fn jump_to_next_search_match(&mut self, _jumps: usize) -> Action {
         let destination = self.search_state.jump_to_match(
             self.viewer.focused_row,
             &self.viewer.flatjson,
@@ -345,7 +345,7 @@ impl JLess {
         Action::MoveTo(destination)
     }
 
-    fn jump_to_prev_search_match(&mut self, jumps: usize) -> Action {
+    fn jump_to_prev_search_match(&mut self, _jumps: usize) -> Action {
         let destination = self.search_state.jump_to_match(
             self.viewer.focused_row,
             &self.viewer.flatjson,

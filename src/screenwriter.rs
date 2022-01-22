@@ -13,7 +13,7 @@ use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::SearchState;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
-use crate::truncatedstrview::{TruncatedStrSlice, TruncatedStrView};
+use crate::truncatedstrview::TruncatedStrView;
 use crate::tuicontrol::{Color as TUIColor, ColorControl};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};

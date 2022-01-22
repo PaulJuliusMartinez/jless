@@ -1,5 +1,4 @@
 use std::collections::hash_map::Entry;
-use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Write;
 

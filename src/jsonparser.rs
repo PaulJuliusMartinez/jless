@@ -401,7 +401,6 @@ impl<'a> JsonParser<'a> {
     }
 
     fn parse_string(&mut self) -> Result<usize, String> {
-        let span_len = self.tokenizer.span().len();
         let row_index = self.create_row(Value::String);
 
         // The token includes the quotation marks.

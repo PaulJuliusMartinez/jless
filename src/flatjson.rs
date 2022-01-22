@@ -541,7 +541,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
                 let mut prev_sibling: OptionIndex = OptionIndex::Nil;
                 let mut child_index = 0;
 
-                for (i, (k, v)) in obj.into_iter().enumerate() {
+                for (i, (_, v)) in obj.into_iter().enumerate() {
                     child_index = flat_json.len();
 
                     flatten_json(v, flat_json, parents);
