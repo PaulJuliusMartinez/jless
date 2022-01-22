@@ -1,6 +1,8 @@
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::fmt::Write;
+use std::iter::Peekable;
+use std::ops::Range;
 
 use regex::Regex;
 
@@ -194,7 +196,7 @@ pub enum LineValue<'a> {
     },
 }
 
-pub struct LinePrinter<'a, TUI: TUIControl> {
+pub struct LinePrinter<'a, 'b, TUI: TUIControl, I: Iterator<Item = &'b Range<usize>>> {
     pub mode: Mode,
     pub tui: TUI,
 
@@ -212,11 +214,14 @@ pub struct LinePrinter<'a, TUI: TUIControl> {
     // Stuff to actually print out
     pub label: Option<LineLabel<'a>>,
     pub value: LineValue<'a>,
+    pub value_start_index: usize,
+
+    pub search_matches: &'a mut Peekable<I>,
 
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
-impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
+impl<'a, 'b, TUI: TUIControl, I: Iterator<Item = &'b Range<usize>>> LinePrinter<'a, 'b, TUI, I> {
     pub fn print_line<W: Write>(&mut self, buf: &mut W) -> fmt::Result {
         self.tui.reset_style(buf)?;
 
@@ -452,22 +457,24 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         }
 
         // Print out the value.
-        self.tui.fg_color(buf, color)?;
-        if quoted {
-            used_space += 1;
-            buf.write_char('"')?;
-        }
-        write!(
+        print_str_view(
+            &self.tui,
             buf,
-            "{}",
-            TruncatedStrSlice {
-                s: value_ref,
-                truncated_view: &truncated_view,
-            }
+            value_ref,
+            &truncated_view,
+            self.value_start_index,
+            color,
+            Color::Black,
+            if quoted {
+                LabelStyle::Quote
+            } else {
+                LabelStyle::None
+            },
+            &mut self.search_matches,
         )?;
+
         if quoted {
-            used_space += 1;
-            buf.write_char('"')?;
+            used_space += 2;
         }
 
         if self.trailing_comma {
@@ -588,7 +595,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         }
 
         let quoted_object_keys = self.mode == Mode::Line;
-        let mut used_space = LinePrinter::<TUI>::generate_container_preview(
+        let mut used_space = LinePrinter::<TUI, I>::generate_container_preview(
             buf,
             flatjson,
             row,
@@ -636,7 +643,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
             let space_available_for_elem = available_space - space_needed_at_end_of_container;
             let is_only_child = is_first_child && next_sibling.is_nil();
 
-            let used_space = LinePrinter::<TUI>::fill_in_container_elem_preview(
+            let used_space = LinePrinter::<TUI, I>::fill_in_container_elem_preview(
                 buf,
                 flatjson,
                 &flatjson[child],
@@ -753,7 +760,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            LinePrinter::<TUI>::generate_container_preview(
+            LinePrinter::<TUI, I>::generate_container_preview(
                 buf,
                 flatjson,
                 &row,
@@ -761,7 +768,7 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
                 quoted_object_keys,
             )?
         } else {
-            LinePrinter::<TUI>::fill_in_value_preview(buf, &flatjson.1, &row, available_space)?
+            LinePrinter::<TUI, I>::fill_in_value_preview(buf, &flatjson.1, &row, available_space)?
         };
         used_space += space_used_for_value;
 
@@ -859,6 +866,157 @@ impl<'a, TUI: TUIControl> LinePrinter<'a, TUI> {
     }
 }
 
+/************************************************
+ * Printing out highlighted portions of matches *
+ ************************************************/
+
+fn print_str_view<'a, W: Write, TUI: TUIControl, I: Iterator<Item = &'a Range<usize>>>(
+    tui: &TUI,
+    buf: &mut W,
+    mut s: &str,
+    str_view: &TruncatedStrView,
+    mut start_index: usize,
+    fg_color: Color,
+    bg_color: Color,
+    delimiter: LabelStyle,
+    matches_iter: &mut Peekable<I>,
+) -> fmt::Result {
+    let mut print_leading_ellipsis = false;
+    let mut print_replacement_character = false;
+    let mut print_trailing_ellipsis = false;
+
+    if let Some(tr) = str_view.range {
+        print_leading_ellipsis = tr.start != 0;
+        print_replacement_character = tr.showing_replacement_character;
+        print_trailing_ellipsis = tr.end != s.len();
+        s = &s[tr.start..tr.end];
+        // TODO: Need to pass in full original range as well to determine
+        // whether to highlight delimiters.
+        start_index += tr.start;
+    }
+
+    print_segment(
+        tui,
+        buf,
+        s,
+        start_index,
+        fg_color,
+        bg_color,
+        print_leading_ellipsis,
+        print_replacement_character,
+        print_trailing_ellipsis,
+        delimiter,
+        matches_iter,
+    )
+}
+
+fn print_segment<'a, W: Write, TUI: TUIControl, I: Iterator<Item = &'a Range<usize>>>(
+    tui: &TUI,
+    buf: &mut W,
+    mut s: &str,
+    start_index: usize,
+
+    fg_color: Color,
+    bg_color: Color,
+    print_leading_ellipsis: bool,
+    print_replacement_character: bool,
+    print_trailing_ellipsis: bool,
+    delimiter: LabelStyle,
+
+    matches_iter: &mut Peekable<I>,
+) -> fmt::Result {
+    // Print label start
+    // TODO: Check if delimiter should be highlighted
+    tui.fg_color(buf, fg_color)?;
+    tui.bg_color(buf, bg_color)?;
+    write!(buf, "{}", delimiter.left())?;
+
+    // Print leading ellipsis
+    if print_leading_ellipsis {
+        tui.fg_color(buf, DIMMED)?;
+        tui.bg_color(buf, Color::Black)?;
+        buf.write_char('…')?;
+    }
+
+    // Print replacement character
+    if print_replacement_character {
+        buf.write_char('�')?;
+    }
+
+    // Print str itself
+    print_and_highlight_matches(tui, buf, s, start_index, fg_color, bg_color, matches_iter)?;
+
+    // Print trailing ellipsis
+    if print_trailing_ellipsis {
+        tui.fg_color(buf, DIMMED)?;
+        tui.bg_color(buf, Color::Black)?;
+        buf.write_char('…')?;
+    }
+
+    // Print label end
+    // TODO: Check if delimiter should be highlighted
+    tui.fg_color(buf, fg_color)?;
+    tui.bg_color(buf, bg_color)?;
+    write!(buf, "{}", delimiter.right())?;
+
+    Ok(())
+}
+
+fn print_and_highlight_matches<
+    'a,
+    W: Write,
+    TUI: TUIControl,
+    I: Iterator<Item = &'a Range<usize>>,
+>(
+    tui: &TUI,
+    buf: &mut W,
+    mut s: &str,
+    mut start_index: usize,
+    fg_color: Color,
+    bg_color: Color,
+    matches_iter: &mut Peekable<I>,
+) -> fmt::Result {
+    while !s.is_empty() {
+        // Initialize the next match to be a fake match past the end of the string.
+        let string_end = start_index + s.len();
+        let mut match_start = string_end;
+        let mut match_end = string_end;
+
+        // Get rid of matches before the string.
+        while let Some(Range { start, end }) = matches_iter.peek() {
+            if end > &start_index {
+                match_start = string_end.min(*start);
+                match_end = string_end.min(*end);
+                break;
+            }
+            matches_iter.next();
+        }
+
+        // Print out stuff before the start of the match, if there's any.
+        if start_index < match_start {
+            let print_end = match_start - start_index;
+            tui.fg_color(buf, fg_color)?;
+            tui.bg_color(buf, bg_color)?;
+            write!(buf, "{}", &s[..print_end])?;
+        }
+
+        // Highlight the matching substring.
+        if match_start < string_end {
+            tui.fg_color(buf, Color::Black)?;
+            tui.bg_color(buf, Color::Yellow)?;
+            let print_start = match_start - start_index;
+            let print_end = match_end - start_index;
+            write!(buf, "{}", &s[print_start..print_end])?;
+        }
+
+        // Update start_index and s
+        s = &s[(match_end - start_index)..];
+        start_index = match_end;
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use unicode_width::UnicodeWidthStr;
@@ -867,6 +1025,8 @@ mod tests {
     use crate::tuicontrol::test::{EmptyControl, VisibleEscapes};
 
     use super::*;
+
+    type I<'a> = std::slice::Iter<'a, Range<usize>>;
 
     const OBJECT: &'static str = r#"{
         "1": 1,
@@ -882,8 +1042,10 @@ mod tests {
         "11": 11
     }"#;
 
-    impl<'a, TUI: Default + TUIControl> Default for LinePrinter<'a, TUI> {
-        fn default() -> LinePrinter<'a, TUI> {
+    impl<'a, 'b, TUI: Default + TUIControl, I: Iterator<Item = &'b Range<usize>>> Default
+        for LinePrinter<'a, 'b, TUI, I>
+    {
+        fn default() -> LinePrinter<'a, 'b, TUI, I> {
             LinePrinter {
                 mode: Mode::Data,
                 tui: TUI::default(),
@@ -899,6 +1061,7 @@ mod tests {
                     quotes: true,
                     color: Color::White,
                 },
+                search_matches: None,
                 cached_formatted_value: None,
             }
         }
@@ -906,7 +1069,7 @@ mod tests {
 
     #[test]
     fn test_line_mode_focus_indicators() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+        let mut line: LinePrinter<'_, '_, VisibleEscapes, I> = LinePrinter {
             mode: Mode::Line,
             tui: VisibleEscapes::position_only(),
             depth: 1,
@@ -938,7 +1101,7 @@ mod tests {
     #[test]
     fn test_data_mode_focus_indicators() -> std::fmt::Result {
         let mut fj = parse_top_level_json2(OBJECT.to_owned()).unwrap();
-        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+        let mut line: LinePrinter<'_, '_, VisibleEscapes, I> = LinePrinter {
             tui: VisibleEscapes::position_only(),
             value: LineValue::Container {
                 flatjson: &fj,
@@ -994,7 +1157,7 @@ mod tests {
 
     #[test]
     fn test_fill_key_label_basic() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+        let mut line: LinePrinter<'_, '_, VisibleEscapes, I> = LinePrinter {
             mode: Mode::Line,
             label: Some(LineLabel::Key { key: "hello" }),
             ..LinePrinter::default()
@@ -1042,7 +1205,7 @@ mod tests {
 
     #[test]
     fn test_fill_index_label_basic() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+        let mut line: LinePrinter<'_, '_, VisibleEscapes, I> = LinePrinter {
             label: Some(LineLabel::Index { index: "12345" }),
             ..LinePrinter::default()
         };
@@ -1065,7 +1228,7 @@ mod tests {
 
     #[test]
     fn test_fill_label_not_enough_space() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
+        let mut line: LinePrinter<'_, '_, EmptyControl, I> = LinePrinter::default();
         line.mode = Mode::Line;
         line.label = Some(LineLabel::Key { key: "hello" });
 
@@ -1149,7 +1312,7 @@ mod tests {
     #[test]
     fn test_fill_value_basic() -> std::fmt::Result {
         let color = Color::Black;
-        let mut line: LinePrinter<'_, VisibleEscapes> = LinePrinter {
+        let mut line: LinePrinter<'_, '_, VisibleEscapes, I> = LinePrinter {
             value: LineValue::Value {
                 s: "hello",
                 quotes: true,
@@ -1182,7 +1345,7 @@ mod tests {
 
     #[test]
     fn test_fill_value_not_enough_space() -> std::fmt::Result {
-        let mut line: LinePrinter<'_, EmptyControl> = LinePrinter::default();
+        let mut line: LinePrinter<'_, '_, EmptyControl, I> = LinePrinter::default();
         let color = Color::Black;
 
         // QUOTED VALUE
@@ -1389,7 +1552,7 @@ mod tests {
         quoted_object_keys: bool,
     ) -> Result<(String, isize), fmt::Error> {
         let mut buf = String::new();
-        let used = LinePrinter::<EmptyControl>::generate_container_preview(
+        let used = LinePrinter::<EmptyControl, I>::generate_container_preview(
             &mut buf,
             flatjson,
             &flatjson[0],

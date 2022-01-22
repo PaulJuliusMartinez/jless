@@ -280,7 +280,8 @@ impl JLess {
                 self.search_state.set_no_longer_actively_searching();
             }
 
-            self.screen_writer.print_viewer(&self.viewer);
+            self.screen_writer
+                .print_viewer(&self.viewer, &self.search_state);
             self.screen_writer.print_status_bar(
                 &self.viewer,
                 &self.input_buffer,

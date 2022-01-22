@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
+use std::iter::Peekable;
+use std::ops::Range;
 
 use rustyline::Editor;
 use termion::{clear, cursor};
@@ -75,12 +77,12 @@ impl ScreenWriter {
         input_filename: &str,
         search_state: &SearchState,
     ) {
-        self.print_viewer(viewer);
+        self.print_viewer(viewer, search_state);
         self.print_status_bar(viewer, input_buffer, input_filename, search_state);
     }
 
-    pub fn print_viewer(&mut self, viewer: &JsonViewer) {
-        match self.print_screen_impl(viewer) {
+    pub fn print_viewer(&mut self, viewer: &JsonViewer, search_state: &SearchState) {
+        match self.print_screen_impl(viewer, search_state) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("Error while printing viewer: {}", e);
@@ -103,10 +105,18 @@ impl ScreenWriter {
         }
     }
 
-    fn print_screen_impl(&mut self, viewer: &JsonViewer) -> std::io::Result<()> {
+    fn print_screen_impl(
+        &mut self,
+        viewer: &JsonViewer,
+        search_state: &SearchState,
+    ) -> std::io::Result<()> {
         self.tty_writer.clear_screen()?;
 
         let mut line = OptionIndex::Index(viewer.top_row);
+        let mut search_matches = search_state
+            .matches_iter(viewer.flatjson[line.unwrap()].range.start)
+            .peekable();
+
         for row_index in 0..viewer.dimensions.height {
             match line {
                 OptionIndex::Nil => {
@@ -116,7 +126,13 @@ impl ScreenWriter {
                     write!(self.tty_writer, "~")?;
                 }
                 OptionIndex::Index(index) => {
-                    self.print_line(viewer, row_index, index, index == viewer.focused_row)?;
+                    self.print_line(
+                        viewer,
+                        row_index,
+                        index,
+                        index == viewer.focused_row,
+                        &mut search_matches,
+                    )?;
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
                         Mode::Data => viewer.flatjson.next_item(index),
@@ -159,12 +175,13 @@ impl ScreenWriter {
         write!(self.tty_writer, "{}", style::Reset)
     }
 
-    fn print_line(
+    fn print_line<'a, I: Iterator<Item = &'a Range<usize>>>(
         &mut self,
         viewer: &JsonViewer,
         screen_index: u16,
         index: Index,
         is_focused: bool,
+        search_matches: &mut Peekable<I>,
     ) -> std::io::Result<()> {
         self.tty_writer.position_cursor(1, screen_index + 1)?;
         let row = &viewer.flatjson[index];
@@ -194,6 +211,7 @@ impl ScreenWriter {
             }
         }
 
+        let mut value_start_index = 0;
         let value = match &row.value {
             Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
                 lp::LineValue::Container {
@@ -214,8 +232,10 @@ impl ScreenWriter {
 
                 let range = row.range.clone();
                 let (s, quotes) = if let Value::String = &row.value {
+                    value_start_index = range.start + 1;
                     (&viewer.flatjson.1[range.start + 1..range.end - 1], true)
                 } else {
+                    value_start_index = range.start;
                     (&viewer.flatjson.1[range], false)
                 };
 
@@ -269,6 +289,9 @@ impl ScreenWriter {
 
             label,
             value,
+            value_start_index,
+
+            search_matches, //: Some(search_matches),
 
             cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
         };

@@ -1,5 +1,6 @@
 use regex::Regex;
 use std::ops::Range;
+use std::slice::Iter;
 
 use crate::flatjson::{FlatJson, Index};
 
@@ -141,6 +142,29 @@ impl SearchState {
         };
 
         next_focused_row
+    }
+
+    /// Return an iterator over all the stored matches. We pass in a
+    /// start index that will be used to efficiently skip any matches
+    /// before that index.
+    pub fn matches_iter(&self, range_start: usize) -> Iter<'_, Range<usize>> {
+        match self.immediate_state {
+            ImmediateSearchState::NotSearching => {
+                // Create an empty range so it's a std::slice::Iter and we
+                // don't have to return a dyn Iter.
+                self.matches[0..0].iter()
+            }
+            ImmediateSearchState::ActivelySearching { .. } => {
+                let search_result = self
+                    .matches
+                    .binary_search_by(|probe| probe.end.cmp(&range_start));
+                let start_index = match search_result {
+                    Ok(i) => i,
+                    Err(i) => i,
+                };
+                self.matches[start_index..].iter()
+            }
+        }
     }
 
     fn true_direction(&self, jump_direction: JumpDirection) -> SearchDirection {

@@ -55,9 +55,9 @@ pub struct TruncatedStrView {
 /// This range also keeps track of how much space it takes up.
 #[derive(Debug, Copy, Clone)]
 pub struct TruncatedRange {
-    start: usize,
-    end: usize,
-    showing_replacement_character: bool,
+    pub start: usize,
+    pub end: usize,
+    pub showing_replacement_character: bool,
     used_space: isize,
 }
 
