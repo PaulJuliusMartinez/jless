@@ -1,6 +1,6 @@
 use std::fmt::{Result, Write};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 #[allow(dead_code)]
 pub enum Color {
     Black,
@@ -44,7 +44,7 @@ impl Color {
     }
 }
 
-pub trait TUIControl {
+pub trait TUIControl: Copy {
     fn position_cursor<W: Write>(&self, buf: &mut W, col: u16) -> Result;
     fn fg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result;
     fn bg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result;
@@ -66,7 +66,7 @@ pub trait TUIControl {
     }
 }
 
-#[derive(Default)]
+#[derive(Copy, Clone, Default)]
 pub struct ColorControl {}
 
 impl TUIControl for ColorControl {
@@ -95,7 +95,7 @@ impl TUIControl for ColorControl {
 pub mod test {
     use super::*;
 
-    #[derive(Default)]
+    #[derive(Copy, Clone, Default)]
     pub struct EmptyControl {}
 
     impl TUIControl for EmptyControl {
@@ -120,6 +120,7 @@ pub mod test {
         }
     }
 
+    #[derive(Copy, Clone)]
     pub struct VisibleEscapes {
         pub position: bool,
         pub style: bool,

@@ -12,7 +12,7 @@ use crate::flatjson::{Index, OptionIndex, Row, Value};
 use crate::jless::MAX_BUFFER_SIZE;
 use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
-use crate::search::SearchState;
+use crate::search::{MatchRangeIter, SearchState};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::truncatedstrview::TruncatedStrView;
@@ -175,13 +175,13 @@ impl ScreenWriter {
         write!(self.tty_writer, "{}", style::Reset)
     }
 
-    fn print_line<'a, I: Iterator<Item = &'a Range<usize>>>(
+    fn print_line<'a>(
         &mut self,
         viewer: &JsonViewer,
         screen_index: u16,
         index: Index,
         is_focused: bool,
-        search_matches: &mut Peekable<I>,
+        search_matches: &mut Peekable<MatchRangeIter>,
     ) -> std::io::Result<()> {
         self.tty_writer.position_cursor(1, screen_index + 1)?;
         let row = &viewer.flatjson[index];
@@ -291,7 +291,7 @@ impl ScreenWriter {
             value,
             value_start_index,
 
-            search_matches, //: Some(search_matches),
+            search_matches: Some(search_matches),
 
             cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
         };

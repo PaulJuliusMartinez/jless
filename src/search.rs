@@ -45,6 +45,9 @@ pub enum ImmediateSearchState {
     },
 }
 
+pub type MatchRangeIter<'a> = std::slice::Iter<'a, Range<usize>>;
+const STATIC_EMPTY_SLICE: &'static [Range<usize>] = &[];
+
 impl SearchState {
     pub fn empty() -> SearchState {
         SearchState {
@@ -147,13 +150,9 @@ impl SearchState {
     /// Return an iterator over all the stored matches. We pass in a
     /// start index that will be used to efficiently skip any matches
     /// before that index.
-    pub fn matches_iter(&self, range_start: usize) -> Iter<'_, Range<usize>> {
+    pub fn matches_iter(&self, range_start: usize) -> MatchRangeIter {
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => {
-                // Create an empty range so it's a std::slice::Iter and we
-                // don't have to return a dyn Iter.
-                self.matches[0..0].iter()
-            }
+            ImmediateSearchState::NotSearching => STATIC_EMPTY_SLICE.iter(),
             ImmediateSearchState::ActivelySearching { .. } => {
                 let search_result = self
                     .matches
