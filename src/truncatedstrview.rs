@@ -115,6 +115,14 @@ impl TruncatedRange {
     pub fn is_completely_elided(&self) -> bool {
         self.used_space == 1 && self.start == self.end
     }
+
+    pub fn print_leading_ellipsis(&self) -> bool {
+        self.start != 0
+    }
+
+    pub fn print_trailing_ellipsis(&self, s: &str) -> bool {
+        self.end != s.len()
+    }
 }
 
 impl TruncatedStrView {

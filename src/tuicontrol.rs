@@ -19,6 +19,7 @@ pub enum Color {
     LightMagenta,
     LightCyan,
     LightWhite,
+    Default,
 }
 
 impl Color {
@@ -40,6 +41,7 @@ impl Color {
             Color::LightMagenta => 13,
             Color::LightCyan => 14,
             Color::LightWhite => 15,
+            Color::Default => 16,
         }
     }
 }
@@ -64,6 +66,9 @@ pub trait TUIControl: Copy {
         }
         Ok(())
     }
+
+    fn set_inverted<W: Write>(&self, buf: &mut W, inverted: bool) -> Result;
+    fn set_bold<W: Write>(&self, buf: &mut W, bold: bool) -> Result;
 }
 
 #[derive(Copy, Clone, Default)]
@@ -75,15 +80,39 @@ impl TUIControl for ColorControl {
     }
 
     fn fg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result {
-        write!(buf, "\x1b[38;5;{}m", color.id())
+        if color == Color::Default {
+            write!(buf, "\x1b[39m")
+        } else {
+            write!(buf, "\x1b[38;5;{}m", color.id())
+        }
     }
 
     fn bg_color<W: Write>(&self, buf: &mut W, color: Color) -> Result {
-        write!(buf, "\x1b[48;5;{}m", color.id())
+        if color == Color::Default {
+            write!(buf, "\x1b[49m")
+        } else {
+            write!(buf, "\x1b[48;5;{}m", color.id())
+        }
     }
 
     fn bold<W: Write>(&self, buf: &mut W) -> Result {
         write!(buf, "\x1b[1m")
+    }
+
+    fn set_inverted<W: Write>(&self, buf: &mut W, inverted: bool) -> Result {
+        if inverted {
+            write!(buf, "\x1b[7m")
+        } else {
+            write!(buf, "\x1b[27m")
+        }
+    }
+
+    fn set_bold<W: Write>(&self, buf: &mut W, bold: bool) -> Result {
+        if bold {
+            write!(buf, "\x1b[1m")
+        } else {
+            write!(buf, "\x1b[22m")
+        }
     }
 
     fn reset_style<W: Write>(&self, buf: &mut W) -> Result {
@@ -116,6 +145,14 @@ pub mod test {
         }
 
         fn reset_style<W: Write>(&self, _buf: &mut W) -> Result {
+            Ok(())
+        }
+
+        fn set_inverted<W: Write>(&self, buf: &mut W, inverted: bool) -> Result {
+            Ok(())
+        }
+
+        fn set_bold<W: Write>(&self, buf: &mut W, bold: bool) -> Result {
             Ok(())
         }
     }
@@ -187,6 +224,30 @@ pub mod test {
         fn reset_style<W: Write>(&self, buf: &mut W) -> Result {
             if self.style {
                 write!(buf, "_R_")
+            } else {
+                Ok(())
+            }
+        }
+
+        fn set_inverted<W: Write>(&self, buf: &mut W, inverted: bool) -> Result {
+            if self.style {
+                if inverted {
+                    write!(buf, "_INV_")
+                } else {
+                    write!(buf, "_UNINV_")
+                }
+            } else {
+                Ok(())
+            }
+        }
+
+        fn set_bold<W: Write>(&self, buf: &mut W, bold: bool) -> Result {
+            if self.style {
+                if bold {
+                    write!(buf, "_BLD_")
+                } else {
+                    write!(buf, "_UNBLD_")
+                }
             } else {
                 Ok(())
             }

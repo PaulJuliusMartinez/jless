@@ -4,6 +4,7 @@ pub mod input;
 pub mod jsonparser;
 pub mod jsontokenizer;
 pub mod lineprinter;
+pub mod highlighting;
 pub mod options;
 pub mod screenwriter;
 pub mod search;
