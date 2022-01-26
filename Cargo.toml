@@ -3,6 +3,7 @@ name = "jless"
 version = "0.1.0"
 authors = ["Paul Julius Martinez <pauljuliusmartinez@gmail.com>"]
 edition = "2018"
+default-run = "jless"
 
 [dependencies]
 logos = "0.12.0"

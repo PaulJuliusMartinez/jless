@@ -9,13 +9,13 @@ use termion::event::MouseEvent::Press;
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
+use crate::options::Opt;
 use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer};
-use crate::Opt;
 
-pub struct JLess {
+pub struct App {
     viewer: JsonViewer,
     screen_writer: ScreenWriter,
     input_buffer: Vec<u8>,
@@ -26,37 +26,37 @@ pub struct JLess {
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &'static str = "\x07";
 
-pub fn new(
-    opt: &Opt,
-    json: String,
-    input_filename: String,
-    stdout: Box<dyn Write>,
-) -> Result<JLess, String> {
-    let flatjson = match flatjson::parse_top_level_json2(json) {
-        Ok(flatjson) => flatjson,
-        Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
-    };
+impl App {
+    pub fn new(
+        opt: &Opt,
+        json: String,
+        input_filename: String,
+        stdout: Box<dyn Write>,
+    ) -> Result<App, String> {
+        let flatjson = match flatjson::parse_top_level_json2(json) {
+            Ok(flatjson) => flatjson,
+            Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
+        };
 
-    let mut viewer = JsonViewer::new(flatjson, opt.mode);
-    viewer.scrolloff_setting = opt.scrolloff;
+        let mut viewer = JsonViewer::new(flatjson, opt.mode);
+        viewer.scrolloff_setting = opt.scrolloff;
 
-    let tty_writer = AnsiTTYWriter {
-        stdout,
-        color: true,
-    };
-    let screen_writer =
-        ScreenWriter::init(tty_writer, Editor::<()>::new(), TTYDimensions::default());
+        let tty_writer = AnsiTTYWriter {
+            stdout,
+            color: true,
+        };
+        let screen_writer =
+            ScreenWriter::init(tty_writer, Editor::<()>::new(), TTYDimensions::default());
 
-    Ok(JLess {
-        viewer,
-        screen_writer,
-        input_buffer: vec![],
-        input_filename,
-        search_state: SearchState::empty(),
-    })
-}
+        Ok(App {
+            viewer,
+            screen_writer,
+            input_buffer: vec![],
+            input_filename,
+            search_state: SearchState::empty(),
+        })
+    }
 
-impl JLess {
     pub fn run(&mut self, input: Box<dyn Iterator<Item = io::Result<TuiEvent>>>) {
         let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
         self.viewer.dimensions = dimensions.without_status_bar();

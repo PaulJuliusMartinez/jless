@@ -8,8 +8,8 @@ use termion::{clear, cursor};
 use termion::{color, style};
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::MAX_BUFFER_SIZE;
 use crate::flatjson::{Index, OptionIndex, Row, Value};
-use crate::jless::MAX_BUFFER_SIZE;
 use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::{MatchRangeIter, SearchState};

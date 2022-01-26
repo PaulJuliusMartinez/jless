@@ -5,49 +5,16 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::PathBuf;
+
 use structopt::StructOpt;
 use termion::cursor::HideCursor;
 use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
-mod flatjson;
-mod input;
-mod jless;
-mod jsonparser;
-mod jsontokenizer;
-mod lineprinter;
-mod screenwriter;
-mod search;
-mod truncate;
-mod truncatedstrview;
-mod tuicontrol;
-mod types;
-mod viewer;
-
-#[derive(Debug, StructOpt)]
-#[structopt(name = "jless", about = "A pager for JSON data")]
-pub struct Opt {
-    /// Input file. jless will read from stdin if no input
-    /// file is provided, or '-' is specified.
-    #[structopt(parse(from_os_str))]
-    input: Option<PathBuf>,
-
-    /// Initial viewing mode. In line mode (--mode line), opening
-    /// and closing curly and square brackets are shown and all
-    /// Object keys are quoted. In data mode (--mode data; the default),
-    /// closing braces, commas, and quotes around Object keys are elided.
-    /// The active mode can be toggled by pressing 'm'.
-    #[structopt(short, long, default_value = "data")]
-    mode: viewer::Mode,
-
-    /// Number of lines to maintain as padding between the currently
-    /// focused row and the top or bottom of the screen. Setting this to
-    /// a large value will keep the focused in the middle of the screen
-    /// (except at the start or end of a file).
-    #[structopt(long = "scrolloff", default_value = "3")]
-    scrolloff: u16,
-}
+use jless::app::App;
+use jless::input;
+use jless::options::Opt;
 
 fn main() {
     let opt = Opt::from_args();
@@ -63,7 +30,7 @@ fn main() {
     let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
         io::stdout().into_raw_mode().unwrap(),
     )));
-    let mut app = match jless::new(&opt, json_string, input_filename, Box::new(stdout)) {
+    let mut app = match App::new(&opt, json_string, input_filename, Box::new(stdout)) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{}", err);

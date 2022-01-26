@@ -143,7 +143,7 @@ const FOCUSED_LABEL_COLOR: Color = Color::Blue;
 const FOCUSED_LABEL_BG_COLOR: Color = Color::LightWhite;
 const DIMMED: Color = Color::LightBlack;
 
-lazy_static! {
+lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
 }
 
