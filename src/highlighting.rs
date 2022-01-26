@@ -123,22 +123,22 @@ pub const GRAY_STYLE: PrintStyle = PrintStyle {
 };
 
 pub const YELLOW_STYLE: PrintStyle = PrintStyle {
-    fg: Color::Yellow,
+    fg: Color::LightYellow,
     ..PrintStyle::default()
 };
 
 pub const MAGENTA_STYLE: PrintStyle = PrintStyle {
-    fg: Color::Magenta,
+    fg: Color::LightMagenta,
     ..PrintStyle::default()
 };
 
 pub const GREEN_STYLE: PrintStyle = PrintStyle {
-    fg: Color::Green,
+    fg: Color::LightGreen,
     ..PrintStyle::default()
 };
 
 pub const BLUE_STYLE: PrintStyle = PrintStyle {
-    fg: Color::Blue,
+    fg: Color::LightBlue,
     ..PrintStyle::default()
 };
 

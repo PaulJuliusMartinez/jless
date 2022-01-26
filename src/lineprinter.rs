@@ -216,6 +216,7 @@ pub struct LinePrinter<'a, 'b, TUI: TUIControl> {
 
     // Stuff to actually print out
     pub label: Option<LineLabel<'a>>,
+    pub label_start_index: usize,
     pub value: LineValue<'a>,
     pub value_start_index: usize,
 
@@ -298,18 +299,19 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
     }
 
     pub fn fill_in_label<W: Write>(
-        &self,
+        &mut self,
         buf: &mut W,
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
         let label_style: LabelStyle;
         let label_ref: &str;
 
-        let mut fg_label_color = None;
-        let mut bg_label_color = None;
-        let mut label_bolded = false;
-
         let mut used_space = 0;
+
+        let style: PrintStyle;
+        let highlighted_style: PrintStyle;
+        let mut dummy_search_matches = None;
+        let matches_iter;
 
         match self.label {
             None => return Ok(0),
@@ -325,28 +327,32 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
                 label_ref = key;
 
                 if self.focused {
-                    fg_label_color = Some(FOCUSED_LABEL_COLOR);
-                    bg_label_color = Some(FOCUSED_LABEL_BG_COLOR);
+                    style = highlighting::INVERTED_BOLD_BLUE_STYLE;
+                    highlighted_style = highlighting::BOLD_INVERTED_STYLE;
                 } else {
-                    fg_label_color = Some(LABEL_COLOR);
+                    style = highlighting::BLUE_STYLE;
+                    highlighted_style = highlighting::SEARCH_MATCH_HIGHLIGHTED;
                 }
+                matches_iter = &mut self.search_matches;
             }
             Some(LineLabel::Index { index }) => {
                 label_style = LabelStyle::Square;
                 label_ref = index;
 
                 if self.focused {
-                    label_bolded = true;
+                    style = highlighting::BOLD_STYLE;
                 } else {
-                    fg_label_color = Some(DIMMED);
+                    style = highlighting::GRAY_STYLE;
                 }
+
+                // No match highlighting for index labels.
+                matches_iter = &mut dummy_search_matches;
+                highlighted_style = highlighting::DEFAULT_STYLE;
             }
         }
 
         // Remove two characters for either "" or [].
-        if label_style != LabelStyle::None {
-            available_space -= 2;
-        }
+        available_space -= label_style.width();
 
         // Remove two characters for ": "
         available_space -= 2;
@@ -364,23 +370,25 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         used_space += space_used_for_label;
 
-        // Actually print out the label!
-        self.tui.maybe_fg_color(buf, fg_label_color)?;
-        self.tui.maybe_bg_color(buf, bg_label_color)?;
-        if label_bolded {
-            self.tui.bold(buf)?;
-        }
+        let mut out = ColorPrinter::new(self.tui, buf);
 
-        write!(buf, "{}", label_style.left())?;
-        write!(
-            buf,
-            "{}",
-            TruncatedStrSlice {
-                s: label_ref,
-                truncated_view: &truncated_view,
-            }
+        // Print out start of label;
+        out.set_style(&style)?;
+        write!(out.buf, "{}", label_style.left())?;
+
+        highlighting::highlight_truncated_str_view(
+            &mut out,
+            label_ref,
+            &truncated_view,
+            self.label_start_index,
+            &style,
+            &highlighted_style,
+            matches_iter,
         )?;
-        write!(buf, "{}", label_style.right())?;
+
+        // Print out end of label;
+        out.set_style(&style)?;
+        write!(out.buf, "{}", label_style.right())?;
 
         self.tui.reset_style(buf)?;
         write!(buf, ": ")?;
@@ -916,6 +924,7 @@ mod tests {
                 focused_because_matching_container_pair: false,
                 trailing_comma: false,
                 label: None,
+                label_start_index: 0,
                 value: LineValue::Value {
                     s: "hello",
                     quotes: true,

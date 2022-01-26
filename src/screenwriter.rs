@@ -194,9 +194,11 @@ impl ScreenWriter {
 
         let mut label = None;
         let index_label: String;
+        let mut label_start_index = 0;
 
         // Set up key label.
         if let Some(key_range) = &row.key_range {
+            label_start_index = key_range.start + 1;
             let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
             label = Some(lp::LineLabel::Key { key });
         }
@@ -288,6 +290,7 @@ impl ScreenWriter {
             trailing_comma,
 
             label,
+            label_start_index,
             value,
             value_start_index,
 
