@@ -256,6 +256,20 @@ impl ContainerType {
         }
     }
 
+    pub fn open_str(&self) -> &'static str {
+        match self {
+            ContainerType::Object => "{",
+            ContainerType::Array => "[",
+        }
+    }
+
+    pub fn close_str(&self) -> &'static str {
+        match self {
+            ContainerType::Object => "}",
+            ContainerType::Array => "]",
+        }
+    }
+
     pub fn type_str(&self) -> &'static str {
         match self {
             ContainerType::Object => "Object",

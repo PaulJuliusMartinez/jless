@@ -610,12 +610,20 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         if available_space > 0 {
-            if self.focused || self.focused_because_matching_container_pair {
-                self.tui.bold(self.printer.buf)?;
-            }
-            self.printer
-                .buf
-                .write_char(row.value.container_type().unwrap().open_char())?;
+            let style = if self.focused || self.focused_because_matching_container_pair {
+                &highlighting::BOLD_STYLE
+            } else {
+                &highlighting::DEFAULT_STYLE
+            };
+
+            highlighting::highlight_matches(
+                &mut self.printer,
+                row.value.container_type().unwrap().open_str(),
+                Some(self.value_range.start),
+                style,
+                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                &mut self.search_matches,
+            )?;
 
             Ok(1)
         } else {
@@ -631,16 +639,30 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         let needed_space = if self.trailing_comma { 2 } else { 1 };
 
         if available_space >= needed_space {
-            if self.focused || self.focused_because_matching_container_pair {
-                self.tui.bold(self.printer.buf)?;
-            }
-            self.printer
-                .buf
-                .write_char(row.value.container_type().unwrap().close_char())?;
+            let style = if self.focused || self.focused_because_matching_container_pair {
+                &highlighting::BOLD_STYLE
+            } else {
+                &highlighting::DEFAULT_STYLE
+            };
+
+            highlighting::highlight_matches(
+                &mut self.printer,
+                row.value.container_type().unwrap().close_str(),
+                Some(self.value_range.start),
+                style,
+                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                &mut self.search_matches,
+            )?;
 
             if self.trailing_comma {
-                self.tui.reset_style(self.printer.buf)?;
-                self.printer.buf.write_char(',')?;
+                highlighting::highlight_matches(
+                    &mut self.printer,
+                    ",",
+                    Some(self.value_range.end),
+                    &highlighting::DEFAULT_STYLE,
+                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                    &mut self.search_matches,
+                )?;
             }
 
             Ok(needed_space)
@@ -673,9 +695,17 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         )?;
 
         if self.trailing_comma {
-            self.tui.reset_style(self.printer.buf)?;
             used_space += 1;
-            self.printer.buf.write_char(',')?;
+            if self.trailing_comma {
+                highlighting::highlight_matches(
+                    &mut self.printer,
+                    ",",
+                    Some(self.value_range.end),
+                    &highlighting::DEFAULT_STYLE,
+                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                    &mut self.search_matches,
+                )?;
+            }
         }
 
         Ok(used_space)
