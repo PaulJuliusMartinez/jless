@@ -193,7 +193,7 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
     out: &mut ColorPrinter<TUI, W>,
     mut s: &str,
     str_view: &TruncatedStrView,
-    mut start_index: usize,
+    mut str_range_start: Option<usize>,
     style: &PrintStyle,
     highlight_style: &PrintStyle,
     matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
@@ -207,7 +207,7 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
         replacement_character = tr.showing_replacement_character;
         trailing_ellipsis = tr.print_trailing_ellipsis(s);
         s = &s[tr.start..tr.end];
-        start_index += tr.start;
+        str_range_start = str_range_start.map(|start| start + tr.start);
     }
 
     if leading_ellipsis {
@@ -225,7 +225,14 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
     }
 
     // Print actual string itself
-    highlight_matches(out, s, start_index, style, highlight_style, matches_iter)?;
+    highlight_matches(
+        out,
+        s,
+        str_range_start,
+        style,
+        highlight_style,
+        matches_iter,
+    )?;
 
     // Print trailing ellipsis
     if trailing_ellipsis {
@@ -239,11 +246,19 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
 pub fn highlight_matches<'a, W: Write, TUI: TUIControl>(
     out: &mut ColorPrinter<TUI, W>,
     mut s: &str,
-    mut start_index: usize,
+    str_range_start: Option<usize>,
     style: &PrintStyle,
     highlight_style: &PrintStyle,
     matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
 ) -> fmt::Result {
+    if str_range_start.is_none() {
+        out.set_style(style)?;
+        write!(out.buf, "{}", s)?;
+        return Ok(());
+    }
+
+    let mut start_index = str_range_start.unwrap();
+
     while !s.is_empty() {
         // Initialize the next match to be a fake match past the end of the string.
         let string_end = start_index + s.len();

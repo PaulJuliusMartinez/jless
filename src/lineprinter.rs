@@ -216,9 +216,9 @@ pub struct LinePrinter<'a, 'b, TUI: TUIControl> {
 
     // Stuff to actually print out
     pub label: Option<LineLabel<'a>>,
-    pub label_start_index: usize,
+    pub label_range: &'a Option<Range<usize>>,
     pub value: LineValue<'a>,
-    pub value_start_index: usize,
+    pub value_range: &'a Range<usize>,
 
     pub search_matches: Option<&'a mut Peekable<MatchRangeIter<'b>>>,
 
@@ -308,8 +308,8 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         let mut used_space = 0;
 
-        let style: PrintStyle;
-        let highlighted_style: PrintStyle;
+        let style: &PrintStyle;
+        let highlighted_style: &PrintStyle;
         let mut dummy_search_matches = None;
         let matches_iter;
 
@@ -327,11 +327,11 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
                 label_ref = key;
 
                 if self.focused {
-                    style = highlighting::INVERTED_BOLD_BLUE_STYLE;
-                    highlighted_style = highlighting::BOLD_INVERTED_STYLE;
+                    style = &highlighting::INVERTED_BOLD_BLUE_STYLE;
+                    highlighted_style = &highlighting::BOLD_INVERTED_STYLE;
                 } else {
-                    style = highlighting::BLUE_STYLE;
-                    highlighted_style = highlighting::SEARCH_MATCH_HIGHLIGHTED;
+                    style = &highlighting::BLUE_STYLE;
+                    highlighted_style = &highlighting::SEARCH_MATCH_HIGHLIGHTED;
                 }
                 matches_iter = &mut self.search_matches;
             }
@@ -340,14 +340,14 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
                 label_ref = index;
 
                 if self.focused {
-                    style = highlighting::BOLD_STYLE;
+                    style = &highlighting::BOLD_STYLE;
                 } else {
-                    style = highlighting::GRAY_STYLE;
+                    style = &highlighting::GRAY_STYLE;
                 }
 
                 // No match highlighting for index labels.
                 matches_iter = &mut dummy_search_matches;
-                highlighted_style = highlighting::DEFAULT_STYLE;
+                highlighted_style = &highlighting::DEFAULT_STYLE;
             }
         }
 
@@ -372,26 +372,58 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         let mut out = ColorPrinter::new(self.tui, buf);
 
-        // Print out start of label;
-        out.set_style(&style)?;
-        write!(out.buf, "{}", label_style.left())?;
+        let mut label_open_delimiter_range_start = None;
+        let mut label_range_start = None;
+        let mut label_close_delimiter_range_start = None;
+        let mut object_separator_range_start = None;
 
+        if let Some(range) = self.label_range {
+            label_open_delimiter_range_start = Some(range.start);
+            label_range_start = Some(range.start + 1);
+            label_close_delimiter_range_start = Some(range.end - 1);
+            object_separator_range_start = Some(range.end);
+        }
+
+        // Print out start of label
+        highlighting::highlight_matches(
+            &mut out,
+            label_style.left(),
+            label_open_delimiter_range_start,
+            style,
+            highlighted_style,
+            matches_iter,
+        )?;
+
+        // Print out the label itself
         highlighting::highlight_truncated_str_view(
             &mut out,
             label_ref,
             &truncated_view,
-            self.label_start_index,
-            &style,
-            &highlighted_style,
+            label_range_start,
+            style,
+            highlighted_style,
             matches_iter,
         )?;
 
-        // Print out end of label;
-        out.set_style(&style)?;
-        write!(out.buf, "{}", label_style.right())?;
+        // Print out end of label
+        highlighting::highlight_matches(
+            &mut out,
+            label_style.right(),
+            label_close_delimiter_range_start,
+            style,
+            highlighted_style,
+            matches_iter,
+        )?;
 
-        self.tui.reset_style(buf)?;
-        write!(buf, ": ")?;
+        // Print out separator between label and value
+        highlighting::highlight_matches(
+            &mut out,
+            ": ",
+            object_separator_range_start,
+            &highlighting::DEFAULT_STYLE,
+            &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+            matches_iter,
+        )?;
 
         used_space += label_style.width();
         used_space += 2;
@@ -474,34 +506,56 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
             ..PrintStyle::default()
         };
 
+        let value_open_quote_range_start = self.value_range.start;
+        let mut value_range_start = self.value_range.start;
+        let value_close_quote_range_start = self.value_range.end - 1;
+        let trailing_comma_range_start = self.value_range.end;
+
         if quoted {
-            out.set_style(&style)?;
-            out.buf.write_char('"')?;
+            used_space += 1;
+            value_range_start += 1;
+            highlighting::highlight_matches(
+                &mut out,
+                "\"",
+                Some(value_open_quote_range_start),
+                &style,
+                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                &mut self.search_matches,
+            )?;
         }
 
         highlighting::highlight_truncated_str_view(
             &mut out,
             value_ref,
             &truncated_view,
-            self.value_start_index,
+            Some(value_range_start),
             &style,
             &highlighting::SEARCH_MATCH_HIGHLIGHTED,
             &mut self.search_matches,
         )?;
 
         if quoted {
-            out.set_style(&style)?;
-            out.buf.write_char('"')?;
-        }
-
-        if quoted {
-            used_space += 2;
+            used_space += 1;
+            highlighting::highlight_matches(
+                &mut out,
+                "\"",
+                Some(value_close_quote_range_start),
+                &style,
+                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                &mut self.search_matches,
+            )?;
         }
 
         if self.trailing_comma {
             used_space += 1;
-            self.tui.reset_style(buf)?;
-            buf.write_char(',')?;
+            highlighting::highlight_matches(
+                &mut out,
+                ",",
+                Some(trailing_comma_range_start),
+                &highlighting::DEFAULT_STYLE,
+                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                &mut self.search_matches,
+            )?;
         }
 
         Ok(used_space)
