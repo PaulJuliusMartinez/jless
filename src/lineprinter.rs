@@ -12,7 +12,7 @@ use crate::highlighting::{ColorPrinter, PrintStyle};
 use crate::search::MatchRangeIter;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{min_required_columns_for_str, truncate_right_to_fit};
-use crate::truncatedstrview::{TruncatedStrSlice, TruncatedStrView};
+use crate::truncatedstrview::TruncatedStrView;
 use crate::tuicontrol::{Color, TUIControl};
 use crate::viewer::Mode;
 
@@ -199,9 +199,10 @@ pub enum LineValue<'a> {
     },
 }
 
-pub struct LinePrinter<'a, 'b, TUI: TUIControl> {
+pub struct LinePrinter<'a, 'b, 'c, TUI: TUIControl> {
     pub mode: Mode,
     pub tui: TUI,
+    pub printer: ColorPrinter<'c, TUI, String>,
 
     // Do I need these?
     pub depth: usize,
@@ -225,51 +226,52 @@ pub struct LinePrinter<'a, 'b, TUI: TUIControl> {
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
-impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
-    pub fn print_line<W: Write>(&mut self, buf: &mut W) -> fmt::Result {
-        self.tui.reset_style(buf)?;
+impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
+    pub fn print_line(&mut self) -> fmt::Result {
+        self.tui.reset_style(self.printer.buf)?;
 
-        self.print_focus_and_container_indicators(buf)?;
+        self.print_focus_and_container_indicators()?;
 
         let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
-        self.tui.position_cursor(buf, (1 + label_depth) as u16)?;
+        self.tui
+            .position_cursor(self.printer.buf, (1 + label_depth) as u16)?;
 
         let mut available_space = self.width as isize - label_depth as isize;
 
-        let space_used_for_label = self.fill_in_label(buf, available_space)?;
+        let space_used_for_label = self.fill_in_label(available_space)?;
 
         available_space -= space_used_for_label;
 
         if self.label.is_some() && space_used_for_label == 0 {
-            self.print_truncated_indicator(buf)?;
+            self.print_truncated_indicator()?;
         } else {
-            let space_used_for_value = self.fill_in_value(buf, available_space)?;
+            let space_used_for_value = self.fill_in_value(available_space)?;
 
             if space_used_for_value == 0 {
-                self.print_truncated_indicator(buf)?;
+                self.print_truncated_indicator()?;
             }
         }
 
         Ok(())
     }
 
-    fn print_focus_and_container_indicators<W: Write>(&self, buf: &mut W) -> fmt::Result {
+    fn print_focus_and_container_indicators(&mut self) -> fmt::Result {
         match self.mode {
-            Mode::Line => self.print_focused_line_indicator(buf),
-            Mode::Data => self.print_container_indicator(buf),
+            Mode::Line => self.print_focused_line_indicator(),
+            Mode::Data => self.print_container_indicator(),
         }
     }
 
-    fn print_focused_line_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
+    fn print_focused_line_indicator(&mut self) -> fmt::Result {
         if self.focused {
-            self.tui.position_cursor(buf, 1)?;
-            write!(buf, "{}", FOCUSED_LINE)?;
+            self.tui.position_cursor(self.printer.buf, 1)?;
+            write!(self.printer.buf, "{}", FOCUSED_LINE)?;
         }
 
         Ok(())
     }
 
-    fn print_container_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
+    fn print_container_indicator(&mut self) -> fmt::Result {
         // let-else would be better here.
         let collapsed = match &self.value {
             LineValue::Container { row, .. } => {
@@ -286,23 +288,21 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         let container_indicator_col = 1 + self.depth * self.tab_size;
         self.tui
-            .position_cursor(buf, container_indicator_col as u16)?;
+            .position_cursor(self.printer.buf, container_indicator_col as u16)?;
 
-        match (self.focused, collapsed) {
-            (true, true) => write!(buf, "{}", FOCUSED_COLLAPSED_CONTAINER)?,
-            (true, false) => write!(buf, "{}", FOCUSED_EXPANDED_CONTAINER)?,
-            (false, true) => write!(buf, "{}", COLLAPSED_CONTAINER)?,
-            (false, false) => write!(buf, "{}", EXPANDED_CONTAINER)?,
-        }
+        let indicator = match (self.focused, collapsed) {
+            (true, true) => FOCUSED_COLLAPSED_CONTAINER,
+            (true, false) => FOCUSED_EXPANDED_CONTAINER,
+            (false, true) => COLLAPSED_CONTAINER,
+            (false, false) => EXPANDED_CONTAINER,
+        };
+
+        write!(self.printer.buf, "{}", indicator)?;
 
         Ok(())
     }
 
-    pub fn fill_in_label<W: Write>(
-        &mut self,
-        buf: &mut W,
-        mut available_space: isize,
-    ) -> Result<isize, fmt::Error> {
+    pub fn fill_in_label(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
         let label_style: LabelStyle;
         let label_ref: &str;
 
@@ -370,8 +370,6 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         used_space += space_used_for_label;
 
-        let mut out = ColorPrinter::new(self.tui, buf);
-
         let mut label_open_delimiter_range_start = None;
         let mut label_range_start = None;
         let mut label_close_delimiter_range_start = None;
@@ -386,7 +384,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         // Print out start of label
         highlighting::highlight_matches(
-            &mut out,
+            &mut self.printer,
             label_style.left(),
             label_open_delimiter_range_start,
             style,
@@ -396,7 +394,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         // Print out the label itself
         highlighting::highlight_truncated_str_view(
-            &mut out,
+            &mut self.printer,
             label_ref,
             &truncated_view,
             label_range_start,
@@ -407,7 +405,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         // Print out end of label
         highlighting::highlight_matches(
-            &mut out,
+            &mut self.printer,
             label_style.right(),
             label_close_delimiter_range_start,
             style,
@@ -417,7 +415,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         // Print out separator between label and value
         highlighting::highlight_matches(
-            &mut out,
+            &mut self.printer,
             ": ",
             object_separator_range_start,
             &highlighting::DEFAULT_STYLE,
@@ -431,15 +429,11 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         Ok(used_space)
     }
 
-    fn fill_in_value<W: Write>(
-        &mut self,
-        buf: &mut W,
-        mut available_space: isize,
-    ) -> Result<isize, fmt::Error> {
+    fn fill_in_value(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
         // Object values are sufficiently complicated that we'll handle them
         // in a separate function.
         if let LineValue::Container { flatjson, row } = self.value {
-            return self.fill_in_container_value(buf, available_space, flatjson, row);
+            return self.fill_in_container_value(available_space, flatjson, row);
         }
 
         let value_ref: &str;
@@ -500,7 +494,6 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         }
 
         // Print out the value.
-        let mut out = ColorPrinter::new(self.tui, buf);
         let style = PrintStyle {
             fg: color,
             ..PrintStyle::default()
@@ -515,7 +508,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
             used_space += 1;
             value_range_start += 1;
             highlighting::highlight_matches(
-                &mut out,
+                &mut self.printer,
                 "\"",
                 Some(value_open_quote_range_start),
                 &style,
@@ -525,7 +518,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         }
 
         highlighting::highlight_truncated_str_view(
-            &mut out,
+            &mut self.printer,
             value_ref,
             &truncated_view,
             Some(value_range_start),
@@ -537,7 +530,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         if quoted {
             used_space += 1;
             highlighting::highlight_matches(
-                &mut out,
+                &mut self.printer,
                 "\"",
                 Some(value_close_quote_range_start),
                 &style,
@@ -549,7 +542,7 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         if self.trailing_comma {
             used_space += 1;
             highlighting::highlight_matches(
-                &mut out,
+                &mut self.printer,
                 ",",
                 Some(trailing_comma_range_start),
                 &highlighting::DEFAULT_STYLE,
@@ -580,9 +573,8 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
     // Data |   Start   | Collapsed | Preview + trailing comma?
     // Data |    End    | Expanded  | IMPOSSIBLE
     // Data |    End    | Collapsed | IMPOSSIBLE
-    fn fill_in_container_value<W: Write>(
-        &self,
-        buf: &mut W,
+    fn fill_in_container_value(
+        &mut self,
         available_space: isize,
         flatjson: &FlatJson,
         row: &Row,
@@ -601,10 +593,10 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         const COLLAPSED: bool = false;
 
         match (mode, side, expanded_state) {
-            (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(buf, available_space, row),
-            (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(buf, available_space, row),
+            (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(available_space, row),
+            (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(available_space, row),
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
-                self.fill_in_container_preview(buf, available_space, flatjson, row)
+                self.fill_in_container_preview(available_space, flatjson, row)
             }
             // Impossible states
             (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
@@ -612,26 +604,27 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         }
     }
 
-    fn fill_in_container_open_char<W: Write>(
-        &self,
-        buf: &mut W,
+    fn fill_in_container_open_char(
+        &mut self,
         available_space: isize,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         if available_space > 0 {
             if self.focused || self.focused_because_matching_container_pair {
-                self.tui.bold(buf)?;
+                self.tui.bold(self.printer.buf)?;
             }
-            buf.write_char(row.value.container_type().unwrap().open_char())?;
+            self.printer
+                .buf
+                .write_char(row.value.container_type().unwrap().open_char())?;
+
             Ok(1)
         } else {
             Ok(0)
         }
     }
 
-    fn fill_in_container_close_char<W: Write>(
-        &self,
-        buf: &mut W,
+    fn fill_in_container_close_char(
+        &mut self,
         available_space: isize,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
@@ -639,13 +632,15 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
 
         if available_space >= needed_space {
             if self.focused || self.focused_because_matching_container_pair {
-                self.tui.bold(buf)?;
+                self.tui.bold(self.printer.buf)?;
             }
-            buf.write_char(row.value.container_type().unwrap().close_char())?;
+            self.printer
+                .buf
+                .write_char(row.value.container_type().unwrap().close_char())?;
 
             if self.trailing_comma {
-                self.tui.reset_style(buf)?;
-                buf.write_char(',')?;
+                self.tui.reset_style(self.printer.buf)?;
+                self.printer.buf.write_char(',')?;
             }
 
             Ok(needed_space)
@@ -654,9 +649,8 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         }
     }
 
-    fn fill_in_container_preview<W: Write>(
-        &self,
-        buf: &mut W,
+    fn fill_in_container_preview(
+        &mut self,
         mut available_space: isize,
         flatjson: &FlatJson,
         row: &Row,
@@ -666,12 +660,12 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         }
 
         if !self.focused {
-            self.tui.fg_color(buf, DIMMED)?;
+            self.tui.fg_color(self.printer.buf, DIMMED)?;
         }
 
         let quoted_object_keys = self.mode == Mode::Line;
         let mut used_space = LinePrinter::<TUI>::generate_container_preview(
-            buf,
+            self.printer.buf,
             flatjson,
             row,
             available_space,
@@ -679,9 +673,9 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         )?;
 
         if self.trailing_comma {
-            self.tui.reset_style(buf)?;
+            self.tui.reset_style(self.printer.buf)?;
             used_space += 1;
-            buf.write_char(',')?;
+            self.printer.buf.write_char(',')?;
         }
 
         Ok(used_space)
@@ -929,15 +923,16 @@ impl<'a, 'b, TUI: TUIControl> LinePrinter<'a, 'b, TUI> {
         Ok(used_space)
     }
 
-    fn print_truncated_indicator<W: Write>(&self, buf: &mut W) -> fmt::Result {
-        self.tui.position_cursor(buf, self.width as u16)?;
+    fn print_truncated_indicator(&mut self) -> fmt::Result {
+        self.tui
+            .position_cursor(self.printer.buf, self.width as u16)?;
         if self.focused {
-            self.tui.reset_style(buf)?;
-            self.tui.bold(buf)?;
+            self.tui.reset_style(self.printer.buf)?;
+            self.tui.bold(self.printer.buf)?;
         } else {
-            self.tui.fg_color(buf, DIMMED)?;
+            self.tui.fg_color(self.printer.buf, DIMMED)?;
         }
-        write!(buf, ">")
+        write!(self.printer.buf, ">")
     }
 }
 

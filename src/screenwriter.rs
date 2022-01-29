@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::iter::Peekable;
-use std::ops::Range;
 
 use rustyline::Editor;
 use termion::{clear, cursor};
@@ -10,6 +9,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::MAX_BUFFER_SIZE;
 use crate::flatjson::{Index, OptionIndex, Row, Value};
+use crate::highlighting::ColorPrinter;
 use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::{MatchRangeIter, SearchState};
@@ -277,9 +277,11 @@ impl ScreenWriter {
             }
         }
 
+        let mut buf = String::new();
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
             tui: ColorControl {},
+            printer: ColorPrinter::new(ColorControl {}, &mut buf),
 
             depth,
             width: self.dimensions.width as usize,
@@ -299,10 +301,9 @@ impl ScreenWriter {
             cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
         };
 
-        let mut buf = String::new();
         // TODO: Handle error here? Or is never an error because writes
         // to String should never fail?
-        line.print_line(&mut buf).unwrap();
+        line.print_line().unwrap();
         write!(self.tty_writer, "{}", buf)
     }
 
