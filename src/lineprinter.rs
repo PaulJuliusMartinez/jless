@@ -1,6 +1,5 @@
 use std::collections::hash_map::Entry;
 use std::fmt;
-use std::fmt::Write;
 use std::iter::Peekable;
 use std::ops::Range;
 
@@ -8,12 +7,10 @@ use regex::Regex;
 
 use crate::flatjson::{FlatJson, OptionIndex, Row, Value};
 use crate::highlighting;
-use crate::highlighting::{ColorPrinter, PrintStyle};
 use crate::search::MatchRangeIter;
-use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
-use crate::truncate::{min_required_columns_for_str, truncate_right_to_fit};
+use crate::terminal;
+use crate::terminal::{Color, Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
-use crate::tuicontrol::{Color, TUIControl};
 use crate::viewer::Mode;
 
 // # Printing out individual lines
@@ -140,10 +137,10 @@ const COLLAPSED_CONTAINER: &'static str = "▷ ";
 const EXPANDED_CONTAINER: &'static str = "▽ ";
 const INDICATOR_WIDTH: usize = 2;
 
-const LABEL_COLOR: Color = Color::LightBlue;
-const FOCUSED_LABEL_COLOR: Color = Color::Blue;
-const FOCUSED_LABEL_BG_COLOR: Color = Color::LightWhite;
-const DIMMED: Color = Color::LightBlack;
+const LABEL_COLOR: Color = terminal::LIGHT_BLUE;
+const FOCUSED_LABEL_COLOR: Color = terminal::BLUE;
+const FOCUSED_LABEL_BG_COLOR: Color = terminal::LIGHT_WHITE;
+const DIMMED: Color = terminal::LIGHT_BLACK;
 
 lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
@@ -199,10 +196,9 @@ pub enum LineValue<'a> {
     },
 }
 
-pub struct LinePrinter<'a, 'b, 'c, TUI: TUIControl> {
+pub struct LinePrinter<'a, 'b, 'c> {
     pub mode: Mode,
-    pub tui: TUI,
-    pub printer: ColorPrinter<'c, TUI, String>,
+    pub terminal: &'c mut dyn Terminal,
 
     // Do I need these?
     pub depth: usize,
@@ -226,15 +222,15 @@ pub struct LinePrinter<'a, 'b, 'c, TUI: TUIControl> {
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
-impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
+impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     pub fn print_line(&mut self) -> fmt::Result {
-        self.tui.reset_style(self.printer.buf)?;
+        self.terminal.reset_style()?;
 
         self.print_focus_and_container_indicators()?;
 
         let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
-        self.tui
-            .position_cursor(self.printer.buf, (1 + label_depth) as u16)?;
+        self.terminal
+            .position_cursor_col((1 + label_depth) as u16)?;
 
         let mut available_space = self.width as isize - label_depth as isize;
 
@@ -264,8 +260,8 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
     fn print_focused_line_indicator(&mut self) -> fmt::Result {
         if self.focused {
-            self.tui.position_cursor(self.printer.buf, 1)?;
-            write!(self.printer.buf, "{}", FOCUSED_LINE)?;
+            self.terminal.position_cursor_col(1)?;
+            write!(self.terminal, "{}", FOCUSED_LINE)?;
         }
 
         Ok(())
@@ -286,9 +282,8 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             return Ok(());
         }
 
-        let container_indicator_col = 1 + self.depth * self.tab_size;
-        self.tui
-            .position_cursor(self.printer.buf, container_indicator_col as u16)?;
+        let container_indicator_col = (1 + self.depth * self.tab_size) as u16;
+        self.terminal.position_cursor_col(container_indicator_col)?;
 
         let indicator = match (self.focused, collapsed) {
             (true, true) => FOCUSED_COLLAPSED_CONTAINER,
@@ -297,7 +292,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             (false, false) => EXPANDED_CONTAINER,
         };
 
-        write!(self.printer.buf, "{}", indicator)?;
+        write!(self.terminal, "{}", indicator)?;
 
         Ok(())
     }
@@ -308,8 +303,8 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
         let mut used_space = 0;
 
-        let style: &PrintStyle;
-        let highlighted_style: &PrintStyle;
+        let style: &Style;
+        let highlighted_style: &Style;
         let mut dummy_search_matches = None;
         let matches_iter;
 
@@ -385,7 +380,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         let mut matches = matches_iter.as_mut();
         // Print out start of label
         highlighting::highlight_matches(
-            &mut self.printer,
+            self.terminal,
             label_style.left(),
             label_open_delimiter_range_start,
             style,
@@ -395,7 +390,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
         // Print out the label itself
         highlighting::highlight_truncated_str_view(
-            &mut self.printer,
+            self.terminal,
             label_ref,
             &truncated_view,
             label_range_start,
@@ -406,7 +401,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
         // Print out end of label
         highlighting::highlight_matches(
-            &mut self.printer,
+            self.terminal,
             label_style.right(),
             label_close_delimiter_range_start,
             style,
@@ -416,7 +411,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
         // Print out separator between label and value
         highlighting::highlight_matches(
-            &mut self.printer,
+            self.terminal,
             ": ",
             object_separator_range_start,
             &highlighting::DEFAULT_STYLE,
@@ -495,9 +490,9 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         }
 
         // Print out the value.
-        let style = PrintStyle {
+        let style = Style {
             fg: color,
-            ..PrintStyle::default()
+            ..Style::default()
         };
 
         let value_open_quote_range_start = self.value_range.start;
@@ -509,7 +504,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             used_space += 1;
             value_range_start += 1;
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 "\"",
                 Some(value_open_quote_range_start),
                 &style,
@@ -519,7 +514,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         }
 
         highlighting::highlight_truncated_str_view(
-            &mut self.printer,
+            self.terminal,
             value_ref,
             &truncated_view,
             Some(value_range_start),
@@ -531,7 +526,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         if quoted {
             used_space += 1;
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 "\"",
                 Some(value_close_quote_range_start),
                 &style,
@@ -543,7 +538,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         if self.trailing_comma {
             used_space += 1;
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 ",",
                 Some(trailing_comma_range_start),
                 &highlighting::DEFAULT_STYLE,
@@ -618,7 +613,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             };
 
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 row.value.container_type().unwrap().open_str(),
                 Some(self.value_range.start),
                 style,
@@ -647,7 +642,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             };
 
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 row.value.container_type().unwrap().close_str(),
                 Some(self.value_range.start),
                 style,
@@ -657,7 +652,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
             if self.trailing_comma {
                 highlighting::highlight_matches(
-                    &mut self.printer,
+                    self.terminal,
                     ",",
                     Some(self.value_range.end),
                     &highlighting::DEFAULT_STYLE,
@@ -690,7 +685,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             used_space += 1;
             if self.trailing_comma {
                 highlighting::highlight_matches(
-                    &mut self.printer,
+                    self.terminal,
                     ",",
                     Some(self.value_range.end),
                     &highlighting::DEFAULT_STYLE,
@@ -725,7 +720,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         let original_search_matches = self.search_matches.clone();
 
         highlighting::highlight_matches(
-            &mut self.printer,
+            self.terminal,
             container_type.open_str(),
             Some(self.value_range.start),
             &highlighting::GRAY_STYLE,
@@ -758,7 +753,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 // If we're not the first child, the previous elem will have
                 // printed the ", " separator.
                 highlighting::highlight_matches(
-                    &mut self.printer,
+                    self.terminal,
                     "…",
                     None,
                     &highlighting::GRAY_STYLE,
@@ -772,7 +767,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 // Successfully printed elem out, let's print a separator.
                 if next_sibling.is_some() {
                     highlighting::highlight_matches(
-                        &mut self.printer,
+                        self.terminal,
                         ", ",
                         Some(flatjson[child].range.end),
                         &highlighting::GRAY_STYLE,
@@ -791,7 +786,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         }
 
         highlighting::highlight_matches(
-            &mut self.printer,
+            self.terminal,
             container_type.close_str(),
             Some(self.value_range.end - 1),
             &highlighting::GRAY_STYLE,
@@ -843,7 +838,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 used_space += 1;
                 available_space -= 1;
                 highlighting::highlight_matches(
-                    &mut self.printer,
+                    self.terminal,
                     "\"",
                     Some(key_range.start),
                     &highlighting::GRAY_STYLE,
@@ -853,7 +848,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             }
 
             highlighting::highlight_truncated_str_view(
-                &mut self.printer,
+                self.terminal,
                 key_ref,
                 &truncated_view,
                 Some(key_range.start + 1),
@@ -866,7 +861,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 used_space += 1;
                 available_space -= 1;
                 highlighting::highlight_matches(
-                    &mut self.printer,
+                    self.terminal,
                     "\"",
                     Some(key_range.end - 1),
                     &highlighting::GRAY_STYLE,
@@ -878,7 +873,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             used_space += 2;
             available_space -= 2;
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 ": ",
                 Some(key_range.end),
                 &highlighting::GRAY_STYLE,
@@ -898,7 +893,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         // object key, but couldn't print out the value. Space was already
         // allocated for this at the start of the function.
         if row.key_range.is_some() && space_used_for_value == 0 {
-            self.printer.buf.write_char('…')?;
+            self.terminal.write_char('…')?;
             used_space += 1;
         }
 
@@ -955,7 +950,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         if quoted {
             value_range_start += 1;
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 "\"",
                 Some(value_open_quote_range_start),
                 &highlighting::GRAY_STYLE,
@@ -965,7 +960,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         }
 
         highlighting::highlight_truncated_str_view(
-            &mut self.printer,
+            self.terminal,
             value_ref,
             &truncated_view,
             // Technically could try to highlight open and close delimiters
@@ -982,7 +977,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
 
         if quoted {
             highlighting::highlight_matches(
-                &mut self.printer,
+                self.terminal,
                 "\"",
                 Some(value_close_quote_range_start),
                 &highlighting::GRAY_STYLE,
@@ -995,15 +990,14 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
     }
 
     fn print_truncated_indicator(&mut self) -> fmt::Result {
-        self.tui
-            .position_cursor(self.printer.buf, self.width as u16)?;
+        self.terminal.position_cursor_col(self.width as u16)?;
         if self.focused {
-            self.tui.reset_style(self.printer.buf)?;
-            self.tui.bold(self.printer.buf)?;
+            self.terminal.reset_style()?;
+            self.terminal.set_bold(true)?;
         } else {
-            self.tui.fg_color(self.printer.buf, DIMMED)?;
+            self.terminal.set_fg(terminal::LIGHT_BLACK)?;
         }
-        write!(self.printer.buf, ">")
+        write!(self.terminal, ">")
     }
 }
 

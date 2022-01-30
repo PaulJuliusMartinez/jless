@@ -9,14 +9,15 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::MAX_BUFFER_SIZE;
 use crate::flatjson::{Index, OptionIndex, Row, Value};
-use crate::highlighting::ColorPrinter;
 use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::{MatchRangeIter, SearchState};
+use crate::terminal;
+use crate::terminal::{AnsiTerminal, Terminal};
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::truncatedstrview::TruncatedStrView;
-use crate::tuicontrol::{Color as TUIColor, ColorControl};
+use crate::tuicontrol::Color as TUIColor;
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
@@ -213,7 +214,6 @@ impl ScreenWriter {
             }
         }
 
-        let mut value_start_index = 0;
         let value = match &row.value {
             Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
                 lp::LineValue::Container {
@@ -223,21 +223,19 @@ impl ScreenWriter {
             }
             _ => {
                 let color = match &row.value {
-                    Value::Null => TUIColor::LightBlack,
-                    Value::Boolean => TUIColor::Yellow,
-                    Value::Number => TUIColor::Magenta,
-                    Value::String => TUIColor::Green,
-                    Value::EmptyObject => TUIColor::White,
-                    Value::EmptyArray => TUIColor::White,
-                    _ => TUIColor::White,
+                    Value::Null => terminal::LIGHT_BLACK,
+                    Value::Boolean => terminal::YELLOW,
+                    Value::Number => terminal::MAGENTA,
+                    Value::String => terminal::GREEN,
+                    Value::EmptyObject => terminal::WHITE,
+                    Value::EmptyArray => terminal::WHITE,
+                    _ => terminal::WHITE,
                 };
 
                 let range = row.range.clone();
                 let (s, quotes) = if let Value::String = &row.value {
-                    value_start_index = range.start + 1;
                     (&viewer.flatjson.1[range.start + 1..range.end - 1], true)
                 } else {
-                    value_start_index = range.start;
                     (&viewer.flatjson.1[range], false)
                 };
 
@@ -279,10 +277,11 @@ impl ScreenWriter {
 
         let mut buf = String::new();
         let search_matches_copy = (*search_matches).clone();
+        let mut terminal = AnsiTerminal::new(String::new());
+
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
-            tui: ColorControl {},
-            printer: ColorPrinter::new(ColorControl {}, &mut buf),
+            terminal: &mut terminal,
 
             depth,
             width: self.dimensions.width as usize,
@@ -308,7 +307,7 @@ impl ScreenWriter {
 
         *search_matches = line.search_matches.unwrap();
 
-        write!(self.tty_writer, "{}", buf)
+        write!(self.tty_writer, "{}", terminal.output)
     }
 
     fn line_primitive_value_ref<'a, 'b>(

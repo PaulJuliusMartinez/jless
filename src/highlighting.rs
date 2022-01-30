@@ -1,11 +1,11 @@
 use std::fmt;
-use std::fmt::Write;
 use std::iter::Peekable;
 use std::ops::Range;
 
 use crate::search::MatchRangeIter;
+use crate::terminal;
+use crate::terminal::{Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
-use crate::tuicontrol::{Color, TUIControl};
 
 // This module is responsible for highlighting text in the
 // appropriate colors when we print it out.
@@ -39,31 +39,6 @@ use crate::tuicontrol::{Color, TUIControl};
 // - Open and close braces and brackets ("{}[]")
 // - Container previews
 
-#[derive(Copy, Clone)]
-pub struct PrintStyle {
-    pub fg: Color,
-    pub bg: Color,
-    pub inverted: bool,
-    pub bold: bool,
-}
-
-impl PrintStyle {
-    pub const fn default() -> Self {
-        PrintStyle {
-            fg: Color::Default,
-            bg: Color::Default,
-            inverted: false,
-            bold: false,
-        }
-    }
-}
-
-impl Default for PrintStyle {
-    fn default() -> Self {
-        PrintStyle::default()
-    }
-}
-
 //      Thing      |  Default Style  |  Focused Style  |      Match     |  Focused/Current Match
 // ----------------+-----------------+-----------------+----------------+------------------------
 //      null       |      Gray       |        X        | Yellow/Default |        Inverted
@@ -87,115 +62,75 @@ impl Default for PrintStyle {
 //    Container    |      Gray       |     Default     | Inverted Gray  |        Inverted
 //     Previews
 
-pub const DEFAULT_STYLE: PrintStyle = PrintStyle::default();
+pub const DEFAULT_STYLE: Style = Style::default();
 
-pub const BOLD_STYLE: PrintStyle = PrintStyle {
+pub const BOLD_STYLE: Style = Style {
     bold: true,
-    ..PrintStyle::default()
+    ..Style::default()
 };
 
-pub const INVERTED_STYLE: PrintStyle = PrintStyle {
+pub const INVERTED_STYLE: Style = Style {
     inverted: true,
-    ..PrintStyle::default()
+    ..Style::default()
 };
 
-pub const BOLD_INVERTED_STYLE: PrintStyle = PrintStyle {
-    inverted: true,
-    bold: true,
-    ..PrintStyle::default()
-};
-
-pub const GRAY_INVERTED_STYLE: PrintStyle = PrintStyle {
-    fg: Color::LightBlack,
-    inverted: true,
-    ..PrintStyle::default()
-};
-
-pub const SEARCH_MATCH_HIGHLIGHTED: PrintStyle = PrintStyle {
-    fg: Color::Yellow,
-    inverted: true,
-    ..PrintStyle::default()
-};
-
-pub const GRAY_STYLE: PrintStyle = PrintStyle {
-    fg: Color::LightBlack,
-    ..PrintStyle::default()
-};
-
-pub const YELLOW_STYLE: PrintStyle = PrintStyle {
-    fg: Color::LightYellow,
-    ..PrintStyle::default()
-};
-
-pub const MAGENTA_STYLE: PrintStyle = PrintStyle {
-    fg: Color::LightMagenta,
-    ..PrintStyle::default()
-};
-
-pub const GREEN_STYLE: PrintStyle = PrintStyle {
-    fg: Color::LightGreen,
-    ..PrintStyle::default()
-};
-
-pub const BLUE_STYLE: PrintStyle = PrintStyle {
-    fg: Color::LightBlue,
-    ..PrintStyle::default()
-};
-
-pub const INVERTED_BOLD_BLUE_STYLE: PrintStyle = PrintStyle {
-    bg: Color::Blue,
+pub const BOLD_INVERTED_STYLE: Style = Style {
     inverted: true,
     bold: true,
-    ..PrintStyle::default()
+    ..Style::default()
 };
 
-// Helper struct for managing color state and not printing
-// out so many escapes to make testing easier.
-pub struct ColorPrinter<'a, TUI: TUIControl, W: Write> {
-    tui: TUI,
-    pub buf: &'a mut W,
-    style: PrintStyle,
-}
+pub const GRAY_INVERTED_STYLE: Style = Style {
+    fg: terminal::LIGHT_BLACK,
+    inverted: true,
+    ..Style::default()
+};
 
-impl<'a, TUI: TUIControl, W: Write> ColorPrinter<'a, TUI, W> {
-    pub fn new(tui: TUI, buf: &'a mut W) -> Self {
-        ColorPrinter {
-            tui,
-            buf,
-            style: PrintStyle::default(),
-        }
-    }
+pub const SEARCH_MATCH_HIGHLIGHTED: Style = Style {
+    fg: terminal::YELLOW,
+    inverted: true,
+    ..Style::default()
+};
 
-    pub fn set_style(&mut self, style: &PrintStyle) -> fmt::Result {
-        if self.style.fg != style.fg {
-            self.tui.fg_color(self.buf, style.fg)?;
-        }
+pub const GRAY_STYLE: Style = Style {
+    fg: terminal::LIGHT_BLACK,
+    ..Style::default()
+};
 
-        if self.style.bg != style.bg {
-            self.tui.bg_color(self.buf, style.bg)?;
-        }
+pub const YELLOW_STYLE: Style = Style {
+    fg: terminal::LIGHT_YELLOW,
+    ..Style::default()
+};
 
-        if self.style.inverted != style.inverted {
-            self.tui.set_inverted(self.buf, style.inverted)?;
-        }
+pub const MAGENTA_STYLE: Style = Style {
+    fg: terminal::LIGHT_MAGENTA,
+    ..Style::default()
+};
 
-        if self.style.bold != style.bold {
-            self.tui.set_bold(self.buf, style.inverted)?;
-        }
+pub const GREEN_STYLE: Style = Style {
+    fg: terminal::LIGHT_GREEN,
+    ..Style::default()
+};
 
-        self.style = style.clone();
+pub const BLUE_STYLE: Style = Style {
+    fg: terminal::LIGHT_BLUE,
+    ..Style::default()
+};
 
-        Ok(())
-    }
-}
+pub const INVERTED_BOLD_BLUE_STYLE: Style = Style {
+    bg: terminal::BLUE,
+    inverted: true,
+    bold: true,
+    ..Style::default()
+};
 
-pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
-    out: &mut ColorPrinter<TUI, W>,
+pub fn highlight_truncated_str_view<'a>(
+    out: &mut dyn Terminal,
     mut s: &str,
     str_view: &TruncatedStrView,
     mut str_range_start: Option<usize>,
-    style: &PrintStyle,
-    highlight_style: &PrintStyle,
+    style: &Style,
+    highlight_style: &Style,
     matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
 ) -> fmt::Result {
     let mut leading_ellipsis = false;
@@ -212,7 +147,7 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
 
     if leading_ellipsis {
         out.set_style(&GRAY_STYLE)?;
-        out.buf.write_char('…')?;
+        out.write_char('…')?;
     }
 
     // Print replacement character
@@ -221,7 +156,7 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
         // TODO: Technically we should figure out whether this
         // character's range should be highlighted, but also
         // maybe not bad to not highlight the replacement character;
-        out.buf.write_char('�')?;
+        out.write_char('�')?;
     }
 
     // Print actual string itself
@@ -237,23 +172,23 @@ pub fn highlight_truncated_str_view<'a, W: Write, TUI: TUIControl>(
     // Print trailing ellipsis
     if trailing_ellipsis {
         out.set_style(&GRAY_STYLE)?;
-        out.buf.write_char('…')?;
+        out.write_char('…')?;
     }
 
     Ok(())
 }
 
-pub fn highlight_matches<'a, W: Write, TUI: TUIControl>(
-    out: &mut ColorPrinter<TUI, W>,
+pub fn highlight_matches<'a>(
+    out: &mut dyn Terminal,
     mut s: &str,
     str_range_start: Option<usize>,
-    style: &PrintStyle,
-    highlight_style: &PrintStyle,
+    style: &Style,
+    highlight_style: &Style,
     matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
 ) -> fmt::Result {
     if str_range_start.is_none() {
         out.set_style(style)?;
-        write!(out.buf, "{}", s)?;
+        write!(out, "{}", s)?;
         return Ok(());
     }
 
@@ -279,7 +214,7 @@ pub fn highlight_matches<'a, W: Write, TUI: TUIControl>(
         if start_index < match_start {
             let print_end = match_start - start_index;
             out.set_style(style)?;
-            write!(out.buf, "{}", &s[..print_end])?;
+            write!(out, "{}", &s[..print_end])?;
         }
 
         // Highlight the matching substring.
@@ -287,7 +222,7 @@ pub fn highlight_matches<'a, W: Write, TUI: TUIControl>(
             out.set_style(highlight_style)?;
             let print_start = match_start - start_index;
             let print_end = match_end - start_index;
-            write!(out.buf, "{}", &s[print_start..print_end])?;
+            write!(out, "{}", &s[print_start..print_end])?;
         }
 
         // Update start_index and s
