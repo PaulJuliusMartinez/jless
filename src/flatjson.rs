@@ -191,6 +191,9 @@ impl Row {
     pub fn is_container(&self) -> bool {
         self.value.is_container()
     }
+    pub fn is_string(&self) -> bool {
+        self.value.is_string()
+    }
     pub fn is_opening_of_container(&self) -> bool {
         self.value.is_opening_of_container()
     }
@@ -316,6 +319,13 @@ impl Value {
         match self {
             Value::OpenContainer { .. } => true,
             Value::CloseContainer { .. } => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_string(&self) -> bool {
+        match self {
+            Value::String => true,
             _ => false,
         }
     }

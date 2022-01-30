@@ -608,13 +608,19 @@ impl ScreenWriter {
             let json_row = &viewer.flatjson[row];
             let value_ref = self.line_primitive_value_ref(json_row, &viewer).unwrap();
 
-            let no_overlap = focused_search_range.end <= json_row.range.start
-                || json_row.range.end <= focused_search_range.start;
+            let mut range = json_row.range.clone();
+            if json_row.is_string() {
+                range.start += 1;
+                range.end -= 1;
+            }
+
+            let no_overlap =
+                focused_search_range.end <= range.start || range.end <= focused_search_range.start;
             if no_overlap {
                 return;
             }
 
-            let mut value_range_start = json_row.range.start;
+            let mut value_range_start = range.start;
             if let Value::String = &json_row.value {
                 value_range_start += 1;
             }

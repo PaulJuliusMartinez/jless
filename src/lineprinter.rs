@@ -472,7 +472,35 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                     .and_modify(|tsv| {
                         *tsv = tsv.resize(value_ref, available_space);
                     })
-                    .or_insert_with(|| TruncatedStrView::init_start(value_ref, available_space))
+                    .or_insert_with(|| {
+                        let tsv = TruncatedStrView::init_start(value_ref, available_space);
+
+                        let mut range = self.value_range.clone();
+                        if quoted {
+                            range.start += 1;
+                            range.end -= 1;
+                        }
+
+                        // If we're showing a line for the first time, we might
+                        // need to focus on a search match.
+                        let no_overlap = self.focused_search_match.end <= range.start
+                            || range.end <= self.focused_search_match.start;
+                        if no_overlap {
+                            return tsv;
+                        }
+
+                        let value_range_start = range.start;
+                        let offset_focused_range = Range {
+                            start: self
+                                .focused_search_match
+                                .start
+                                .saturating_sub(value_range_start),
+                            end: (self.focused_search_match.end - value_range_start)
+                                .min(value_ref.len()),
+                        };
+
+                        tsv.focus(value_ref, &offset_focused_range)
+                    })
                     .clone()
             })
             .unwrap_or_else(|| TruncatedStrView::init_start(value_ref, available_space));
