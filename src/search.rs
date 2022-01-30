@@ -1,6 +1,5 @@
 use regex::Regex;
 use std::ops::Range;
-use std::slice::Iter;
 
 use crate::flatjson::{FlatJson, Index};
 

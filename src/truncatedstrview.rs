@@ -116,6 +116,11 @@ impl TruncatedRange {
         self.used_space == 1 && self.start == self.end
     }
 
+    /// Check whether this is a truncated view of a string that is totally elided,
+    pub fn is_truncated(&self, s: &str) -> bool {
+        self.start != 0 || self.end != s.len() || self.showing_replacement_character
+    }
+
     pub fn print_leading_ellipsis(&self) -> bool {
         self.start != 0
     }

@@ -221,7 +221,7 @@ pub struct LinePrinter<'a, 'b, 'c, TUI: TUIControl> {
     pub value: LineValue<'a>,
     pub value_range: &'a Range<usize>,
 
-    pub search_matches: Option<&'a mut Peekable<MatchRangeIter<'b>>>,
+    pub search_matches: Option<Peekable<MatchRangeIter<'b>>>,
 
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
@@ -382,6 +382,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             object_separator_range_start = Some(range.end);
         }
 
+        let mut matches = matches_iter.as_mut();
         // Print out start of label
         highlighting::highlight_matches(
             &mut self.printer,
@@ -389,7 +390,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             label_open_delimiter_range_start,
             style,
             highlighted_style,
-            matches_iter,
+            &mut matches,
         )?;
 
         // Print out the label itself
@@ -400,7 +401,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             label_range_start,
             style,
             highlighted_style,
-            matches_iter,
+            &mut matches,
         )?;
 
         // Print out end of label
@@ -410,7 +411,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             label_close_delimiter_range_start,
             style,
             highlighted_style,
-            matches_iter,
+            &mut matches,
         )?;
 
         // Print out separator between label and value
@@ -420,7 +421,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             object_separator_range_start,
             &highlighting::DEFAULT_STYLE,
             &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-            matches_iter,
+            &mut matches,
         )?;
 
         used_space += label_style.width();
@@ -513,7 +514,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 Some(value_open_quote_range_start),
                 &style,
                 &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches,
+                &mut self.search_matches.as_mut(),
             )?;
         }
 
@@ -524,7 +525,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             Some(value_range_start),
             &style,
             &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-            &mut self.search_matches,
+            &mut self.search_matches.as_mut(),
         )?;
 
         if quoted {
@@ -535,7 +536,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 Some(value_close_quote_range_start),
                 &style,
                 &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches,
+                &mut self.search_matches.as_mut(),
             )?;
         }
 
@@ -547,7 +548,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 Some(trailing_comma_range_start),
                 &highlighting::DEFAULT_STYLE,
                 &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches,
+                &mut self.search_matches.as_mut(),
             )?;
         }
 
@@ -622,7 +623,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 Some(self.value_range.start),
                 style,
                 &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches,
+                &mut self.search_matches.as_mut(),
             )?;
 
             Ok(1)
@@ -651,7 +652,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 Some(self.value_range.start),
                 style,
                 &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches,
+                &mut self.search_matches.as_mut(),
             )?;
 
             if self.trailing_comma {
@@ -661,7 +662,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                     Some(self.value_range.end),
                     &highlighting::DEFAULT_STYLE,
                     &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                    &mut self.search_matches,
+                    &mut self.search_matches.as_mut(),
                 )?;
             }
 
@@ -681,18 +682,9 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             available_space -= 1;
         }
 
-        if !self.focused {
-            self.tui.fg_color(self.printer.buf, DIMMED)?;
-        }
-
         let quoted_object_keys = self.mode == Mode::Line;
-        let mut used_space = LinePrinter::<TUI>::generate_container_preview(
-            self.printer.buf,
-            flatjson,
-            row,
-            available_space,
-            quoted_object_keys,
-        )?;
+        let mut used_space =
+            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?;
 
         if self.trailing_comma {
             used_space += 1;
@@ -703,7 +695,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                     Some(self.value_range.end),
                     &highlighting::DEFAULT_STYLE,
                     &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                    &mut self.search_matches,
+                    &mut self.search_matches.as_mut(),
                 )?;
             }
         }
@@ -711,8 +703,8 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         Ok(used_space)
     }
 
-    fn generate_container_preview<W: Write>(
-        buf: &mut W,
+    fn generate_container_preview(
+        &mut self,
         flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
@@ -729,7 +721,18 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         available_space -= 2;
         let mut num_printed = 0;
 
-        buf.write_char(container_type.open_char())?;
+        // Create a copy of self.search_matches
+        let original_search_matches = self.search_matches.clone();
+
+        highlighting::highlight_matches(
+            &mut self.printer,
+            container_type.open_str(),
+            Some(self.value_range.start),
+            &highlighting::GRAY_STYLE,
+            &highlighting::GRAY_INVERTED_STYLE,
+            &mut self.search_matches.as_mut(),
+        )?;
+
         num_printed += 1;
 
         let mut next_sibling = row.first_child();
@@ -742,8 +745,7 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             let space_available_for_elem = available_space - space_needed_at_end_of_container;
             let is_only_child = is_first_child && next_sibling.is_nil();
 
-            let used_space = LinePrinter::<TUI>::fill_in_container_elem_preview(
-                buf,
+            let used_space = self.fill_in_container_elem_preview(
                 flatjson,
                 &flatjson[child],
                 space_available_for_elem,
@@ -755,14 +757,28 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
                 // No room for anything else, let's close out the object.
                 // If we're not the first child, the previous elem will have
                 // printed the ", " separator.
-                buf.write_char('…')?;
+                highlighting::highlight_matches(
+                    &mut self.printer,
+                    "…",
+                    None,
+                    &highlighting::GRAY_STYLE,
+                    &highlighting::GRAY_INVERTED_STYLE,
+                    &mut self.search_matches.as_mut(),
+                )?;
                 available_space -= 1;
                 num_printed += 1;
                 break;
             } else {
                 // Successfully printed elem out, let's print a separator.
                 if next_sibling.is_some() {
-                    write!(buf, ", ")?;
+                    highlighting::highlight_matches(
+                        &mut self.printer,
+                        ", ",
+                        Some(flatjson[child].range.end),
+                        &highlighting::GRAY_STYLE,
+                        &highlighting::GRAY_INVERTED_STYLE,
+                        &mut self.search_matches.as_mut(),
+                    )?;
                     available_space -= 2;
                     num_printed += 2;
                 }
@@ -774,100 +790,107 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             is_first_child = false;
         }
 
-        buf.write_char(container_type.close_char())?;
+        highlighting::highlight_matches(
+            &mut self.printer,
+            container_type.close_str(),
+            Some(self.value_range.end - 1),
+            &highlighting::GRAY_STYLE,
+            &highlighting::GRAY_INVERTED_STYLE,
+            &mut self.search_matches.as_mut(),
+        )?;
         num_printed += 1;
+
+        self.search_matches = original_search_matches;
 
         Ok(num_printed)
     }
 
     // {a…: …, …}
     //
-    // […, …]
-    fn fill_in_container_elem_preview<W: Write>(
-        buf: &mut W,
+    // [a, …]
+    fn fill_in_container_elem_preview(
+        &mut self,
         flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
         quoted_object_keys: bool,
         is_only_child: bool,
     ) -> Result<isize, fmt::Error> {
-        // One character required for the value.
-        let mut required_characters = 1;
-        let mut quoted_object_key = quoted_object_keys;
-        let mut space_available_for_key = available_space - 1;
+        let mut used_space = 0;
 
         if let Some(key_range) = &row.key_range {
-            let key = &flatjson.1[key_range.start + 1..key_range.end - 1];
+            let key_ref = &flatjson.1[key_range.start + 1..key_range.end - 1];
+            // Need at least one character for value, and two characters for ": "
+            let mut space_available_for_key = available_space - 3;
+            let mut quoted_object_key = quoted_object_keys;
 
-            if quoted_object_keys || !JS_IDENTIFIER.is_match(key) {
-                required_characters += 2;
+            if quoted_object_keys || !JS_IDENTIFIER.is_match(key_ref) {
                 space_available_for_key -= 2;
                 quoted_object_key = true;
             }
 
-            // Need to display the key
-            required_characters += min_required_columns_for_str(key);
-            // Two characters required for the ": "
-            required_characters += 2;
-            space_available_for_key -= 2;
-        }
-
-        if available_space < required_characters {
-            return Ok(0);
-        }
-
-        let mut used_space = 0;
-
-        // Let's print out the object key
-        if let Some(key_range) = &row.key_range {
-            let mut key_ref = &flatjson.1[key_range.start + 1..key_range.end - 1];
-            let mut key_truncated = false;
-
-            match truncate_right_to_fit(key_ref, space_available_for_key, "…") {
-                NoTruncation(width) => {
-                    available_space -= width;
-                    used_space += width;
-                }
-                Truncated(key_prefix, width) => {
-                    available_space -= width;
-                    used_space += width;
-                    key_ref = key_prefix;
-                    key_truncated = true;
-                }
-                DoesntFit => panic!("We just checked that available_space >= min_required_width!"),
+            let truncated_view = TruncatedStrView::init_start(key_ref, space_available_for_key);
+            let space_used_for_label = truncated_view.used_space();
+            if space_used_for_label.is_none() || truncated_view.is_completely_elided() {
+                return Ok(0);
             }
+
+            let space_used_for_label = space_used_for_label.unwrap();
+            used_space += space_used_for_label;
+            available_space -= space_used_for_label;
 
             if quoted_object_key {
-                buf.write_char('"')?;
-            }
-            write!(buf, "{}", key_ref)?;
-            if key_truncated {
-                buf.write_char('…')?;
-            }
-            if quoted_object_key {
-                buf.write_char('"')?;
-            }
-
-            if quoted_object_key {
-                available_space -= 2;
-                used_space += 2;
+                used_space += 1;
+                available_space -= 1;
+                highlighting::highlight_matches(
+                    &mut self.printer,
+                    "\"",
+                    Some(key_range.start),
+                    &highlighting::GRAY_STYLE,
+                    &highlighting::GRAY_INVERTED_STYLE,
+                    &mut self.search_matches.as_mut(),
+                )?;
             }
 
-            write!(buf, ": ")?;
-            available_space -= 2;
+            highlighting::highlight_truncated_str_view(
+                &mut self.printer,
+                key_ref,
+                &truncated_view,
+                Some(key_range.start + 1),
+                &highlighting::GRAY_STYLE,
+                &highlighting::GRAY_INVERTED_STYLE,
+                &mut self.search_matches.as_mut(),
+            )?;
+
+            if quoted_object_key {
+                used_space += 1;
+                available_space -= 1;
+                highlighting::highlight_matches(
+                    &mut self.printer,
+                    "\"",
+                    Some(key_range.end - 1),
+                    &highlighting::GRAY_STYLE,
+                    &highlighting::GRAY_INVERTED_STYLE,
+                    &mut self.search_matches.as_mut(),
+                )?;
+            }
+
             used_space += 2;
+            available_space -= 2;
+            highlighting::highlight_matches(
+                &mut self.printer,
+                ": ",
+                Some(key_range.end),
+                &highlighting::GRAY_STYLE,
+                &highlighting::GRAY_INVERTED_STYLE,
+                &mut self.search_matches.as_mut(),
+            )?;
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            LinePrinter::<TUI>::generate_container_preview(
-                buf,
-                flatjson,
-                &row,
-                available_space,
-                quoted_object_keys,
-            )?
+            self.generate_container_preview(flatjson, &row, available_space, quoted_object_keys)?
         } else {
-            LinePrinter::<TUI>::fill_in_value_preview(buf, &flatjson.1, &row, available_space)?
+            self.fill_in_value_preview(&flatjson.1, &row, available_space)?
         };
         used_space += space_used_for_value;
 
@@ -875,25 +898,27 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
         // object key, but couldn't print out the value. Space was already
         // allocated for this at the start of the function.
         if row.key_range.is_some() && space_used_for_value == 0 {
-            buf.write_char('…')?;
+            self.printer.buf.write_char('…')?;
             used_space += 1;
         }
 
         Ok(used_space)
     }
 
-    fn fill_in_value_preview<W: Write>(
-        buf: &mut W,
+    fn fill_in_value_preview(
+        &mut self,
         pretty_printed_json: &str,
         row: &Row,
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
         let mut quoted = false;
         let mut can_be_truncated = true;
+        let mut showing_collapsed_preview = false;
 
-        let mut value_ref = match &row.value {
+        let value_ref = match &row.value {
             Value::OpenContainer { container_type, .. } => {
                 can_be_truncated = false;
+                showing_collapsed_preview = true;
                 container_type.collapsed_preview()
             }
             Value::CloseContainer { .. } => panic!("CloseContainer cannot be child value."),
@@ -905,52 +930,68 @@ impl<'a, 'b, 'c, TUI: TUIControl> LinePrinter<'a, 'b, 'c, TUI> {
             _ => &pretty_printed_json[row.range.clone()],
         };
 
-        let mut required_characters = min_required_columns_for_str(value_ref);
-        if quoted {
-            required_characters += 2;
-        }
-
-        if available_space < required_characters {
-            return Ok(0);
-        }
-
         if quoted {
             available_space -= 2;
         }
 
-        let mut value_truncated = false;
-        let mut used_space = if quoted { 2 } else { 0 };
+        let space_used_for_quotes = if quoted { 2 } else { 0 };
 
-        match truncate_right_to_fit(value_ref, available_space, "…") {
-            NoTruncation(width) => {
-                used_space += width;
-            }
-            Truncated(value_prefix, width) => {
-                if can_be_truncated {
-                    used_space += width;
-                    value_ref = value_prefix;
-                    value_truncated = true;
-                } else {
-                    return Ok(0);
-                }
-            }
-            DoesntFit => {
-                return Ok(0);
-            }
+        let truncated_view = TruncatedStrView::init_start(value_ref, available_space);
+        let space_used_for_value = truncated_view.used_space();
+
+        // TODO: We SHOULD check if is_completely_elided, but only for Array values.
+        if space_used_for_value.is_none() {
+            return Ok(0);
         }
+
+        if !can_be_truncated && truncated_view.range.unwrap().is_truncated(value_ref) {
+            return Ok(0);
+        }
+
+        let value_open_quote_range_start = row.range.start;
+        let mut value_range_start = row.range.start;
+        let value_close_quote_range_start = row.range.end - 1;
 
         if quoted {
-            buf.write_char('"')?;
-        }
-        write!(buf, "{}", value_ref)?;
-        if value_truncated {
-            buf.write_char('…')?;
-        }
-        if quoted {
-            buf.write_char('"')?;
+            value_range_start += 1;
+            highlighting::highlight_matches(
+                &mut self.printer,
+                "\"",
+                Some(value_open_quote_range_start),
+                &highlighting::GRAY_STYLE,
+                &highlighting::GRAY_INVERTED_STYLE,
+                &mut self.search_matches.as_mut(),
+            )?;
         }
 
-        Ok(used_space)
+        highlighting::highlight_truncated_str_view(
+            &mut self.printer,
+            value_ref,
+            &truncated_view,
+            // Technically could try to highlight open and close delimiters
+            // of the collapsed container, but not really worth it right now.
+            if showing_collapsed_preview {
+                None
+            } else {
+                Some(value_range_start)
+            },
+            &highlighting::GRAY_STYLE,
+            &highlighting::GRAY_INVERTED_STYLE,
+            &mut self.search_matches.as_mut(),
+        )?;
+
+        if quoted {
+            highlighting::highlight_matches(
+                &mut self.printer,
+                "\"",
+                Some(value_close_quote_range_start),
+                &highlighting::GRAY_STYLE,
+                &highlighting::GRAY_INVERTED_STYLE,
+                &mut self.search_matches.as_mut(),
+            )?;
+        }
+
+        Ok(space_used_for_quotes + space_used_for_value.unwrap())
     }
 
     fn print_truncated_indicator(&mut self) -> fmt::Result {

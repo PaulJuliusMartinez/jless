@@ -278,6 +278,7 @@ impl ScreenWriter {
         }
 
         let mut buf = String::new();
+        let search_matches_copy = (*search_matches).clone();
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
             tui: ColorControl {},
@@ -296,7 +297,7 @@ impl ScreenWriter {
             value,
             value_range: &row.range,
 
-            search_matches: Some(search_matches),
+            search_matches: Some(search_matches_copy),
 
             cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
         };
@@ -304,6 +305,9 @@ impl ScreenWriter {
         // TODO: Handle error here? Or is never an error because writes
         // to String should never fail?
         line.print_line().unwrap();
+
+        *search_matches = line.search_matches.unwrap();
+
         write!(self.tty_writer, "{}", buf)
     }
 
