@@ -134,6 +134,7 @@ pub fn highlight_truncated_str_view<'a>(
     style: &Style,
     highlight_style: &Style,
     matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
+    focused_search_match: &Range<usize>,
 ) -> fmt::Result {
     let mut leading_ellipsis = false;
     let mut replacement_character = false;
@@ -169,6 +170,7 @@ pub fn highlight_truncated_str_view<'a>(
         style,
         highlight_style,
         matches_iter,
+        focused_search_match,
     )?;
 
     // Print trailing ellipsis
@@ -187,6 +189,7 @@ pub fn highlight_matches<'a>(
     style: &Style,
     highlight_style: &Style,
     matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
+    focused_search_match: &Range<usize>,
 ) -> fmt::Result {
     if str_range_start.is_none() {
         out.set_style(style)?;
@@ -201,12 +204,17 @@ pub fn highlight_matches<'a>(
         let string_end = start_index + s.len();
         let mut match_start = string_end;
         let mut match_end = string_end;
+        let mut match_is_focused_match = false;
 
         // Get rid of matches before the string.
-        while let Some(Range { start, end }) = matches_iter.as_mut().map(|i| i.peek()).flatten() {
-            if start_index < *end {
-                match_start = (*start).clamp(start_index, string_end);
-                match_end = (*end).clamp(start_index, string_end);
+        while let Some(range) = matches_iter.as_mut().map(|i| i.peek()).flatten() {
+            if start_index < range.end {
+                if *range == focused_search_match {
+                    match_is_focused_match = true;
+                }
+
+                match_start = range.start.clamp(start_index, string_end);
+                match_end = range.end.clamp(start_index, string_end);
                 break;
             }
             matches_iter.as_mut().unwrap().next();
@@ -221,7 +229,14 @@ pub fn highlight_matches<'a>(
 
         // Highlight the matching substring.
         if match_start < string_end {
-            out.set_style(highlight_style)?;
+            if match_is_focused_match {
+                out.set_style(&Style {
+                    bold: highlight_style.bold,
+                    ..INVERTED_STYLE
+                })?;
+            } else {
+                out.set_style(highlight_style)?;
+            }
             let print_start = match_start - start_index;
             let print_end = match_end - start_index;
             write!(out, "{}", &s[print_start..print_end])?;

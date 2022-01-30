@@ -165,6 +165,18 @@ impl SearchState {
         }
     }
 
+    /// Returns the range of the currently focused match, or an empty range
+    /// if not actively searching.
+    pub fn current_match_range(&self) -> Range<usize> {
+        match self.immediate_state {
+            ImmediateSearchState::NotSearching => 0..0,
+            ImmediateSearchState::ActivelySearching {
+                last_match_jumped_to,
+                ..
+            } => self.matches[last_match_jumped_to].clone(),
+        }
+    }
+
     fn true_direction(&self, jump_direction: JumpDirection) -> SearchDirection {
         match (self.direction, jump_direction) {
             (SearchDirection::Forward, JumpDirection::Next) => SearchDirection::Forward,

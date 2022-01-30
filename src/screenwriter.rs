@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::iter::Peekable;
+use std::ops::Range;
 
 use rustyline::Editor;
 use termion::{clear, cursor};
@@ -13,11 +14,10 @@ use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::{MatchRangeIter, SearchState};
 use crate::terminal;
-use crate::terminal::{AnsiTerminal, Terminal};
+use crate::terminal::AnsiTerminal;
 use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
 use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
 use crate::truncatedstrview::TruncatedStrView;
-use crate::tuicontrol::Color as TUIColor;
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
@@ -117,6 +117,7 @@ impl ScreenWriter {
         let mut search_matches = search_state
             .matches_iter(viewer.flatjson[line.unwrap()].range.start)
             .peekable();
+        let current_match = search_state.current_match_range();
 
         for row_index in 0..viewer.dimensions.height {
             match line {
@@ -131,8 +132,8 @@ impl ScreenWriter {
                         viewer,
                         row_index,
                         index,
-                        index == viewer.focused_row,
                         &mut search_matches,
+                        &current_match,
                     )?;
                     line = match viewer.mode {
                         Mode::Line => viewer.flatjson.next_visible_row(index),
@@ -181,9 +182,11 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         screen_index: u16,
         index: Index,
-        is_focused: bool,
         search_matches: &mut Peekable<MatchRangeIter>,
+        focused_search_match: &Range<usize>,
     ) -> std::io::Result<()> {
+        let is_focused = index == viewer.focused_row;
+
         self.tty_writer.position_cursor(1, screen_index + 1)?;
         let row = &viewer.flatjson[index];
 
@@ -275,7 +278,6 @@ impl ScreenWriter {
             }
         }
 
-        let mut buf = String::new();
         let search_matches_copy = (*search_matches).clone();
         let mut terminal = AnsiTerminal::new(String::new());
 
@@ -297,6 +299,7 @@ impl ScreenWriter {
             value_range: &row.range,
 
             search_matches: Some(search_matches_copy),
+            focused_search_match,
 
             cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
         };

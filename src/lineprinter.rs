@@ -137,11 +137,6 @@ const COLLAPSED_CONTAINER: &'static str = "▷ ";
 const EXPANDED_CONTAINER: &'static str = "▽ ";
 const INDICATOR_WIDTH: usize = 2;
 
-const LABEL_COLOR: Color = terminal::LIGHT_BLUE;
-const FOCUSED_LABEL_COLOR: Color = terminal::BLUE;
-const FOCUSED_LABEL_BG_COLOR: Color = terminal::LIGHT_WHITE;
-const DIMMED: Color = terminal::LIGHT_BLACK;
-
 lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
 }
@@ -219,6 +214,7 @@ pub struct LinePrinter<'a, 'b, 'c> {
     pub value_range: &'a Range<usize>,
 
     pub search_matches: Option<Peekable<MatchRangeIter<'b>>>,
+    pub focused_search_match: &'a Range<usize>,
 
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
@@ -387,6 +383,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             style,
             highlighted_style,
             &mut matches,
+            self.focused_search_match,
         )?;
 
         // Print out the label itself
@@ -398,6 +395,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             style,
             highlighted_style,
             &mut matches,
+            self.focused_search_match,
         )?;
 
         // Print out end of label
@@ -408,6 +406,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             style,
             highlighted_style,
             &mut matches,
+            self.focused_search_match,
         )?;
 
         // Print out separator between label and value
@@ -418,6 +417,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             &highlighting::DEFAULT_STYLE,
             &highlighting::SEARCH_MATCH_HIGHLIGHTED,
             &mut matches,
+            self.focused_search_match,
         )?;
 
         used_space += label_style.width();
@@ -903,6 +903,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             &highlighting::GRAY_STYLE,
             &highlighting::GRAY_INVERTED_STYLE,
             &mut self.search_matches.as_mut(),
+            self.focused_search_match,
         )?;
 
         if quoted {
@@ -957,6 +958,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             styles.0,
             styles.1,
             &mut self.search_matches.as_mut(),
+            self.focused_search_match,
         )?;
 
         self.highlight_str(delimiter.right(), str_close_delimiter_range_start, styles)?;
@@ -978,6 +980,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             styles.0,
             styles.1,
             &mut self.search_matches.as_mut(),
+            self.focused_search_match,
         )
     }
 }
@@ -989,11 +992,8 @@ mod tests {
     use crate::flatjson::parse_top_level_json2;
     use crate::terminal;
     use crate::terminal::test::{TextOnlyTerminal, VisibleEscapesTerminal};
-    use crate::tuicontrol::test::{EmptyControl, VisibleEscapes};
 
     use super::*;
-
-    type I<'a> = std::slice::Iter<'a, Range<usize>>;
 
     const OBJECT: &'static str = r#"{
         "1": 1,
@@ -1031,6 +1031,7 @@ mod tests {
             },
             value_range: &DUMMY_RANGE,
             search_matches: None,
+            focused_search_match: &DUMMY_RANGE,
             cached_formatted_value: None,
         }
     }
@@ -1205,7 +1206,7 @@ mod tests {
 
     #[test]
     fn test_fill_label_not_enough_space() -> std::fmt::Result {
-        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term);
         line.mode = Mode::Line;
         line.label = Some(LineLabel::Key { key: "hello" });
@@ -1323,7 +1324,7 @@ mod tests {
 
     #[test]
     fn test_fill_value_not_enough_space() -> std::fmt::Result {
-        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term);
         let color = terminal::BLACK;
 
@@ -1429,7 +1430,7 @@ mod tests {
         //           0123456789012345678901234567 (27 characters)
         let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
-        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
             ..default_line_printer(&mut term)
@@ -1474,7 +1475,7 @@ mod tests {
         //           012345678901234567890123456789 (29 characters)
         let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
-        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
             ..default_line_printer(&mut term)
@@ -1523,7 +1524,7 @@ mod tests {
         //           01234567890123456789012345678901234 (34 characters)
         let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
-        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
             ..default_line_printer(&mut term)
@@ -1549,7 +1550,7 @@ mod tests {
         //           012345678901234567890123456789 (29 characters)
         let fj = parse_top_level_json2(json.to_owned()).unwrap();
 
-        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
             ..default_line_printer(&mut term)
