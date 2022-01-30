@@ -151,6 +151,7 @@ pub enum LineLabel<'a> {
     Index { index: &'a str },
 }
 
+// TODO: Rename to "DelimiterPair"
 #[derive(Eq, PartialEq)]
 enum LabelStyle {
     None,
@@ -495,55 +496,33 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             ..Style::default()
         };
 
-        let value_open_quote_range_start = self.value_range.start;
-        let mut value_range_start = self.value_range.start;
-        let value_close_quote_range_start = self.value_range.end - 1;
-        let trailing_comma_range_start = self.value_range.end;
+        let delimiter = if quoted {
+            LabelStyle::Quote
+        } else {
+            LabelStyle::None
+        };
 
         if quoted {
-            used_space += 1;
-            value_range_start += 1;
-            highlighting::highlight_matches(
-                self.terminal,
-                "\"",
-                Some(value_open_quote_range_start),
-                &style,
-                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches.as_mut(),
-            )?;
+            used_space += 2;
         }
 
-        highlighting::highlight_truncated_str_view(
-            self.terminal,
+        self.highlight_delimited_and_truncated_str(
+            delimiter,
             value_ref,
             &truncated_view,
-            Some(value_range_start),
-            &style,
-            &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-            &mut self.search_matches.as_mut(),
+            Some(self.value_range.clone()),
+            (&style, &highlighting::SEARCH_MATCH_HIGHLIGHTED),
         )?;
-
-        if quoted {
-            used_space += 1;
-            highlighting::highlight_matches(
-                self.terminal,
-                "\"",
-                Some(value_close_quote_range_start),
-                &style,
-                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches.as_mut(),
-            )?;
-        }
 
         if self.trailing_comma {
             used_space += 1;
-            highlighting::highlight_matches(
-                self.terminal,
+            self.highlight_str(
                 ",",
-                Some(trailing_comma_range_start),
-                &highlighting::DEFAULT_STYLE,
-                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches.as_mut(),
+                Some(self.value_range.end),
+                (
+                    &highlighting::DEFAULT_STYLE,
+                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                ),
             )?;
         }
 
@@ -612,13 +591,10 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 &highlighting::DEFAULT_STYLE
             };
 
-            highlighting::highlight_matches(
-                self.terminal,
+            self.highlight_str(
                 row.value.container_type().unwrap().open_str(),
                 Some(self.value_range.start),
-                style,
-                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches.as_mut(),
+                (style, &highlighting::SEARCH_MATCH_HIGHLIGHTED),
             )?;
 
             Ok(1)
@@ -641,23 +617,20 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 &highlighting::DEFAULT_STYLE
             };
 
-            highlighting::highlight_matches(
-                self.terminal,
+            self.highlight_str(
                 row.value.container_type().unwrap().close_str(),
                 Some(self.value_range.start),
-                style,
-                &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                &mut self.search_matches.as_mut(),
+                (style, &highlighting::SEARCH_MATCH_HIGHLIGHTED),
             )?;
 
             if self.trailing_comma {
-                highlighting::highlight_matches(
-                    self.terminal,
+                self.highlight_str(
                     ",",
                     Some(self.value_range.end),
-                    &highlighting::DEFAULT_STYLE,
-                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                    &mut self.search_matches.as_mut(),
+                    (
+                        &highlighting::DEFAULT_STYLE,
+                        &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                    ),
                 )?;
             }
 
@@ -684,13 +657,13 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         if self.trailing_comma {
             used_space += 1;
             if self.trailing_comma {
-                highlighting::highlight_matches(
-                    self.terminal,
+                self.highlight_str(
                     ",",
                     Some(self.value_range.end),
-                    &highlighting::DEFAULT_STYLE,
-                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                    &mut self.search_matches.as_mut(),
+                    (
+                        &highlighting::DEFAULT_STYLE,
+                        &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                    ),
                 )?;
             }
         }
@@ -719,13 +692,10 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         // Create a copy of self.search_matches
         let original_search_matches = self.search_matches.clone();
 
-        highlighting::highlight_matches(
-            self.terminal,
+        self.highlight_str(
             container_type.open_str(),
             Some(self.value_range.start),
-            &highlighting::GRAY_STYLE,
-            &highlighting::GRAY_INVERTED_STYLE,
-            &mut self.search_matches.as_mut(),
+            highlighting::PREVIEW_STYLES,
         )?;
 
         num_printed += 1;
@@ -752,27 +722,17 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 // No room for anything else, let's close out the object.
                 // If we're not the first child, the previous elem will have
                 // printed the ", " separator.
-                highlighting::highlight_matches(
-                    self.terminal,
-                    "…",
-                    None,
-                    &highlighting::GRAY_STYLE,
-                    &highlighting::GRAY_INVERTED_STYLE,
-                    &mut self.search_matches.as_mut(),
-                )?;
+                self.highlight_str("…", None, highlighting::PREVIEW_STYLES)?;
                 available_space -= 1;
                 num_printed += 1;
                 break;
             } else {
                 // Successfully printed elem out, let's print a separator.
                 if next_sibling.is_some() {
-                    highlighting::highlight_matches(
-                        self.terminal,
+                    self.highlight_str(
                         ", ",
                         Some(flatjson[child].range.end),
-                        &highlighting::GRAY_STYLE,
-                        &highlighting::GRAY_INVERTED_STYLE,
-                        &mut self.search_matches.as_mut(),
+                        highlighting::PREVIEW_STYLES,
                     )?;
                     available_space -= 2;
                     num_printed += 2;
@@ -785,13 +745,10 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             is_first_child = false;
         }
 
-        highlighting::highlight_matches(
-            self.terminal,
+        self.highlight_str(
             container_type.close_str(),
             Some(self.value_range.end - 1),
-            &highlighting::GRAY_STYLE,
-            &highlighting::GRAY_INVERTED_STYLE,
-            &mut self.search_matches.as_mut(),
+            highlighting::PREVIEW_STYLES,
         )?;
         num_printed += 1;
 
@@ -814,7 +771,8 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         let mut used_space = 0;
 
         if let Some(key_range) = &row.key_range {
-            let key_ref = &flatjson.1[key_range.start + 1..key_range.end - 1];
+            let key_without_quotes_range = key_range.start + 1..key_range.end - 1;
+            let key_ref = &flatjson.1[key_without_quotes_range.clone()];
             // Need at least one character for value, and two characters for ": "
             let mut space_available_for_key = available_space - 3;
             let mut quoted_object_key = quoted_object_keys;
@@ -835,51 +793,27 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             available_space -= space_used_for_label;
 
             if quoted_object_key {
-                used_space += 1;
-                available_space -= 1;
-                highlighting::highlight_matches(
-                    self.terminal,
-                    "\"",
-                    Some(key_range.start),
-                    &highlighting::GRAY_STYLE,
-                    &highlighting::GRAY_INVERTED_STYLE,
-                    &mut self.search_matches.as_mut(),
-                )?;
+                used_space += 2;
+                available_space -= 2;
             }
 
-            highlighting::highlight_truncated_str_view(
-                self.terminal,
+            let delimiter = if quoted_object_key {
+                LabelStyle::Quote
+            } else {
+                LabelStyle::None
+            };
+
+            self.highlight_delimited_and_truncated_str(
+                delimiter,
                 key_ref,
                 &truncated_view,
-                Some(key_range.start + 1),
-                &highlighting::GRAY_STYLE,
-                &highlighting::GRAY_INVERTED_STYLE,
-                &mut self.search_matches.as_mut(),
+                Some(key_without_quotes_range),
+                highlighting::PREVIEW_STYLES,
             )?;
-
-            if quoted_object_key {
-                used_space += 1;
-                available_space -= 1;
-                highlighting::highlight_matches(
-                    self.terminal,
-                    "\"",
-                    Some(key_range.end - 1),
-                    &highlighting::GRAY_STYLE,
-                    &highlighting::GRAY_INVERTED_STYLE,
-                    &mut self.search_matches.as_mut(),
-                )?;
-            }
 
             used_space += 2;
             available_space -= 2;
-            highlighting::highlight_matches(
-                self.terminal,
-                ": ",
-                Some(key_range.end),
-                &highlighting::GRAY_STYLE,
-                &highlighting::GRAY_INVERTED_STYLE,
-                &mut self.search_matches.as_mut(),
-            )?;
+            self.highlight_str(": ", Some(key_range.end), highlighting::PREVIEW_STYLES)?;
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
@@ -949,13 +883,10 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         if quoted {
             value_range_start += 1;
-            highlighting::highlight_matches(
-                self.terminal,
+            self.highlight_str(
                 "\"",
                 Some(value_open_quote_range_start),
-                &highlighting::GRAY_STYLE,
-                &highlighting::GRAY_INVERTED_STYLE,
-                &mut self.search_matches.as_mut(),
+                highlighting::PREVIEW_STYLES,
             )?;
         }
 
@@ -976,13 +907,10 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         )?;
 
         if quoted {
-            highlighting::highlight_matches(
-                self.terminal,
+            self.highlight_str(
                 "\"",
                 Some(value_close_quote_range_start),
-                &highlighting::GRAY_STYLE,
-                &highlighting::GRAY_INVERTED_STYLE,
-                &mut self.search_matches.as_mut(),
+                highlighting::PREVIEW_STYLES,
             )?;
         }
 
@@ -998,6 +926,60 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             self.terminal.set_fg(terminal::LIGHT_BLACK)?;
         }
         write!(self.terminal, ">")
+    }
+
+    // A helper to print out a TruncatedStrView that may be
+    // surrounded by a delimiter.
+    fn highlight_delimited_and_truncated_str(
+        &mut self,
+        delimiter: LabelStyle,
+        s: &str,
+        truncated_view: &TruncatedStrView,
+        str_range: Option<Range<usize>>,
+        styles: (&Style, &Style),
+    ) -> fmt::Result {
+        let mut str_open_delimiter_range_start = None;
+        let mut str_range_start = None;
+        let mut str_close_delimiter_range_start = None;
+
+        if let Some(range) = str_range {
+            str_open_delimiter_range_start = Some(range.start);
+            str_range_start = Some(range.start + delimiter.left().len());
+            str_close_delimiter_range_start = Some(range.end - delimiter.right().len());
+        }
+
+        self.highlight_str(delimiter.left(), str_open_delimiter_range_start, styles)?;
+
+        highlighting::highlight_truncated_str_view(
+            self.terminal,
+            s,
+            truncated_view,
+            str_range_start,
+            styles.0,
+            styles.1,
+            &mut self.search_matches.as_mut(),
+        )?;
+
+        self.highlight_str(delimiter.right(), str_close_delimiter_range_start, styles)?;
+
+        Ok(())
+    }
+
+    // A helper to print out a simple string that may be highlighted.
+    fn highlight_str(
+        &mut self,
+        s: &str,
+        str_range_start: Option<usize>,
+        styles: (&Style, &Style),
+    ) -> fmt::Result {
+        highlighting::highlight_matches(
+            self.terminal,
+            s,
+            str_range_start,
+            styles.0,
+            styles.1,
+            &mut self.search_matches.as_mut(),
+        )
     }
 }
 

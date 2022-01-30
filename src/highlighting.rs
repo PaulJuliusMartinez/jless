@@ -97,6 +97,8 @@ pub const GRAY_STYLE: Style = Style {
     ..Style::default()
 };
 
+pub const PREVIEW_STYLES: (&'static Style, &'static Style) = (&GRAY_STYLE, &GRAY_INVERTED_STYLE);
+
 pub const YELLOW_STYLE: Style = Style {
     fg: terminal::LIGHT_YELLOW,
     ..Style::default()
