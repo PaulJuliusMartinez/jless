@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
@@ -81,7 +82,7 @@ pub struct TruncatedStrSlice<'a, 'b> {
 // "materialize" the RangeAdjuster into a TruncatedStrView based on
 // whether the visible portion is "empty" and there is space to
 // display a replacement character.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct RangeAdjuster<'a> {
     s: &'a str,
     used_space: isize,
@@ -372,6 +373,41 @@ impl TruncatedStrView {
 
         adjuster.to_view()
     }
+
+    /// Scroll a view so that a particular subrange is shown.
+    pub fn focus(&self, s: &str, range: &Range<usize>) -> TruncatedStrView {
+        if self.range.is_none() {
+            return self.clone();
+        }
+
+        let Range { mut start, mut end } = *range;
+
+        // Make sure our start isn't in-between a character boundary.
+        while start != 0 && !s.is_char_boundary(start) {
+            start -= 1;
+        }
+        end = end.min(s.len());
+
+        let visible_range = self.range.unwrap();
+
+        // If the entire match is already visible, don't do anything.
+        if visible_range.start <= start && end <= visible_range.end {
+            return self.clone();
+        }
+
+        // But otherwise, we'll just jump to the match and try to center it.
+        let mut adjuster = RangeAdjuster::init_at_index(s, self.available_space, start);
+
+        // Make sure to include entire match if possible.
+        while adjuster.end < end && adjuster.used_space < self.available_space {
+            adjuster.expand_right(1);
+        }
+
+        // Then fill from both sides to keep it centered.
+        adjuster.fill_from_both_sides();
+
+        adjuster.to_view()
+    }
 }
 
 impl<'a> RangeAdjuster<'a> {
@@ -454,21 +490,30 @@ impl<'a> RangeAdjuster<'a> {
         //
         // This allows converting "…xy…" to "…xyz".
         while let Some(grapheme) = right_graphemes.next() {
-            let new_end = self.end + grapheme.len();
-            let mut new_used_space = self.used_space + UnicodeWidthStr::width(grapheme) as isize;
-
-            if new_end == self.s.len() {
-                // No more trailing ellipsis.
-                new_used_space -= 1;
-            }
-
-            if new_used_space > self.available_space {
+            if !self.add_grapheme_to_right_if_it_will_fit(grapheme) {
                 break;
             }
-
-            self.end = new_end;
-            self.used_space = new_used_space;
         }
+    }
+
+    // Adds a grapheme to the right side of a view if it will fit.
+    fn add_grapheme_to_right_if_it_will_fit(&mut self, grapheme: &str) -> bool {
+        let new_end = self.end + grapheme.len();
+        let mut new_used_space = self.used_space + UnicodeWidthStr::width(grapheme) as isize;
+
+        if new_end == self.s.len() {
+            // No more trailing ellipsis.
+            new_used_space -= 1;
+        }
+
+        if new_used_space > self.available_space {
+            return false;
+        }
+
+        self.end = new_end;
+        self.used_space = new_used_space;
+
+        true
     }
 
     /// Add as many characters to the left side of the string as we
@@ -482,20 +527,84 @@ impl<'a> RangeAdjuster<'a> {
         //
         // This allows converting "…bc…" to "abc…".
         while let Some(grapheme) = left_graphemes.next_back() {
-            let new_start = self.start - grapheme.len();
-            let mut new_used_space = self.used_space + UnicodeWidthStr::width(grapheme) as isize;
-
-            if new_start == 0 {
-                // No more leading ellipsis.
-                new_used_space -= 1;
-            }
-
-            if new_used_space > self.available_space {
+            if !self.add_grapheme_to_left_if_it_will_fit(grapheme) {
                 break;
             }
+        }
+    }
 
-            self.start = new_start;
-            self.used_space = new_used_space;
+    // Adds a grapheme to the left side of a view if it will fit.
+    fn add_grapheme_to_left_if_it_will_fit(&mut self, grapheme: &str) -> bool {
+        let new_start = self.start - grapheme.len();
+        let mut new_used_space = self.used_space + UnicodeWidthStr::width(grapheme) as isize;
+
+        if new_start == 0 {
+            // No more leading ellipsis.
+            new_used_space -= 1;
+        }
+
+        if new_used_space > self.available_space {
+            return false;
+        }
+
+        self.start = new_start;
+        self.used_space = new_used_space;
+
+        true
+    }
+
+    /// Add as many characters to each side of the string, so that
+    /// the initial visible portion remains centered.
+    pub fn fill_from_both_sides(&mut self) {
+        let mut left_graphemes = self.s[..self.start].graphemes(true);
+        let mut right_graphemes = self.s[self.end..].graphemes(true);
+
+        let mut width_added_to_left = 0;
+        let mut width_added_to_right = 0;
+
+        let mut more_on_left = true;
+        let mut more_on_right = true;
+
+        // Need to try to expand even even when used_space == available_space
+        // to possible consume ellipses.
+        while self.used_space <= self.available_space {
+            let mut added_to_left = false;
+            let mut added_to_right = false;
+
+            // Add to right first
+            while !more_on_left || width_added_to_right <= width_added_to_left {
+                if let Some(grapheme) = right_graphemes.next() {
+                    let used_space_before = self.used_space;
+                    if !self.add_grapheme_to_right_if_it_will_fit(grapheme) {
+                        more_on_right = false;
+                        break;
+                    }
+                    width_added_to_right += self.used_space - used_space_before;
+                    added_to_right = true;
+                } else {
+                    more_on_right = false;
+                    break;
+                }
+            }
+
+            while !more_on_right || width_added_to_left < width_added_to_right {
+                if let Some(grapheme) = left_graphemes.next_back() {
+                    let used_space_before = self.used_space;
+                    if !self.add_grapheme_to_left_if_it_will_fit(grapheme) {
+                        more_on_left = false;
+                        break;
+                    }
+                    width_added_to_left += self.used_space - used_space_before;
+                    added_to_left = true;
+                } else {
+                    more_on_left = false;
+                    break;
+                }
+            }
+
+            if !added_to_right && !added_to_left {
+                break;
+            }
         }
     }
 
@@ -934,19 +1043,78 @@ mod tests {
         let mut prev_formatted = rendered(string, &curr_state);
         assert_eq!(states[0], prev_formatted);
 
-        for expansion in states.iter().skip(1) {
+        for shrunk in states.iter().skip(1) {
             available_space -= 1;
             let next_state = curr_state.shrink(string, available_space);
             let formatted = rendered(string, &next_state);
 
             assert_eq!(
-                expansion, &formatted,
+                shrunk, &formatted,
                 "expected shrink({}) to be {}",
-                &prev_formatted, &expansion,
+                &prev_formatted, &shrunk,
             );
 
             curr_state = next_state;
             prev_formatted = formatted;
+        }
+    }
+
+    #[test]
+    fn test_focus() {
+        let s = "0123456789";
+        let tsv = TruncatedStrView::init_start(s, 10);
+
+        assert_focuses(
+            s,
+            tsv,
+            vec![
+                (&(0..1), "0123456789"),
+                (&(4..7), "0123456789"),
+                (&(8..12), "0123456789"),
+            ],
+        );
+
+        let s = "0123456789abc";
+        // "…34567…"
+        let tsv = TruncatedStrView::init_start(s, 7).scroll_right(s, 2);
+
+        assert_focuses(
+            s,
+            tsv,
+            vec![
+                // Focus range if not visible.
+                (&(0..1), "012345…"),
+                // Don't move if entire range is visible.
+                (&(3..4), "…34567…"),
+                (&(3..8), "…34567…"),
+                (&(7..8), "…34567…"),
+                // Center focused value if not all visible.
+                (&(6..9), "…56789…"),
+                // Start at beginning if can't fit whole focused range.
+                (&(2..9), "…23456…"),
+                // Focus range if not visible.
+                (&(10..15), "…789abc"),
+            ],
+        );
+    }
+
+    #[track_caller]
+    fn assert_focuses(
+        string: &str,
+        initial_state: TruncatedStrView,
+        ranges_and_expected: Vec<(&Range<usize>, &str)>,
+    ) {
+        let initial_formatted = rendered(string, &initial_state);
+
+        for (i, (range, expected_focused)) in ranges_and_expected.into_iter().enumerate() {
+            let focused = initial_state.focus(string, range);
+            let formatted = rendered(string, &focused);
+
+            assert_eq!(
+                expected_focused, &formatted,
+                "Case {}: expected focus({}, {}..{}) to be {}",
+                i, &initial_formatted, range.start, range.end, &expected_focused,
+            );
         }
     }
 }

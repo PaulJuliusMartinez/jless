@@ -83,7 +83,7 @@ impl App {
             // of the focused row changes.
             let mut jumped_to_search_match = false;
             let focused_row_before = self.viewer.focused_row;
-            let focused_row_collapsed_state_before =
+            let previous_collapsed_state_of_focused_row =
                 self.viewer.flatjson[focused_row_before].is_collapsed();
 
             let event = event.unwrap();
@@ -271,13 +271,19 @@ impl App {
                 self.viewer.perform_action(action);
             }
 
-            // Check whether we're still actively searching
-            if !jumped_to_search_match
-                && (focused_row_before != self.viewer.focused_row
-                    || focused_row_collapsed_state_before
-                        != self.viewer.flatjson[focused_row_before].is_collapsed())
-            {
-                self.search_state.set_no_longer_actively_searching();
+            if jumped_to_search_match {
+                self.screen_writer.scroll_line_to_search_match(
+                    &self.viewer,
+                    self.search_state.current_match_range(),
+                );
+            } else {
+                // Check whether we're still actively searching
+                if focused_row_before != self.viewer.focused_row
+                    || previous_collapsed_state_of_focused_row
+                        != self.viewer.flatjson[focused_row_before].is_collapsed()
+                {
+                    self.search_state.set_no_longer_actively_searching();
+                }
             }
 
             self.screen_writer

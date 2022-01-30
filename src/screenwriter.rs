@@ -553,14 +553,15 @@ impl ScreenWriter {
         let row = viewer.focused_row;
         let tsv = self.truncated_row_value_views.get(&row);
         if let Some(tsv) = tsv {
+            if tsv.range.is_none() {
+                return;
+            }
+
             // Make tsv not a reference.
             let mut tsv = *tsv;
             let value_ref = self
                 .line_primitive_value_ref(&viewer.flatjson[row], &viewer)
                 .unwrap();
-            if tsv.range.is_none() {
-                return;
-            }
             if to_right {
                 tsv = tsv.scroll_right(value_ref, count);
             } else {
@@ -568,8 +569,6 @@ impl ScreenWriter {
             }
             self.truncated_row_value_views
                 .insert(viewer.focused_row, tsv);
-        } else {
-            return;
         }
     }
 
@@ -577,19 +576,58 @@ impl ScreenWriter {
         let row = viewer.focused_row;
         let tsv = self.truncated_row_value_views.get(&row);
         if let Some(tsv) = tsv {
+            if tsv.range.is_none() {
+                return;
+            }
+
             // Make tsv not a reference.
             let mut tsv = *tsv;
             let value_ref = self
                 .line_primitive_value_ref(&viewer.flatjson[row], &viewer)
                 .unwrap();
-            if tsv.range.is_none() {
-                return;
-            }
             tsv = tsv.jump_to_an_end(value_ref);
             self.truncated_row_value_views
                 .insert(viewer.focused_row, tsv);
-        } else {
-            return;
+        }
+    }
+
+    pub fn scroll_line_to_search_match(
+        &mut self,
+        viewer: &JsonViewer,
+        focused_search_range: Range<usize>,
+    ) {
+        let row = viewer.focused_row;
+        let tsv = self.truncated_row_value_views.get(&row);
+        if let Some(tsv) = tsv {
+            // Make tsv not a reference.
+            let mut tsv = *tsv;
+            if tsv.range.is_none() {
+                return;
+            }
+
+            let json_row = &viewer.flatjson[row];
+            let value_ref = self.line_primitive_value_ref(json_row, &viewer).unwrap();
+
+            let no_overlap = focused_search_range.end <= json_row.range.start
+                || json_row.range.end <= focused_search_range.start;
+            if no_overlap {
+                return;
+            }
+
+            let mut value_range_start = json_row.range.start;
+            if let Value::String = &json_row.value {
+                value_range_start += 1;
+            }
+
+            let offset_focused_range = Range {
+                start: focused_search_range.start.saturating_sub(value_range_start),
+                end: focused_search_range.end - value_range_start,
+            };
+
+            tsv = tsv.focus(value_ref, &offset_focused_range);
+
+            self.truncated_row_value_views
+                .insert(viewer.focused_row, tsv);
         }
     }
 }
