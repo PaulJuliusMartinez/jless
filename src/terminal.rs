@@ -24,6 +24,7 @@ pub const LIGHT_CYAN: Color = Color::C16(14);
 pub const LIGHT_WHITE: Color = Color::C16(15);
 pub const DEFAULT: Color = Color::Default;
 
+#[derive(Copy, Clone)]
 pub struct Style {
     pub fg: Color,
     pub bg: Color,
@@ -61,6 +62,11 @@ pub trait Terminal: Write {
     fn set_bg(&mut self, color: Color) -> Result;
     fn set_inverted(&mut self, inverted: bool) -> Result;
     fn set_bold(&mut self, bold: bool) -> Result;
+
+    fn output(&self) -> &str;
+
+    // Only used for testing.
+    fn clear_output(&mut self);
 }
 
 pub struct AnsiTerminal {
@@ -155,5 +161,203 @@ impl Terminal for AnsiTerminal {
             self.style.bold = bold;
         }
         Ok(())
+    }
+
+    fn output(&self) -> &str {
+        &self.output
+    }
+
+    fn clear_output(&mut self) {
+        self.output.clear()
+    }
+}
+
+#[cfg(test)]
+pub mod test {
+    use super::*;
+
+    const COLOR_NAMES: [&'static str; 16] = [
+        "Black",
+        "Red",
+        "Green",
+        "Yellow",
+        "Blue",
+        "Magenta",
+        "Cyan",
+        "White",
+        "LightBlack",
+        "LightRed",
+        "LightGreen",
+        "LightYellow",
+        "LightBlue",
+        "LightMagenta",
+        "LightCyan",
+        "LightWhite",
+    ];
+
+    impl std::fmt::Display for Color {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Color::C16(c) => write!(f, "{}", COLOR_NAMES.get(*c as usize).unwrap_or(&"?")),
+                Color::Default => write!(f, "Default"),
+            }
+        }
+    }
+
+    pub struct TextOnlyTerminal {
+        pub output: String,
+    }
+
+    impl TextOnlyTerminal {
+        pub fn new() -> Self {
+            TextOnlyTerminal {
+                output: String::new(),
+            }
+        }
+    }
+
+    impl Write for TextOnlyTerminal {
+        fn write_str(&mut self, s: &str) -> Result {
+            self.output.write_str(s)
+        }
+    }
+
+    #[rustfmt::skip]
+    impl Terminal for TextOnlyTerminal {
+        fn clear_screen(&mut self) -> Result { Ok(()) }
+        fn position_cursor(&mut self, _row: u16, _col: u16) -> Result { Ok(()) }
+        fn position_cursor_col(&mut self, _col: u16) -> Result { Ok(()) }
+        fn set_style(&mut self, _style: &Style) -> Result { Ok(()) }
+        fn reset_style(&mut self) -> Result { Ok(()) }
+        fn set_fg(&mut self, _color: Color) -> Result { Ok(()) }
+        fn set_bg(&mut self, _color: Color) -> Result { Ok(()) }
+        fn set_inverted(&mut self, _inverted: bool) -> Result { Ok(()) }
+        fn set_bold(&mut self, _bold: bool) -> Result { Ok(()) }
+        fn output(&self) -> &str { &self.output }
+        fn clear_output(&mut self) { self.output.clear() }
+    }
+
+    pub struct VisibleEscapesTerminal {
+        pub output: String,
+        pub style: Style,
+        pub pending_style: Style,
+        pub show_position: bool,
+        pub show_style: bool,
+    }
+
+    impl VisibleEscapesTerminal {
+        pub fn new(show_position: bool, show_style: bool) -> Self {
+            VisibleEscapesTerminal {
+                output: String::new(),
+                style: Style::default(),
+                pending_style: Style::default(),
+                show_position,
+                show_style,
+            }
+        }
+    }
+
+    impl VisibleEscapesTerminal {
+        fn write_pending_styles(&mut self) -> Result {
+            if self.show_style {
+                if self.style.fg != self.pending_style.fg {
+                    write!(self.output, "_FG({})_", self.pending_style.fg)?;
+                }
+                if self.style.bg != self.pending_style.bg {
+                    write!(self.output, "_BG({})_", self.pending_style.bg)?;
+                }
+                if self.style.inverted != self.pending_style.inverted {
+                    if self.pending_style.inverted {
+                        write!(self.output, "_INV_")?;
+                    } else {
+                        write!(self.output, "_!INV_")?;
+                    }
+                }
+                if self.style.bold != self.pending_style.bold {
+                    if self.pending_style.bold {
+                        write!(self.output, "_B_")?;
+                    } else {
+                        write!(self.output, "_!B_")?;
+                    }
+                }
+            }
+
+            self.style = self.pending_style;
+
+            Ok(())
+        }
+    }
+
+    impl Write for VisibleEscapesTerminal {
+        fn write_str(&mut self, s: &str) -> Result {
+            self.write_pending_styles()?;
+            self.output.write_str(s)
+        }
+    }
+
+    impl Terminal for VisibleEscapesTerminal {
+        fn clear_screen(&mut self) -> Result {
+            Ok(())
+        }
+
+        fn position_cursor(&mut self, row: u16, col: u16) -> Result {
+            if self.show_position {
+                write!(self, "_RC({},{})_", row, col)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn position_cursor_col(&mut self, col: u16) -> Result {
+            if self.show_position {
+                write!(self, "_C({})_", col)
+            } else {
+                Ok(())
+            }
+        }
+
+        fn set_style(&mut self, style: &Style) -> Result {
+            self.pending_style = *style;
+            Ok(())
+        }
+
+        fn reset_style(&mut self) -> Result {
+            self.style = Style::default();
+            self.pending_style = Style::default();
+            if self.show_style {
+                write!(self, "_R_")?;
+            }
+            Ok(())
+        }
+
+        fn set_fg(&mut self, color: Color) -> Result {
+            self.pending_style.fg = color;
+            Ok(())
+        }
+
+        fn set_bg(&mut self, color: Color) -> Result {
+            self.pending_style.bg = color;
+            Ok(())
+        }
+
+        fn set_inverted(&mut self, inverted: bool) -> Result {
+            self.pending_style.inverted = inverted;
+            Ok(())
+        }
+
+        fn set_bold(&mut self, bold: bool) -> Result {
+            self.pending_style.bold = bold;
+            Ok(())
+        }
+
+        fn output(&self) -> &str {
+            &self.output
+        }
+
+        fn clear_output(&mut self) {
+            self.style = Style::default();
+            self.pending_style = Style::default();
+            self.output.clear()
+        }
     }
 }
