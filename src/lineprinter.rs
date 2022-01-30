@@ -868,8 +868,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         let truncated_view = TruncatedStrView::init_start(value_ref, available_space);
         let space_used_for_value = truncated_view.used_space();
 
-        // TODO: We SHOULD check if is_completely_elided, but only for Array values.
-        if space_used_for_value.is_none() {
+        if space_used_for_value.is_none() || truncated_view.is_completely_elided() {
             return Ok(0);
         }
 
