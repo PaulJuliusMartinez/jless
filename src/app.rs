@@ -10,7 +10,7 @@ use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
 use crate::options::Opt;
-use crate::screenwriter::{AnsiTTYWriter, ScreenWriter};
+use crate::screenwriter::{AnsiTTYWriter, MessageSeverity, ScreenWriter};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer};
@@ -21,6 +21,7 @@ pub struct App {
     input_buffer: Vec<u8>,
     input_filename: String,
     search_state: SearchState,
+    message: Option<(String, MessageSeverity)>,
 }
 
 pub const MAX_BUFFER_SIZE: usize = 9;
@@ -54,6 +55,7 @@ impl App {
             input_buffer: vec![],
             input_filename,
             search_state: SearchState::empty(),
+            message: None,
         })
     }
 
@@ -66,6 +68,7 @@ impl App {
             &self.input_buffer,
             &self.input_filename,
             &self.search_state,
+            &self.message,
         );
 
         for event in input {
@@ -143,12 +146,12 @@ impl App {
                         Key::Char('n') => {
                             let count = self.parse_input_buffer_as_number();
                             jumped_to_search_match = true;
-                            Some(self.jump_to_next_search_match(count))
+                            self.jump_to_next_search_match(count)
                         }
                         Key::Char('N') => {
                             let count = self.parse_input_buffer_as_number();
                             jumped_to_search_match = true;
-                            Some(self.jump_to_prev_search_match(count))
+                            self.jump_to_prev_search_match(count)
                         }
                         Key::Char('.') => {
                             let count = self.parse_input_buffer_as_number();
@@ -215,23 +218,55 @@ impl App {
                             let search_term = self.screen_writer.get_command("/").unwrap();
                             self.initialize_freeform_search(SearchDirection::Forward, search_term);
                             jumped_to_search_match = true;
-                            Some(self.jump_to_next_search_match(1))
+
+                            if !self.search_state.any_matches() {
+                                self.message = Some((
+                                    self.search_state.no_matches_message(),
+                                    MessageSeverity::Warn,
+                                ));
+                                None
+                            } else {
+                                self.jump_to_next_search_match(1)
+                            }
                         }
                         Key::Char('?') => {
                             let search_term = self.screen_writer.get_command("?").unwrap();
                             self.initialize_freeform_search(SearchDirection::Reverse, search_term);
                             jumped_to_search_match = true;
-                            Some(self.jump_to_next_search_match(1))
+
+                            if !self.search_state.any_matches() {
+                                self.message = Some((
+                                    self.search_state.no_matches_message(),
+                                    MessageSeverity::Warn,
+                                ));
+                                None
+                            } else {
+                                self.jump_to_next_search_match(1)
+                            }
                         }
                         Key::Char('*') => {
-                            self.initialize_object_key_search(SearchDirection::Forward);
-                            jumped_to_search_match = true;
-                            Some(self.jump_to_next_search_match(1))
+                            if self.initialize_object_key_search(SearchDirection::Forward) {
+                                jumped_to_search_match = true;
+                                self.jump_to_next_search_match(1)
+                            } else {
+                                self.message = Some((
+                                    "Must be focused on Object key to use '*'".to_string(),
+                                    MessageSeverity::Warn,
+                                ));
+                                None
+                            }
                         }
                         Key::Char('#') => {
-                            self.initialize_object_key_search(SearchDirection::Reverse);
-                            jumped_to_search_match = true;
-                            Some(self.jump_to_next_search_match(1))
+                            if self.initialize_object_key_search(SearchDirection::Reverse) {
+                                jumped_to_search_match = true;
+                                self.jump_to_next_search_match(1)
+                            } else {
+                                self.message = Some((
+                                    "Must be focused on Object key to use '#'".to_string(),
+                                    MessageSeverity::Warn,
+                                ));
+                                None
+                            }
                         }
                         _ => {
                             print!("{}Got: {:?}\r", BELL, event);
@@ -293,7 +328,9 @@ impl App {
                 &self.input_buffer,
                 &self.input_filename,
                 &self.search_state,
+                &self.message,
             );
+            self.message = None;
         }
     }
 
@@ -332,32 +369,55 @@ impl App {
             SearchState::initialize_search(search_term, &self.viewer.flatjson.1, direction);
     }
 
-    fn initialize_object_key_search(&mut self, direction: SearchDirection) {
+    fn initialize_object_key_search(&mut self, direction: SearchDirection) -> bool {
         if let Some(key_range) = &self.viewer.flatjson[self.viewer.focused_row].key_range {
             // Note key_range already includes quotes around key.
             let needle = format!("{}: ", &self.viewer.flatjson.1[key_range.clone()]);
             self.search_state =
                 SearchState::initialize_search(needle, &self.viewer.flatjson.1, direction);
+            true
         } else {
-            panic!("Handle object key search initialized not on object key");
+            false
         }
     }
 
-    fn jump_to_next_search_match(&mut self, _jumps: usize) -> Action {
+    fn jump_to_next_search_match(&mut self, _jumps: usize) -> Option<Action> {
+        if !self.search_state.ever_searched {
+            self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
+            return None;
+        } else if !self.search_state.any_matches() {
+            self.message = Some((
+                self.search_state.no_matches_message(),
+                MessageSeverity::Warn,
+            ));
+            return None;
+        }
+
         let destination = self.search_state.jump_to_match(
             self.viewer.focused_row,
             &self.viewer.flatjson,
             JumpDirection::Next,
         );
-        Action::MoveTo(destination)
+        Some(Action::MoveTo(destination))
     }
 
-    fn jump_to_prev_search_match(&mut self, _jumps: usize) -> Action {
+    fn jump_to_prev_search_match(&mut self, _jumps: usize) -> Option<Action> {
+        if !self.search_state.ever_searched {
+            self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
+            return None;
+        } else if !self.search_state.any_matches() {
+            self.message = Some((
+                self.search_state.no_matches_message(),
+                MessageSeverity::Warn,
+            ));
+            return None;
+        }
+
         let destination = self.search_state.jump_to_match(
             self.viewer.focused_row,
             &self.viewer.flatjson,
             JumpDirection::Prev,
         );
-        Action::MoveTo(destination)
+        Some(Action::MoveTo(destination))
     }
 }

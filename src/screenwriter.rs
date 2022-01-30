@@ -53,6 +53,22 @@ pub struct ScreenWriter {
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
 }
 
+pub enum MessageSeverity {
+    Info,
+    Warn,
+    Error,
+}
+
+impl MessageSeverity {
+    pub fn color(&self) -> Color {
+        match self {
+            MessageSeverity::Info => Color::White,
+            MessageSeverity::Warn => Color::Yellow,
+            MessageSeverity::Error => Color::Red,
+        }
+    }
+}
+
 const PATH_BASE: &'static str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
@@ -77,9 +93,10 @@ impl ScreenWriter {
         input_buffer: &[u8],
         input_filename: &str,
         search_state: &SearchState,
+        message: &Option<(String, MessageSeverity)>,
     ) {
         self.print_viewer(viewer, search_state);
-        self.print_status_bar(viewer, input_buffer, input_filename, search_state);
+        self.print_status_bar(viewer, input_buffer, input_filename, search_state, message);
     }
 
     pub fn print_viewer(&mut self, viewer: &JsonViewer, search_state: &SearchState) {
@@ -97,8 +114,15 @@ impl ScreenWriter {
         input_buffer: &[u8],
         input_filename: &str,
         search_state: &SearchState,
+        message: &Option<(String, MessageSeverity)>,
     ) {
-        match self.print_status_bar_impl(viewer, input_buffer, input_filename, search_state) {
+        match self.print_status_bar_impl(
+            viewer,
+            input_buffer,
+            input_filename,
+            search_state,
+            message,
+        ) {
             Ok(_) => {}
             Err(e) => {
                 eprintln!("Error while printing status bar: {}", e);
@@ -342,6 +366,7 @@ impl ScreenWriter {
         input_buffer: &[u8],
         input_filename: &str,
         search_state: &SearchState,
+        message: &Option<(String, MessageSeverity)>,
     ) -> std::io::Result<()> {
         self.tty_writer
             .position_cursor(1, self.dimensions.height - 1)?;
@@ -360,7 +385,10 @@ impl ScreenWriter {
         self.reset_style()?;
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
 
-        if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
+        if let Some((contents, severity)) = message {
+            self.tty_writer.set_fg_color(severity.color())?;
+            write!(self.tty_writer, "{}", contents)?;
+        } else if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
             self.tty_writer
                 .write_char(search_state.direction.prompt_char())?;
             write!(self.tty_writer, "{}", &search_state.search_term)?;

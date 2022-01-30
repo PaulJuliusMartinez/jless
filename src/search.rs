@@ -33,6 +33,7 @@ pub struct SearchState {
     matches: Vec<Range<usize>>,
 
     immediate_state: ImmediateSearchState,
+    pub ever_searched: bool,
 }
 
 pub enum ImmediateSearchState {
@@ -55,6 +56,7 @@ impl SearchState {
             compiled_regex: Regex::new("").unwrap(),
             matches: vec![],
             immediate_state: ImmediateSearchState::NotSearching,
+            ever_searched: false,
         }
     }
 
@@ -72,6 +74,7 @@ impl SearchState {
             compiled_regex: regex,
             matches,
             immediate_state: ImmediateSearchState::NotSearching,
+            ever_searched: true,
         }
     }
 
@@ -90,6 +93,14 @@ impl SearchState {
         self.matches.len()
     }
 
+    pub fn any_matches(&self) -> bool {
+        self.matches.len() > 0
+    }
+
+    pub fn no_matches_message(&self) -> String {
+        format!("Pattern not found: {}", self.search_term)
+    }
+
     pub fn set_no_longer_actively_searching(&mut self) {
         self.immediate_state = ImmediateSearchState::NotSearching;
     }
@@ -101,8 +112,7 @@ impl SearchState {
         jump_direction: JumpDirection,
     ) -> usize {
         if self.matches.is_empty() {
-            eprintln!("NEED TO HANDLE NO MATCHES");
-            return 0;
+            panic!("Shouldn't call jump_to_match if no matches");
         }
 
         let true_direction = self.true_direction(jump_direction);
