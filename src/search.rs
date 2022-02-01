@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::ops::Range;
 
-use regex::{Captures, Regex};
+use regex::{Captures, Regex, RegexBuilder};
 
 use crate::flatjson::{FlatJson, Index};
 
@@ -54,6 +54,10 @@ lazy_static::lazy_static! {
     static ref SQUARE_AND_CURLY_BRACKETS: Regex = Regex::new(r"(\\\[|\[|\\\]|\]|\\\{|\{|\\\}|\})").unwrap();
 }
 
+lazy_static::lazy_static! {
+    static ref UPPER_CASE: Regex = Regex::new("[[:upper:]]").unwrap();
+}
+
 impl SearchState {
     pub fn empty() -> SearchState {
         SearchState {
@@ -64,6 +68,28 @@ impl SearchState {
             immediate_state: ImmediateSearchState::NotSearching,
             ever_searched: false,
         }
+    }
+
+    fn extract_search_term_and_case_sensitivity(search_input: &str) -> (&str, bool) {
+        let regex_input;
+        let mut case_sensitive_specified = false;
+
+        if search_input.ends_with("/") {
+            regex_input = &search_input[..search_input.len() - 1];
+        } else if search_input.ends_with("/s") {
+            regex_input = &search_input[..search_input.len() - 2];
+            case_sensitive_specified = true;
+        } else {
+            regex_input = search_input;
+        }
+
+        let case_sensitive = if case_sensitive_specified {
+            true
+        } else {
+            UPPER_CASE.is_match(regex_input)
+        };
+
+        (regex_input, case_sensitive)
     }
 
     fn invert_square_and_curly_bracket_escaping(regex: &str) -> Cow<str> {
@@ -81,21 +107,31 @@ impl SearchState {
     }
 
     pub fn initialize_search(
-        needle: String,
+        search_input: String,
         haystack: &str,
         direction: SearchDirection,
     ) -> Result<SearchState, String> {
+        let (regex_input, case_sensitive) =
+            Self::extract_search_term_and_case_sensitivity(&search_input);
+
+        if regex_input.is_empty() {
+            return Ok(Self::empty());
+        }
+
         // The default Display implementation for these errors spills
         // onto multiple lines.
-        let inverted = Self::invert_square_and_curly_bracket_escaping(&needle);
+        let inverted = Self::invert_square_and_curly_bracket_escaping(&regex_input);
 
-        let regex = Regex::new(&inverted).map_err(|e| format!("{}", e).replace("\n", " "))?;
+        let regex = RegexBuilder::new(&inverted)
+            .case_insensitive(!case_sensitive)
+            .build()
+            .map_err(|e| format!("{}", e).replace("\n", " "))?;
 
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 
         Ok(SearchState {
             direction,
-            search_term: needle,
+            search_term: regex_input.to_owned(),
             compiled_regex: regex,
             matches,
             immediate_state: ImmediateSearchState::NotSearching,
@@ -349,6 +385,24 @@ mod tests {
     }"#;
 
     #[test]
+    fn test_extract_search_term_and_case_sensitivity() {
+        let tests = vec![
+            ("abc", ("abc", false)),
+            ("Abc", ("Abc", true)),
+            ("abc/", ("abc", false)),
+            ("abc/s", ("abc", true)),
+            ("abc/s/", ("abc/s", false)),
+        ];
+
+        for (input, search_term_and_case_sensitivity) in tests.into_iter() {
+            assert_eq!(
+                search_term_and_case_sensitivity,
+                SearchState::extract_search_term_and_case_sensitivity(input),
+            );
+        }
+    }
+
+    #[test]
     fn test_invert_square_and_curly_bracket_escaping() {
         let tests = vec![
             ("[]", "\\[\\]"),
@@ -361,7 +415,7 @@ mod tests {
         for (before, after) in tests.into_iter() {
             assert_eq!(
                 after,
-                SearchState::invert_square_and_curly_bracket_escaping(before)
+                SearchState::invert_square_and_curly_bracket_escaping(before),
             );
         }
     }
