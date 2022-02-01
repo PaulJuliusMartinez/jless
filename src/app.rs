@@ -216,38 +216,54 @@ impl App {
                         }
                         Key::Char('/') => {
                             let search_term = self.screen_writer.get_command("/").unwrap();
-                            if self.initialize_search(SearchDirection::Forward, search_term) {
-                                jumped_to_search_match = true;
 
-                                if !self.search_state.any_matches() {
-                                    self.message = Some((
-                                        self.search_state.no_matches_message(),
-                                        MessageSeverity::Warn,
-                                    ));
-                                    None
-                                } else {
-                                    self.jump_to_next_search_match(1)
-                                }
+                            // In vim, /<CR> is a longcut for repeating the previous search.
+                            if search_term == "" {
+                                let count = self.parse_input_buffer_as_number();
+                                jumped_to_search_match = true;
+                                self.jump_to_next_search_match(count)
                             } else {
-                                None
+                                if self.initialize_search(SearchDirection::Forward, search_term) {
+                                    jumped_to_search_match = true;
+
+                                    if !self.search_state.any_matches() {
+                                        self.message = Some((
+                                            self.search_state.no_matches_message(),
+                                            MessageSeverity::Warn,
+                                        ));
+                                        None
+                                    } else {
+                                        self.jump_to_next_search_match(1)
+                                    }
+                                } else {
+                                    None
+                                }
                             }
                         }
                         Key::Char('?') => {
                             let search_term = self.screen_writer.get_command("?").unwrap();
-                            if self.initialize_search(SearchDirection::Reverse, search_term) {
-                                jumped_to_search_match = true;
 
-                                if !self.search_state.any_matches() {
-                                    self.message = Some((
-                                        self.search_state.no_matches_message(),
-                                        MessageSeverity::Warn,
-                                    ));
-                                    None
-                                } else {
-                                    self.jump_to_next_search_match(1)
-                                }
+                            // In vim, /<CR> is a longcut for repeating the previous search.
+                            if search_term == "" {
+                                let count = self.parse_input_buffer_as_number();
+                                jumped_to_search_match = true;
+                                self.jump_to_prev_search_match(count)
                             } else {
-                                None
+                                if self.initialize_search(SearchDirection::Reverse, search_term) {
+                                    jumped_to_search_match = true;
+
+                                    if !self.search_state.any_matches() {
+                                        self.message = Some((
+                                            self.search_state.no_matches_message(),
+                                            MessageSeverity::Warn,
+                                        ));
+                                        None
+                                    } else {
+                                        self.jump_to_next_search_match(1)
+                                    }
+                                } else {
+                                    None
+                                }
                             }
                         }
                         Key::Char('*') => {
