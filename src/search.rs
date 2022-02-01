@@ -64,18 +64,21 @@ impl SearchState {
         needle: String,
         haystack: &str,
         direction: SearchDirection,
-    ) -> SearchState {
-        let regex = Regex::new(&needle).unwrap();
+    ) -> Result<SearchState, String> {
+        // The default Display implementation for these errors spills
+        // onto multiple lines.
+        let regex = Regex::new(&needle).map_err(|e| format!("{}", e).replace("\n", " "))?;
+
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 
-        SearchState {
+        Ok(SearchState {
             direction,
             search_term: needle,
             compiled_regex: regex,
             matches,
             immediate_state: ImmediateSearchState::NotSearching,
             ever_searched: true,
-        }
+        })
     }
 
     pub fn active_search_state(&self) -> Option<(usize, bool)> {

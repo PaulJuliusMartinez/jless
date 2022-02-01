@@ -216,32 +216,38 @@ impl App {
                         }
                         Key::Char('/') => {
                             let search_term = self.screen_writer.get_command("/").unwrap();
-                            self.initialize_freeform_search(SearchDirection::Forward, search_term);
-                            jumped_to_search_match = true;
+                            if self.initialize_search(SearchDirection::Forward, search_term) {
+                                jumped_to_search_match = true;
 
-                            if !self.search_state.any_matches() {
-                                self.message = Some((
-                                    self.search_state.no_matches_message(),
-                                    MessageSeverity::Warn,
-                                ));
-                                None
+                                if !self.search_state.any_matches() {
+                                    self.message = Some((
+                                        self.search_state.no_matches_message(),
+                                        MessageSeverity::Warn,
+                                    ));
+                                    None
+                                } else {
+                                    self.jump_to_next_search_match(1)
+                                }
                             } else {
-                                self.jump_to_next_search_match(1)
+                                None
                             }
                         }
                         Key::Char('?') => {
                             let search_term = self.screen_writer.get_command("?").unwrap();
-                            self.initialize_freeform_search(SearchDirection::Reverse, search_term);
-                            jumped_to_search_match = true;
+                            if self.initialize_search(SearchDirection::Reverse, search_term) {
+                                jumped_to_search_match = true;
 
-                            if !self.search_state.any_matches() {
-                                self.message = Some((
-                                    self.search_state.no_matches_message(),
-                                    MessageSeverity::Warn,
-                                ));
-                                None
+                                if !self.search_state.any_matches() {
+                                    self.message = Some((
+                                        self.search_state.no_matches_message(),
+                                        MessageSeverity::Warn,
+                                    ));
+                                    None
+                                } else {
+                                    self.jump_to_next_search_match(1)
+                                }
                             } else {
-                                self.jump_to_next_search_match(1)
+                                None
                             }
                         }
                         Key::Char('*') => {
@@ -364,18 +370,24 @@ impl App {
         n.unwrap_or(1)
     }
 
-    fn initialize_freeform_search(&mut self, direction: SearchDirection, search_term: String) {
-        self.search_state =
-            SearchState::initialize_search(search_term, &self.viewer.flatjson.1, direction);
+    fn initialize_search(&mut self, direction: SearchDirection, search_term: String) -> bool {
+        match SearchState::initialize_search(search_term, &self.viewer.flatjson.1, direction) {
+            Ok(ss) => {
+                self.search_state = ss;
+                true
+            }
+            Err(err_message) => {
+                self.message = Some((err_message, MessageSeverity::Error));
+                false
+            }
+        }
     }
 
     fn initialize_object_key_search(&mut self, direction: SearchDirection) -> bool {
         if let Some(key_range) = &self.viewer.flatjson[self.viewer.focused_row].key_range {
             // Note key_range already includes quotes around key.
-            let needle = format!("{}: ", &self.viewer.flatjson.1[key_range.clone()]);
-            self.search_state =
-                SearchState::initialize_search(needle, &self.viewer.flatjson.1, direction);
-            true
+            let object_key = format!("{}: ", &self.viewer.flatjson.1[key_range.clone()]);
+            self.initialize_search(direction, object_key)
         } else {
             false
         }
