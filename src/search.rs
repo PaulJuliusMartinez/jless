@@ -1,5 +1,7 @@
-use regex::Regex;
+use std::borrow::Cow;
 use std::ops::Range;
+
+use regex::{Captures, Regex};
 
 use crate::flatjson::{FlatJson, Index};
 
@@ -48,6 +50,10 @@ pub enum ImmediateSearchState {
 pub type MatchRangeIter<'a> = std::slice::Iter<'a, Range<usize>>;
 const STATIC_EMPTY_SLICE: &'static [Range<usize>] = &[];
 
+lazy_static::lazy_static! {
+    static ref SQUARE_AND_CURLY_BRACKETS: Regex = Regex::new(r"(\\\[|\[|\\\]|\]|\\\{|\{|\\\}|\})").unwrap();
+}
+
 impl SearchState {
     pub fn empty() -> SearchState {
         SearchState {
@@ -60,6 +66,20 @@ impl SearchState {
         }
     }
 
+    fn invert_square_and_curly_bracket_escaping(regex: &str) -> Cow<str> {
+        SQUARE_AND_CURLY_BRACKETS.replace_all(regex, |caps: &Captures| match &caps[0] {
+            "\\[" => "[".to_owned(),
+            "[" => "\\[".to_owned(),
+            "\\]" => "]".to_owned(),
+            "]" => "\\]".to_owned(),
+            "\\{" => "{".to_owned(),
+            "{" => "\\{".to_owned(),
+            "\\}" => "}".to_owned(),
+            "}" => "\\}".to_owned(),
+            _ => unreachable!(),
+        })
+    }
+
     pub fn initialize_search(
         needle: String,
         haystack: &str,
@@ -67,7 +87,9 @@ impl SearchState {
     ) -> Result<SearchState, String> {
         // The default Display implementation for these errors spills
         // onto multiple lines.
-        let regex = Regex::new(&needle).map_err(|e| format!("{}", e).replace("\n", " "))?;
+        let inverted = Self::invert_square_and_curly_bracket_escaping(&needle);
+
+        let regex = Regex::new(&inverted).map_err(|e| format!("{}", e).replace("\n", " "))?;
 
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 
@@ -327,9 +349,27 @@ mod tests {
     }"#;
 
     #[test]
+    fn test_invert_square_and_curly_bracket_escaping() {
+        let tests = vec![
+            ("[]", "\\[\\]"),
+            ("{}", "\\{\\}"),
+            ("\\[abc\\]", "[abc]"),
+            ("\\{1,3\\}", "{1,3}"),
+            ("\\[[]\\]", "[\\[\\]]"),
+        ];
+
+        for (before, after) in tests.into_iter() {
+            assert_eq!(
+                after,
+                SearchState::invert_square_and_curly_bracket_escaping(before)
+            );
+        }
+    }
+
+    #[test]
     fn test_basic_search_forward() {
         let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Forward);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Forward).unwrap();
         assert_eq!(search.jump_to_match(0, &fj, Next), 1);
         assert_eq!(search.jump_to_match(1, &fj, Next), 4);
         assert_eq!(search.jump_to_match(4, &fj, Next), 7);
@@ -349,7 +389,7 @@ mod tests {
     #[test]
     fn test_basic_search_backwards() {
         let fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Reverse);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Reverse).unwrap();
         assert_eq!(search.jump_to_match(0, &fj, Next), 7);
         assert_wrapped_state(&search, true);
         assert_eq!(search.jump_to_match(7, &fj, Next), 7);
@@ -368,7 +408,7 @@ mod tests {
     #[test]
     fn test_search_collapsed_forward() {
         let mut fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Forward);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Forward).unwrap();
         fj.collapse(6);
         assert_eq!(search.jump_to_match(0, &fj, Next), 1);
         assert_eq!(search.jump_to_match(1, &fj, Next), 4);
@@ -383,7 +423,7 @@ mod tests {
     #[test]
     fn test_search_collapsed_backwards() {
         let mut fj = parse_top_level_json2(SEARCHABLE.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Reverse);
+        let mut search = SearchState::initialize_search("aaa".to_owned(), &fj.1, Reverse).unwrap();
         fj.collapse(6);
         assert_eq!(search.jump_to_match(0, &fj, Next), 6);
         assert_eq!(search.jump_to_match(6, &fj, Next), 4);
@@ -404,7 +444,7 @@ mod tests {
             "key": "term"
         }"#;
         let mut fj = parse_top_level_json2(TEST.to_owned()).unwrap();
-        let mut search = SearchState::initialize_search("term".to_owned(), &fj.1, Forward);
+        let mut search = SearchState::initialize_search("term".to_owned(), &fj.1, Forward).unwrap();
         fj.collapse(1);
         assert_eq!(search.jump_to_match(0, &fj, Next), 1);
         assert_wrapped_state(&search, false);
