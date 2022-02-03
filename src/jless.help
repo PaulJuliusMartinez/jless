@@ -1,0 +1,165 @@
+
+                          jless - a terminal JSON viewer
+
+                            SUMMARY OF JLESS COMMANDS
+
+       Commands marked with * may be preceded by a number, N, which will
+       repeatedly perform a command the given number of times. A key
+       preceded by a caret indicates the Ctrl key; thus ^E is ctrl-E.
+
+  q  ^c            Exit jless.
+
+  F1 :help         Show this help screen.
+
+                                    MOVING
+
+  j  DownArrow  *  Move focus down one line (or N lines).
+  ^n Enter Space
+
+  k  UpArrow    *  Move focus up   one line (or N lines).
+  ^p Backspace
+
+  h  LeftArrow     When focused on an expanded object or array, collapse the
+                   object or array. Otherwise, move focus to the parent of
+                   the focused node.
+
+  H                Focus the parent of the focused node, even if it is an
+                   expanded object or array.
+
+  l  RightArrow    When focused on a collapsed object or array, expand the
+                   object or array. When focused on an expanded object or
+                   array, move focus to the first child. When focused on
+                   non-container values, does nothing.
+
+  J         *  Move to the focused node's next     sibling 1 or N times.
+  K         *  Move to the focused node's previous sibling 1 or N times.
+
+  w         *  Move forward   until the next change in depth 1 or N times.
+  b         *  Move backwards until the next change in depth 1 or N times.
+
+  PageDown  *  Move down by one window (or N windows).
+  PageUp    *  Move up   by one window (or N windows).
+
+  0  ^         Move to the first sibling of the focused node's parent.
+  $            Move to the last  sibling of the focused node's parent.
+
+  g            Focus the first line in the input.
+  G            Focus the last  line in the input.
+
+  c            Collapse the focused node and all its siblings.
+  e            Expand   the focused node and all its siblings.
+
+                                    SCROLLING
+
+  ^e        *  Scroll down one line (or N lines).
+  ^y        *  Scroll up   one line (or N lines).
+
+  zz           Move the focused node to the center of the screen.
+  zt           Move the focused node to the top of the screen.
+  zb           Move the focused node to the bottom of the screen.
+
+  .         *  Scroll a truncated value one char to the right (or N chars).
+  ,         *  Scroll a truncated value one char to the left  (or N chars).
+  ;            Scroll a truncated value all the way to the end, or, if
+               already at the end, back to the start.
+
+  <            Decrease the indentation of every line by one (or N) tabs.
+  >            Increase the indentation of every line by one (or N) tabs.
+
+                                     SEARCH
+
+      jless supports full-text search over the input JSON.
+
+  /pattern     Search forward   for the given pattern
+  ?pattern     Search backwards for the given pattern
+
+  *         *  Move to the next occurrence of the object key on the focused
+               line (or move forward N occurrences)
+  #         *  Move to the previous occurrence of the object key on the
+               focused line (or move backwards N occurrences)
+
+  n         *  Move in the search direction to the next match (or forward
+               N matches).
+  N         *  Move in the opposite of the search direction to the previous match
+                   (or previous N matches).
+
+      Searching uses "smart case" by default. If the input pattern doesn't
+      contain any capital letters, a case insensitive search will be
+      performed. If there are any capital letters, it will be case sensitive.
+      You can force a case-sensitive search by appending '/s' to your query.
+
+      A trailing slash will be removed from a pattern; to search for a pattern
+      ending in '/' (or '/s'), just add another '/' to the end.
+
+      The search pattern are interpreted as mostly standard regular
+      expressions, with one exception. Because JSON data occurs many square
+      and curly brackets ("[]{}"), these characters do *not* take on their
+      usual meanings (specifying characters classes and repetition counts
+      respectively) and are instead interpreted literally.
+
+      To use character classes or repetition counts, escape these characters
+      with a backslash.
+
+      Some examples:
+
+        /[1, 2, 3]      matches an array: [1, 2, 3]
+        /\[bch\]at      matches "bat", "cat" or "hat"
+        /{}             matches an empty object
+        /(ha)\{2,3}     matches "haha" or "hahaha"
+
+      For exhaustive documentation of the supported regular expression syntax,
+      see the following documentation of the underlying regex engine:
+
+        https://docs.rs/regex/latest/regex/index.html#syntax
+
+                                  SEARCH INPUT
+
+      The search is *not* performed over the original input, but over a
+      single-line pretty formatted version of the input JSON. Consider the
+      following two ways to format an equivalent JSON blob:
+
+        {"a":1,"b":true,"c":[null,{},[],"hello"]}
+
+        {
+          "a": 1,
+          "b": true,
+          "c": [
+            null,
+            {},
+            [],
+          "hello"
+          ]
+        }
+
+      jless will create an internal representation formatted as follows:
+
+        { "a": 1, "b": true, "c": [null, {}, [], "hello"] }
+
+      (No spaces inside empty objects or arrays, one space inside objects
+      with values, no spaces inside array square brackets, no space between
+      an object key and ':', one space after the ':', and one space after
+      commas separating object entries and array elements.)
+
+      Searching will performed over this internal representation so that
+      patterns can include multiple elements without worrying about newlines
+      or the exact input format.
+
+      When the input is newline-delimited JSON, an actual newline will
+      separate each top-level JSON element in the internal representation.
+
+                             DATA MODE VS LINE MODE
+
+  jless starts in "data" mode, which displays the JSON data in a more
+  streamlined fashion: no closing delimiters for objects or arrays, no
+  trailing commas, no quotes around object keys that are valid identifiers
+  in JavaScript. It also shows single-line previous of objects and arrays,
+  and array indexes before array elements. Note that when using full-text
+  search, object keys will still be surrounded by quotes.
+
+  By pressing 'm', you can switch jless to "line" mode, which displays
+  the input as pretty printed JSON.
+
+  In line mode you can press '%' when focused on a open or close delimiter
+  of an object or array to jump to its matching pair.
+
+
