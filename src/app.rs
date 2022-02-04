@@ -481,7 +481,7 @@ impl App {
 
     fn show_help(&mut self) {
         let _ = write!(self.screen_writer.tty_writer.stdout, "{}", ToMainScreen);
-        let child = std::process::Command::new("qless")
+        let child = std::process::Command::new("less")
             .arg("-r")
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::inherit())
