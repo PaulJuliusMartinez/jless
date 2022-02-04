@@ -299,6 +299,7 @@ impl ScreenWriter {
             mode: viewer.mode,
             terminal: &mut terminal,
 
+            node_depth: row.depth,
             depth,
             width: self.dimensions.width as usize,
             tab_size: 2,

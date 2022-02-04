@@ -196,7 +196,7 @@ pub struct LinePrinter<'a, 'b, 'c> {
     pub mode: Mode,
     pub terminal: &'c mut dyn Terminal,
 
-    // Do I need these?
+    pub node_depth: usize,
     pub depth: usize,
     pub width: usize,
 
@@ -271,7 +271,14 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 debug_assert!(row.is_opening_of_container());
                 row.is_collapsed()
             }
-            _ => return Ok(()),
+            _ => {
+                // Print a focused indicator for top-level primitives.
+                if self.focused && self.node_depth == 0 {
+                    self.terminal.position_cursor_col(0)?;
+                    write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
+                }
+                return Ok(());
+            }
         };
 
         // Make sure there's enough room for the indicator
@@ -1044,6 +1051,7 @@ mod tests {
         LinePrinter {
             mode: Mode::Data,
             terminal,
+            node_depth: 0,
             depth: 0,
             width: 100,
             tab_size: 2,
