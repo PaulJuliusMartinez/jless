@@ -179,16 +179,6 @@ impl ScreenWriter {
         self.tty_writer.position_cursor(1, self.dimensions.height)?;
         self.tty_writer.clear_line()?;
 
-        match &result {
-            Ok(line) => {
-                write!(self.tty_writer, "Executed command: {}", line)?;
-            }
-            Err(err) => {
-                write!(self.tty_writer, "Command error: {:?}", err)?;
-            }
-        }
-
-        self.tty_writer.flush()?;
         result
     }
 

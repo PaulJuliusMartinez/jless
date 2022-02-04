@@ -5,6 +5,7 @@ use rustyline::Editor;
 use termion::event::Key;
 use termion::event::MouseButton::{Left, WheelDown, WheelUp};
 use termion::event::MouseEvent::Press;
+use termion::screen::{ToAlternateScreen, ToMainScreen};
 
 use crate::flatjson;
 use crate::input::TuiEvent;
@@ -22,6 +23,12 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+}
+
+enum Command {
+    Quit,
+    Help,
+    Unknown,
 }
 
 pub const MAX_BUFFER_SIZE: usize = 9;
@@ -209,9 +216,19 @@ impl App {
                             None
                         }
                         Key::Char(':') => {
-                            let _readline = self.screen_writer.get_command(":");
-                            // Something like this?
-                            // Some(Action::Command(parse_command(_readline))
+                            if let Ok(command) = self.screen_writer.get_command(":") {
+                                match Self::parse_command(&command) {
+                                    Command::Quit => break,
+                                    Command::Help => self.show_help(),
+                                    Command::Unknown => {
+                                        self.message = Some((
+                                            format!("Unknown command: {}", command),
+                                            MessageSeverity::Info,
+                                        ));
+                                    }
+                                }
+                            }
+
                             None
                         }
                         Key::Char('/') => {
@@ -447,5 +464,27 @@ impl App {
             JumpDirection::Prev,
         );
         Some(Action::MoveTo(destination))
+    }
+
+    fn parse_command(command: &str) -> Command {
+        match command {
+            "h" | "he" | "hel" | "help" => Command::Help,
+            "q" | "qu" | "qui" | "quit" | "quit()" | "exit" | "exit()" => Command::Quit,
+            _ => Command::Unknown,
+        }
+    }
+
+    fn show_help(&mut self) {
+        let _ = write!(self.screen_writer.tty_writer.stdout, "{}", ToMainScreen);
+        let _ = std::process::Command::new("less")
+            .arg("src/jless.help")
+            .stdin(std::process::Stdio::inherit())
+            .stdout(std::process::Stdio::inherit())
+            .output();
+        let _ = write!(
+            self.screen_writer.tty_writer.stdout,
+            "{}",
+            ToAlternateScreen
+        );
     }
 }
