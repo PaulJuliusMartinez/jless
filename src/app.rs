@@ -429,7 +429,7 @@ impl App {
         }
     }
 
-    fn jump_to_next_search_match(&mut self, _jumps: usize) -> Option<Action> {
+    fn jump_to_next_search_match(&mut self, jumps: usize) -> Option<Action> {
         if !self.search_state.ever_searched {
             self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
             return None;
@@ -445,11 +445,12 @@ impl App {
             self.viewer.focused_row,
             &self.viewer.flatjson,
             JumpDirection::Next,
+            jumps,
         );
         Some(Action::MoveTo(destination))
     }
 
-    fn jump_to_prev_search_match(&mut self, _jumps: usize) -> Option<Action> {
+    fn jump_to_prev_search_match(&mut self, jumps: usize) -> Option<Action> {
         if !self.search_state.ever_searched {
             self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
             return None;
@@ -465,6 +466,7 @@ impl App {
             self.viewer.focused_row,
             &self.viewer.flatjson,
             JumpDirection::Prev,
+            jumps,
         );
         Some(Action::MoveTo(destination))
     }
@@ -491,7 +493,7 @@ impl App {
                     let _ = stdin.write(HELP.as_bytes());
                     let _ = stdin.flush();
                 }
-                let _ = dbg!(child.wait());
+                let _ = child.wait();
             }
             Err(err) => {
                 self.message = Some((
