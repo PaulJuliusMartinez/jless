@@ -31,6 +31,9 @@ enum Command {
     Unknown,
 }
 
+// Help contents that we pipe to less.
+const HELP: &'static str = std::include_str!("./jless.help");
+
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &'static str = "\x07";
 
@@ -476,11 +479,28 @@ impl App {
 
     fn show_help(&mut self) {
         let _ = write!(self.screen_writer.tty_writer.stdout, "{}", ToMainScreen);
-        let _ = std::process::Command::new("less")
-            .arg("src/jless.help")
-            .stdin(std::process::Stdio::inherit())
+        let child = std::process::Command::new("qless")
+            .arg("-r")
+            .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::inherit())
-            .output();
+            .spawn();
+
+        match child {
+            Ok(mut child) => {
+                if let Some(ref mut stdin) = child.stdin {
+                    let _ = stdin.write(HELP.as_bytes());
+                    let _ = stdin.flush();
+                }
+                let _ = dbg!(child.wait());
+            }
+            Err(err) => {
+                self.message = Some((
+                    format!("Error piping help documentation to less: {}", err),
+                    MessageSeverity::Error,
+                ));
+            }
+        }
+
         let _ = write!(
             self.screen_writer.tty_writer.stdout,
             "{}",

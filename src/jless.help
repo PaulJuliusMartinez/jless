@@ -1,9 +1,9 @@
+[0m
+                         jless - a terminal JSON viewer
 
-                          jless - a terminal JSON viewer
+                            [1mSUMMARY OF JLESS COMMANDS[0m
 
-                            SUMMARY OF JLESS COMMANDS
-
-       Commands marked with * may be preceded by a number, N, which will
+       Commands marked with * may be preceded by a number, [4mN[0m, which will
        repeatedly perform a command the given number of times. A key
        preceded by a caret indicates the Ctrl key; thus ^E is ctrl-E.
 
@@ -11,34 +11,34 @@
 
   F1 :help         Show this help screen.
 
-                                    MOVING
+                                    [1mMOVING[0m
 
-  j  DownArrow  *  Move focus down one line (or N lines).
+  j  DownArrow  *  Move focus down one line (or [4mN[0m lines).
   ^n Enter Space
 
-  k  UpArrow    *  Move focus up   one line (or N lines).
+  k  UpArrow    *  Move focus up   one line (or [4mN[0m lines).
   ^p Backspace
 
   h  LeftArrow     When focused on an expanded object or array, collapse the
-                   object or array. Otherwise, move focus to the parent of
-                   the focused node.
+                     object or array. Otherwise, move focus to the parent of
+                     the focused node.
 
   H                Focus the parent of the focused node, even if it is an
-                   expanded object or array.
+                     expanded object or array.
 
   l  RightArrow    When focused on a collapsed object or array, expand the
-                   object or array. When focused on an expanded object or
-                   array, move focus to the first child. When focused on
-                   non-container values, does nothing.
+                     object or array. When focused on an expanded object or
+                     array, move focus to the first child. When focused on
+                     non-container values, does nothing.
 
-  J         *  Move to the focused node's next     sibling 1 or N times.
-  K         *  Move to the focused node's previous sibling 1 or N times.
+  J         *  Move to the focused node's next     sibling 1 or [4mN[0m times.
+  K         *  Move to the focused node's previous sibling 1 or [4mN[0m times.
 
-  w         *  Move forward   until the next change in depth 1 or N times.
-  b         *  Move backwards until the next change in depth 1 or N times.
+  w         *  Move forward   until the next change in depth 1 or [4mN[0m times.
+  b         *  Move backwards until the next change in depth 1 or [4mN[0m times.
 
-  PageDown  *  Move down by one window (or N windows).
-  PageUp    *  Move up   by one window (or N windows).
+  PageDown  *  Move down by one window (or [4mN[0m windows).
+  PageUp    *  Move up   by one window (or [4mN[0m windows).
 
   0  ^         Move to the first sibling of the focused node's parent.
   $            Move to the last  sibling of the focused node's parent.
@@ -49,24 +49,24 @@
   c            Collapse the focused node and all its siblings.
   e            Expand   the focused node and all its siblings.
 
-                                    SCROLLING
+                                    [1mSCROLLING[0m
 
-  ^e        *  Scroll down one line (or N lines).
-  ^y        *  Scroll up   one line (or N lines).
+  ^e        *  Scroll down one line (or [4mN[0m lines).
+  ^y        *  Scroll up   one line (or [4mN[0m lines).
 
   zz           Move the focused node to the center of the screen.
   zt           Move the focused node to the top of the screen.
   zb           Move the focused node to the bottom of the screen.
 
-  .         *  Scroll a truncated value one char to the right (or N chars).
-  ,         *  Scroll a truncated value one char to the left  (or N chars).
+  .         *  Scroll a truncated value one char to the right (or [4mN[0m chars).
+  ,         *  Scroll a truncated value one char to the left  (or [4mN[0m chars).
   ;            Scroll a truncated value all the way to the end, or, if
-               already at the end, back to the start.
+                 already at the end, back to the start.
 
-  <            Decrease the indentation of every line by one (or N) tabs.
-  >            Increase the indentation of every line by one (or N) tabs.
+  <            Decrease the indentation of every line by one (or [4mN[0m) tabs.
+  >            Increase the indentation of every line by one (or [4mN[0m) tabs.
 
-                                     SEARCH
+                                     [1mSEARCH[0m
 
       jless supports full-text search over the input JSON.
 
@@ -74,22 +74,22 @@
   ?pattern     Search backwards for the given pattern
 
   *         *  Move to the next occurrence of the object key on the focused
-               line (or move forward N occurrences)
+                 line (or move forward [4mN[0m occurrences)
   #         *  Move to the previous occurrence of the object key on the
-               focused line (or move backwards N occurrences)
+                 focused line (or move backwards [4mN[0m occurrences)
 
   n         *  Move in the search direction to the next match (or forward
-               N matches).
+                 [4mN[0m matches).
   N         *  Move in the opposite of the search direction to the previous match
-                   (or previous N matches).
+                 (or previous [4mN[0m matches).
 
       Searching uses "smart case" by default. If the input pattern doesn't
       contain any capital letters, a case insensitive search will be
       performed. If there are any capital letters, it will be case sensitive.
       You can force a case-sensitive search by appending '/s' to your query.
 
-      A trailing slash will be removed from a pattern; to search for a pattern
-      ending in '/' (or '/s'), just add another '/' to the end.
+      A trailing slash will be removed from a pattern; to search for a
+      pattern ending in '/' (or '/s'), just add another '/' to the end.
 
       The search pattern are interpreted as mostly standard regular
       expressions, with one exception. Because JSON data occurs many square
@@ -112,7 +112,7 @@
 
         https://docs.rs/regex/latest/regex/index.html#syntax
 
-                                  SEARCH INPUT
+                                  [1mSEARCH INPUT[0m
 
       The search is *not* performed over the original input, but over a
       single-line pretty formatted version of the input JSON. Consider the
@@ -141,25 +141,26 @@
       commas separating object entries and array elements.)
 
       Searching will performed over this internal representation so that
-      patterns can include multiple elements without worrying about newlines
-      or the exact input format.
+      patterns can include multiple elements without worrying about
+      newlines or the exact input format.
 
       When the input is newline-delimited JSON, an actual newline will
       separate each top-level JSON element in the internal representation.
 
-                             DATA MODE VS LINE MODE
+                             [1mDATA MODE VS LINE MODE[0m
 
-  jless starts in "data" mode, which displays the JSON data in a more
-  streamlined fashion: no closing delimiters for objects or arrays, no
-  trailing commas, no quotes around object keys that are valid identifiers
-  in JavaScript. It also shows single-line previous of objects and arrays,
-  and array indexes before array elements. Note that when using full-text
-  search, object keys will still be surrounded by quotes.
+      jless starts in "data" mode, which displays the JSON data in a more
+      streamlined fashion: no closing delimiters for objects or arrays,
+      no trailing commas, no quotes around object keys that are valid
+      identifiers in JavaScript. It also shows single-line previous of
+      objects and arrays, and array indexes before array elements. Note
+      that when using full-text search, object keys will still be
+      surrounded by quotes.
 
-  By pressing 'm', you can switch jless to "line" mode, which displays
-  the input as pretty printed JSON.
+      By pressing 'm', you can switch jless to "line" mode, which displays
+      the input as pretty printed JSON.
 
-  In line mode you can press '%' when focused on a open or close delimiter
-  of an object or array to jump to its matching pair.
+      In line mode you can press '%' when focused on a open or close
+      delimiter of an object or array to jump to its matching pair.
 
 
