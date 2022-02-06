@@ -1,3 +1,5 @@
+extern crate lazy_static;
+
 use std::fs::File;
 use std::io;
 use std::io::Read;
@@ -9,9 +11,23 @@ use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
-use jless::app::App;
-use jless::input;
-use jless::options::Opt;
+mod app;
+mod flatjson;
+mod highlighting;
+mod input;
+mod jsonparser;
+mod jsontokenizer;
+mod lineprinter;
+mod options;
+mod screenwriter;
+mod search;
+mod terminal;
+mod truncatedstrview;
+mod types;
+mod viewer;
+
+use app::App;
+use options::Opt;
 
 fn main() {
     let opt = Opt::from_args();
@@ -44,7 +60,7 @@ fn main() {
 }
 
 fn print_pretty_printed_json(json: String) {
-    let flatjson = match jless::flatjson::parse_top_level_json2(json) {
+    let flatjson = match flatjson::parse_top_level_json2(json) {
         Ok(flatjson) => flatjson,
         Err(err) => {
             eprintln!("Unable to parse input: {:?}", err);
