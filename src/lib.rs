@@ -10,6 +10,5 @@ pub mod screenwriter;
 pub mod search;
 pub mod terminal;
 pub mod truncatedstrview;
-pub mod tuicontrol;
 pub mod types;
 pub mod viewer;
