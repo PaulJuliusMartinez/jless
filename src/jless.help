@@ -43,8 +43,8 @@
   0  ^         Move to the first sibling of the focused node's parent.
   $            Move to the last  sibling of the focused node's parent.
 
-  g            Focus the first line in the input.
-  G            Focus the last  line in the input.
+  g  Home      Focus the first line in the input.
+  G  End       Focus the last  line in the input.
 
   c            Collapse the focused node and all its siblings.
   e            Expand   the focused node and all its siblings.
