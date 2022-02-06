@@ -51,8 +51,9 @@ impl Default for Style {
 
 pub trait Terminal: Write {
     fn clear_screen(&mut self) -> Result;
+    fn clear_line(&mut self) -> Result;
 
-    fn position_cursor(&mut self, row: u16, col: u16) -> Result;
+    fn position_cursor(&mut self, col: u16, row: u16) -> Result;
     fn position_cursor_col(&mut self, col: u16) -> Result;
 
     fn set_style(&mut self, style: &Style) -> Result;
@@ -81,6 +82,13 @@ impl AnsiTerminal {
             style: Style::default(),
         }
     }
+
+    pub fn flush_contents<W: std::io::Write>(&mut self, out: &mut W) -> std::io::Result<usize> {
+        let bytes = out.write(self.output.as_bytes())?;
+        out.flush()?;
+        self.output.clear();
+        Ok(bytes)
+    }
 }
 
 impl Write for AnsiTerminal {
@@ -94,7 +102,11 @@ impl Terminal for AnsiTerminal {
         write!(self, "\x1b[2J")
     }
 
-    fn position_cursor(&mut self, row: u16, col: u16) -> Result {
+    fn clear_line(&mut self) -> Result {
+        write!(self, "\x1b[2K")
+    }
+
+    fn position_cursor(&mut self, col: u16, row: u16) -> Result {
         write!(self, "\x1b[{};{}H", row, col)?;
         self.reset_style()
     }

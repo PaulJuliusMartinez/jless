@@ -117,7 +117,7 @@ impl TruncatedRange {
         self.used_space == 1 && self.start == self.end
     }
 
-    /// Check whether this is a truncated view of a string that is totally elided,
+    /// Check whether this is a truncated view of a string.
     pub fn is_truncated(&self, s: &str) -> bool {
         self.start != 0 || self.end != s.len() || self.showing_replacement_character
     }
@@ -193,6 +193,12 @@ impl TruncatedStrView {
     /// that is, it is represented by a single ellipsis.
     pub fn is_completely_elided(&self) -> bool {
         self.range.map_or(false, |r| r.is_completely_elided())
+    }
+
+    /// Check whether this is a view of a string that fits in the available
+    /// space and shows at least one character (i.e., isn't totally elided).
+    pub fn any_contents_visible(&self) -> bool {
+        self.range.map_or(false, |r| !r.is_completely_elided())
     }
 
     // Creates a RangeAdjuster that represents the current state of

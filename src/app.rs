@@ -11,7 +11,7 @@ use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
 use crate::options::Opt;
-use crate::screenwriter::{AnsiTTYWriter, MessageSeverity, ScreenWriter};
+use crate::screenwriter::{MessageSeverity, ScreenWriter};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
 use crate::viewer::{Action, JsonViewer};
@@ -52,12 +52,8 @@ impl App {
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
         viewer.scrolloff_setting = opt.scrolloff;
 
-        let tty_writer = AnsiTTYWriter {
-            stdout,
-            color: true,
-        };
         let screen_writer =
-            ScreenWriter::init(tty_writer, Editor::<()>::new(), TTYDimensions::default());
+            ScreenWriter::init(stdout, Editor::<()>::new(), TTYDimensions::default());
 
         Ok(App {
             viewer,
@@ -480,7 +476,7 @@ impl App {
     }
 
     fn show_help(&mut self) {
-        let _ = write!(self.screen_writer.tty_writer.stdout, "{}", ToMainScreen);
+        let _ = write!(self.screen_writer.stdout, "{}", ToMainScreen);
         let child = std::process::Command::new("less")
             .arg("-r")
             .stdin(std::process::Stdio::piped())
@@ -503,10 +499,6 @@ impl App {
             }
         }
 
-        let _ = write!(
-            self.screen_writer.tty_writer.stdout,
-            "{}",
-            ToAlternateScreen
-        );
+        let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
     }
 }

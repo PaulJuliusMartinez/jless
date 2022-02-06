@@ -4,8 +4,7 @@ use std::iter::Peekable;
 use std::ops::Range;
 
 use rustyline::Editor;
-use termion::{clear, cursor};
-use termion::{color, style};
+use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::MAX_BUFFER_SIZE;
@@ -14,10 +13,8 @@ use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::{MatchRangeIter, SearchState};
 use crate::terminal;
-use crate::terminal::AnsiTerminal;
-use crate::truncate::TruncationResult::{DoesntFit, NoTruncation, Truncated};
-use crate::truncate::{truncate_left_to_fit, truncate_right_to_fit};
-use crate::truncatedstrview::TruncatedStrView;
+use crate::terminal::{AnsiTerminal, Terminal};
+use crate::truncatedstrview::{TruncatedStrSlice, TruncatedStrView};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
@@ -45,9 +42,10 @@ pub enum Color {
 use Color::*;
 
 pub struct ScreenWriter {
-    pub tty_writer: AnsiTTYWriter,
+    pub stdout: Box<dyn std::io::Write>,
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
+    terminal: AnsiTerminal,
 
     indentation_reduction: u16,
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
@@ -60,11 +58,11 @@ pub enum MessageSeverity {
 }
 
 impl MessageSeverity {
-    pub fn color(&self) -> Color {
+    pub fn color(&self) -> terminal::Color {
         match self {
-            MessageSeverity::Info => Color::White,
-            MessageSeverity::Warn => Color::Yellow,
-            MessageSeverity::Error => Color::Red,
+            MessageSeverity::Info => terminal::WHITE,
+            MessageSeverity::Warn => terminal::YELLOW,
+            MessageSeverity::Error => terminal::RED,
         }
     }
 }
@@ -74,14 +72,15 @@ const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {
     pub fn init(
-        tty_writer: AnsiTTYWriter,
+        stdout: Box<dyn std::io::Write>,
         command_editor: Editor<()>,
         dimensions: TTYDimensions,
     ) -> Self {
         ScreenWriter {
-            tty_writer,
+            stdout,
             command_editor,
             dimensions,
+            terminal: AnsiTerminal::new(String::new()),
             indentation_reduction: 0,
             truncated_row_value_views: HashMap::new(),
         }
@@ -101,7 +100,12 @@ impl ScreenWriter {
 
     pub fn print_viewer(&mut self, viewer: &JsonViewer, search_state: &SearchState) {
         match self.print_screen_impl(viewer, search_state) {
-            Ok(_) => {}
+            Ok(_) => match self.terminal.flush_contents(&mut self.stdout) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Error while printing viewer: {}", e);
+                }
+            },
             Err(e) => {
                 eprintln!("Error while printing viewer: {}", e);
             }
@@ -123,7 +127,12 @@ impl ScreenWriter {
             search_state,
             message,
         ) {
-            Ok(_) => {}
+            Ok(_) => match self.terminal.flush_contents(&mut self.stdout) {
+                Ok(_) => {}
+                Err(e) => {
+                    eprintln!("Error while printing status bar: {}", e);
+                }
+            },
             Err(e) => {
                 eprintln!("Error while printing status bar: {}", e);
             }
@@ -134,8 +143,8 @@ impl ScreenWriter {
         &mut self,
         viewer: &JsonViewer,
         search_state: &SearchState,
-    ) -> std::io::Result<()> {
-        self.tty_writer.clear_screen()?;
+    ) -> std::fmt::Result {
+        self.terminal.clear_screen()?;
 
         let mut line = OptionIndex::Index(viewer.top_row);
         let mut search_matches = search_state
@@ -146,10 +155,9 @@ impl ScreenWriter {
         for row_index in 0..viewer.dimensions.height {
             match line {
                 OptionIndex::Nil => {
-                    self.reset_style()?;
-                    self.tty_writer.position_cursor(1, row_index + 1)?;
-                    self.tty_writer.set_fg_color(LightBlack)?;
-                    write!(self.tty_writer, "~")?;
+                    self.terminal.position_cursor(1, row_index + 1)?;
+                    self.terminal.set_fg(terminal::LIGHT_BLACK)?;
+                    self.terminal.write_char('~')?;
                 }
                 OptionIndex::Index(index) => {
                     self.print_line(
@@ -167,28 +175,22 @@ impl ScreenWriter {
             }
         }
 
-        self.tty_writer.flush()
+        Ok(())
     }
 
     pub fn get_command(&mut self, prompt: &str) -> rustyline::Result<String> {
-        write!(self.tty_writer, "{}", termion::cursor::Show)?;
-        self.tty_writer.position_cursor(1, self.dimensions.height)?;
-        let result = self.command_editor.readline(prompt);
-        write!(self.tty_writer, "{}", termion::cursor::Hide)?;
+        write!(self.stdout, "{}", termion::cursor::Show)?;
+        let _ = self.terminal.position_cursor(1, self.dimensions.height);
+        self.terminal.flush_contents(&mut self.stdout)?;
 
-        self.tty_writer.position_cursor(1, self.dimensions.height)?;
-        self.tty_writer.clear_line()?;
+        let result = self.command_editor.readline(prompt);
+        write!(self.stdout, "{}", termion::cursor::Hide)?;
+
+        let _ = self.terminal.position_cursor(1, self.dimensions.height);
+        let _ = self.terminal.clear_line();
+        self.terminal.flush_contents(&mut self.stdout)?;
 
         result
-    }
-
-    fn invert_colors(&mut self, fg: Color) -> std::io::Result<()> {
-        self.tty_writer.set_bg_color(LightWhite)?;
-        self.tty_writer.set_fg_color(fg)
-    }
-
-    fn reset_style(&mut self) -> std::io::Result<()> {
-        write!(self.tty_writer, "{}", style::Reset)
     }
 
     fn print_line<'a>(
@@ -198,10 +200,10 @@ impl ScreenWriter {
         index: Index,
         search_matches: &mut Peekable<MatchRangeIter>,
         focused_search_match: &Range<usize>,
-    ) -> std::io::Result<()> {
+    ) -> std::fmt::Result {
         let is_focused = index == viewer.focused_row;
 
-        self.tty_writer.position_cursor(1, screen_index + 1)?;
+        self.terminal.position_cursor(1, screen_index + 1)?;
         let row = &viewer.flatjson[index];
 
         let depth = row
@@ -293,11 +295,10 @@ impl ScreenWriter {
         }
 
         let search_matches_copy = (*search_matches).clone();
-        let mut terminal = AnsiTerminal::new(String::new());
 
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
-            terminal: &mut terminal,
+            terminal: &mut self.terminal,
 
             node_depth: row.depth,
             depth,
@@ -325,7 +326,7 @@ impl ScreenWriter {
 
         *search_matches = line.search_matches.unwrap();
 
-        write!(self.tty_writer, "{}", terminal.output)
+        Ok(())
     }
 
     fn line_primitive_value_ref<'a, 'b>(
@@ -346,11 +347,6 @@ impl ScreenWriter {
         }
     }
 
-    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.>
-    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id fi>
-    // // Path also shrinks if needed
-    // <.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id
-
     fn print_status_bar_impl(
         &mut self,
         viewer: &JsonViewer,
@@ -358,13 +354,19 @@ impl ScreenWriter {
         input_filename: &str,
         search_state: &SearchState,
         message: &Option<(String, MessageSeverity)>,
-    ) -> std::io::Result<()> {
-        self.tty_writer
+    ) -> std::fmt::Result {
+        self.terminal
             .position_cursor(1, self.dimensions.height - 1)?;
-        self.invert_colors(Black)?;
-        self.tty_writer.clear_line()?;
-        self.tty_writer
-            .position_cursor(1, self.dimensions.height - 1)?;
+        self.terminal.set_style(&terminal::Style {
+            inverted: true,
+            ..terminal::Style::default()
+        })?;
+        // Need to print a line to ensure the entire bar with the path to
+        // the node and the filename is highlighted.
+        for _ in 0..self.dimensions.width {
+            self.terminal.write_char(' ')?;
+        }
+        self.terminal.write_char('\r')?;
 
         let path_to_node = ScreenWriter::get_path_to_focused_node(viewer);
         self.print_path_to_node_and_file_name(
@@ -373,20 +375,22 @@ impl ScreenWriter {
             viewer.dimensions.width as isize,
         )?;
 
-        self.reset_style()?;
-        self.tty_writer.position_cursor(1, self.dimensions.height)?;
+        self.terminal.position_cursor(1, self.dimensions.height)?;
 
         if let Some((contents, severity)) = message {
-            self.tty_writer.set_fg_color(severity.color())?;
-            write!(self.tty_writer, "{}", contents)?;
+            self.terminal.set_style(&terminal::Style {
+                fg: severity.color(),
+                ..terminal::Style::default()
+            })?;
+            self.terminal.write_str(contents)?;
         } else if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
-            self.tty_writer
+            self.terminal
                 .write_char(search_state.direction.prompt_char())?;
-            write!(self.tty_writer, "{}", &search_state.search_term)?;
+            self.terminal.write_str(&search_state.search_term)?;
 
             // Print out which match we're on:
             let match_tracker = format!("[{}/{}]", match_num + 1, search_state.num_matches());
-            self.tty_writer.position_cursor(
+            self.terminal.position_cursor(
                 self.dimensions.width
                     - (1 + MAX_BUFFER_SIZE as u16)
                     - (3 + match_tracker.len() as u16 + 3),
@@ -394,121 +398,102 @@ impl ScreenWriter {
             )?;
 
             let wrapped_char = if just_wrapped { 'W' } else { ' ' };
-            write!(self.tty_writer, " {} {}", wrapped_char, match_tracker)?;
+            write!(self.terminal, " {} {}", wrapped_char, match_tracker)?;
         } else {
-            write!(self.tty_writer, ":")?;
+            write!(self.terminal, ":")?;
         }
 
-        self.tty_writer.position_cursor(
+        self.terminal.position_cursor(
             // TODO: This can overflow on very skinny screens (2-3 columns).
             self.dimensions.width - (1 + MAX_BUFFER_SIZE as u16),
             self.dimensions.height,
         )?;
-        write!(
-            self.tty_writer,
-            "{}",
-            std::str::from_utf8(input_buffer).unwrap()
-        )?;
+        self.terminal
+            .write_str(std::str::from_utf8(input_buffer).unwrap())?;
 
         // Position the cursor better for random debugging prints. (2 so it's after ':')
-        self.tty_writer.position_cursor(2, self.dimensions.height)?;
+        self.terminal.position_cursor(2, self.dimensions.height)?;
 
-        self.tty_writer.flush()
+        Ok(())
     }
 
+    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id filename.>
+    // input.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id fi>
+    // // Path also shrinks if needed
+    // <.data.viewer.gameDetail.plays[3].playStats[0].gsisPlayer.id
     fn print_path_to_node_and_file_name(
         &mut self,
         path_to_node: &str,
-        file_name: &str,
+        filename: &str,
         width: isize,
-    ) -> std::io::Result<()> {
+    ) -> std::fmt::Result {
         let base_len = PATH_BASE.len() as isize;
         let path_display_width = UnicodeWidthStr::width(path_to_node) as isize;
-        let file_display_width = UnicodeWidthStr::width(file_name) as isize;
-
-        let mut base_visible = true;
-        let mut base_truncated = false;
-        let mut base_ref = PATH_BASE;
-
-        let mut path_ref = path_to_node;
-
-        let mut file_visible = true;
-        let mut file_truncated = false;
-        let mut file_ref = file_name;
-        let mut file_offset = file_display_width;
+        let row = self.dimensions.height - 1;
 
         let space_available_for_filename =
             width - base_len - path_display_width - SPACE_BETWEEN_PATH_AND_FILENAME;
+        let mut space_available_for_base = width - path_display_width;
 
-        match truncate_right_to_fit(file_name, space_available_for_filename, ">") {
-            NoTruncation(_) => { /* Don't need to truncate filename */ }
-            Truncated(filename_prefix, width) => {
-                file_ref = filename_prefix;
-                file_offset = width;
-                file_truncated = true;
-            }
-            DoesntFit => {
-                file_visible = false;
-            }
+        let inverted_style = terminal::Style {
+            inverted: true,
+            ..terminal::Style::default()
         };
 
-        // Might need to truncate path if we're not showing the file.
-        if !file_visible {
-            let space_available_for_base = width - path_display_width;
+        let truncated_filename =
+            TruncatedStrView::init_start(filename, space_available_for_filename);
 
-            match truncate_left_to_fit(PATH_BASE, space_available_for_base, "<") {
-                NoTruncation(_) => { /* Don't need to truncate base */ }
-                Truncated(base_suffix, _) => {
-                    base_ref = base_suffix;
-                    base_truncated = true;
-                }
-                DoesntFit => {
-                    base_visible = false;
-                }
+        if truncated_filename.any_contents_visible() {
+            let filename_width = truncated_filename.used_space().unwrap() as isize;
+            space_available_for_base -= filename_width - SPACE_BETWEEN_PATH_AND_FILENAME;
+        }
+
+        let truncated_base = TruncatedStrView::init_back(PATH_BASE, space_available_for_base);
+
+        self.terminal.position_cursor(1, row)?;
+        self.terminal.set_style(&inverted_style)?;
+        self.terminal.set_bg(terminal::LIGHT_BLACK)?;
+
+        let base_slice = TruncatedStrSlice {
+            s: PATH_BASE,
+            truncated_view: &truncated_base,
+        };
+
+        write!(self.terminal, "{}", base_slice)?;
+
+        self.terminal.set_bg(terminal::DEFAULT)?;
+
+        // If the path is the exact same width as the screen, we won't print out anything
+        // for the PATH_BASE, and the path won't be truncated. But there is truncated
+        // content (the PATH_BASE), so we'll just manually handle this case.
+        if truncated_base.used_space().is_none() && path_display_width == width {
+            self.terminal.write_char('…')?;
+            let mut graphemes = path_to_node.graphemes(true);
+            // Skip one character.
+            graphemes.next();
+            self.terminal.write_str(graphemes.as_str())?;
+        } else {
+            let path_slice = TruncatedStrSlice {
+                s: path_to_node,
+                truncated_view: &TruncatedStrView::init_back(path_to_node, width),
             };
+
+            write!(self.terminal, "{}", path_slice)?;
         }
 
-        // Might need to truncate path if we're not showing the the base ref.
-        if !base_visible {
-            match truncate_left_to_fit(path_to_node, width, "<") {
-                NoTruncation(_) => { /* Don't need to truncate path */ }
-                Truncated(path_suffix, _) => {
-                    path_ref = path_suffix;
-                }
-                DoesntFit => {
-                    panic!("Not enough room to display any of path.");
-                }
+        if truncated_filename.any_contents_visible() {
+            let filename_width = truncated_filename.used_space().unwrap() as isize;
+
+            self.terminal
+                .position_cursor(self.dimensions.width - (filename_width as u16) + 1, row)?;
+            self.terminal.set_style(&inverted_style)?;
+
+            let truncated_slice = TruncatedStrSlice {
+                s: filename,
+                truncated_view: &truncated_filename,
             };
-        }
 
-        // Print the remaining bits of the base_ref and the path ref.
-        if base_visible {
-            write!(
-                self.tty_writer,
-                "{}{}{}{}",
-                color::Fg(color::LightBlack),
-                if base_truncated { "<" } else { "" },
-                base_ref,
-                color::Fg(color::Black)
-            )?;
-        }
-
-        if !base_visible {
-            write!(self.tty_writer, "<")?;
-        }
-        write!(self.tty_writer, "{}", path_ref)?;
-
-        if file_visible {
-            self.tty_writer.position_cursor(
-                // 1 indexed
-                1 + self.dimensions.width - (file_offset as u16),
-                self.dimensions.height - 1,
-            )?;
-            write!(self.tty_writer, "{}", file_ref)?;
-
-            if file_truncated {
-                write!(self.tty_writer, ">")?;
-            }
+            write!(self.terminal, "{}", truncated_slice)?;
         }
 
         Ok(())
@@ -654,94 +639,5 @@ impl ScreenWriter {
             self.truncated_row_value_views
                 .insert(viewer.focused_row, tsv);
         }
-    }
-}
-
-pub trait TTYWriter {
-    fn clear_screen(&mut self) -> std::io::Result<()>;
-    fn clear_line(&mut self) -> std::io::Result<()>;
-    fn position_cursor(&mut self, row: u16, col: u16) -> std::io::Result<()>;
-    fn set_fg_color(&mut self, color: Color) -> std::io::Result<()>;
-    fn set_bg_color(&mut self, color: Color) -> std::io::Result<()>;
-    fn write(&mut self, s: &str) -> std::io::Result<()>;
-    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()>;
-    fn write_char(&mut self, c: char) -> std::io::Result<()>;
-    fn flush(&mut self) -> std::io::Result<()>;
-}
-
-pub struct AnsiTTYWriter {
-    pub stdout: Box<dyn std::io::Write>,
-    pub color: bool,
-}
-
-impl TTYWriter for AnsiTTYWriter {
-    fn clear_screen(&mut self) -> std::io::Result<()> {
-        write!(self.stdout, "{}", clear::All)
-    }
-
-    fn clear_line(&mut self) -> std::io::Result<()> {
-        write!(self.stdout, "{}", clear::CurrentLine)
-    }
-
-    fn position_cursor(&mut self, row: u16, col: u16) -> std::io::Result<()> {
-        write!(self.stdout, "{}", cursor::Goto(row, col))
-    }
-
-    fn set_fg_color(&mut self, color: Color) -> std::io::Result<()> {
-        match color {
-            Black => write!(self.stdout, "{}", color::Fg(color::Black)),
-            Red => write!(self.stdout, "{}", color::Fg(color::Red)),
-            Green => write!(self.stdout, "{}", color::Fg(color::Green)),
-            Yellow => write!(self.stdout, "{}", color::Fg(color::Yellow)),
-            Blue => write!(self.stdout, "{}", color::Fg(color::Blue)),
-            Magenta => write!(self.stdout, "{}", color::Fg(color::Magenta)),
-            Cyan => write!(self.stdout, "{}", color::Fg(color::Cyan)),
-            White => write!(self.stdout, "{}", color::Fg(color::White)),
-            LightBlack => write!(self.stdout, "{}", color::Fg(color::LightBlack)),
-            LightRed => write!(self.stdout, "{}", color::Fg(color::LightRed)),
-            LightGreen => write!(self.stdout, "{}", color::Fg(color::LightGreen)),
-            LightYellow => write!(self.stdout, "{}", color::Fg(color::LightYellow)),
-            LightBlue => write!(self.stdout, "{}", color::Fg(color::LightBlue)),
-            LightMagenta => write!(self.stdout, "{}", color::Fg(color::LightMagenta)),
-            LightCyan => write!(self.stdout, "{}", color::Fg(color::LightCyan)),
-            LightWhite => write!(self.stdout, "{}", color::Fg(color::LightWhite)),
-        }
-    }
-
-    fn set_bg_color(&mut self, color: Color) -> std::io::Result<()> {
-        match color {
-            Black => write!(self.stdout, "{}", color::Bg(color::Black)),
-            Red => write!(self.stdout, "{}", color::Bg(color::Red)),
-            Green => write!(self.stdout, "{}", color::Bg(color::Green)),
-            Yellow => write!(self.stdout, "{}", color::Bg(color::Yellow)),
-            Blue => write!(self.stdout, "{}", color::Bg(color::Blue)),
-            Magenta => write!(self.stdout, "{}", color::Bg(color::Magenta)),
-            Cyan => write!(self.stdout, "{}", color::Bg(color::Cyan)),
-            White => write!(self.stdout, "{}", color::Bg(color::White)),
-            LightBlack => write!(self.stdout, "{}", color::Bg(color::LightBlack)),
-            LightRed => write!(self.stdout, "{}", color::Bg(color::LightRed)),
-            LightGreen => write!(self.stdout, "{}", color::Bg(color::LightGreen)),
-            LightYellow => write!(self.stdout, "{}", color::Bg(color::LightYellow)),
-            LightBlue => write!(self.stdout, "{}", color::Bg(color::LightBlue)),
-            LightMagenta => write!(self.stdout, "{}", color::Bg(color::LightMagenta)),
-            LightCyan => write!(self.stdout, "{}", color::Bg(color::LightCyan)),
-            LightWhite => write!(self.stdout, "{}", color::Bg(color::LightWhite)),
-        }
-    }
-
-    fn write(&mut self, s: &str) -> std::io::Result<()> {
-        self.stdout.write(s.as_bytes()).map(|_| ())
-    }
-
-    fn write_fmt(&mut self, args: std::fmt::Arguments<'_>) -> std::io::Result<()> {
-        self.stdout.write_fmt(args)
-    }
-
-    fn write_char(&mut self, c: char) -> std::io::Result<()> {
-        write!(self.stdout, "{}", c)
-    }
-
-    fn flush(&mut self) -> std::io::Result<()> {
-        self.stdout.flush()
     }
 }
