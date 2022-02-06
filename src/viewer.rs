@@ -75,10 +75,11 @@ pub enum Action {
 
     FocusParent,
 
-    // The behavior of these is subtle and stateful. These move to the previous/next sibling of the
-    // focused element. If we are focused on the first/last child, we will move to the parent, but
-    // we will remember what depth we were at when we first performed this action, and move back
-    // to that depth the next time we can.
+    // The behavior of these is subtle and stateful. These move to the
+    // previous/next sibling of the focused element. If we are focused
+    // on the first/last child, we will move to the parent, but we
+    // will remember what depth we were at when we first performed
+    // this action, and move back to that depth the next time we can.
     FocusPrevSibling(usize),
     FocusNextSibling(usize),
 
@@ -786,7 +787,7 @@ impl JsonViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flatjson::{parse_top_level_json, NIL};
+    use crate::flatjson::{parse_top_level_json, parse_top_level_json2, NIL};
 
     impl OptionIndex {
         pub fn to_usize(&self) -> usize {
@@ -1560,6 +1561,41 @@ mod tests {
             &mut viewer,
             vec![(Action::FocusBottom, 2, 11), (Action::FocusTop, 0, 0)],
         );
+    }
+
+    #[test]
+    fn test_focus_bottom_newline_delimited_json() {
+        let nd_json = r#"
+            0
+            1
+            2
+            {
+                "a": 4
+            }
+        "#;
+
+        let fj = parse_top_level_json2(nd_json.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![(Action::FocusBottom, 0, 5), (Action::FocusTop, 0, 0)],
+        );
+        viewer.flatjson.collapse(3);
+        assert_window_tracking(
+            &mut viewer,
+            vec![(Action::FocusBottom, 0, 3), (Action::FocusTop, 0, 0)],
+        );
+
+        viewer.mode = Mode::Data;
+        viewer.flatjson.expand(3);
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![(Action::FocusBottom, 0, 4), (Action::FocusTop, 0, 0)],
+        );
+        viewer.flatjson.collapse(3);
+        assert_window_tracking(&mut viewer, vec![(Action::FocusBottom, 0, 3)]);
     }
 
     #[test]

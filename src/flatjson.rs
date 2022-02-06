@@ -57,18 +57,33 @@ pub struct FlatJson(
 
 impl FlatJson {
     pub fn last_visible_index(&self) -> Index {
-        self.0.len() - 1
+        let last_index = self.0.len() - 1;
+
+        let row = &self.0[last_index];
+
+        if row.is_container() && row.is_collapsed() {
+            row.pair_index().unwrap()
+        } else {
+            last_index
+        }
     }
 
     pub fn last_visible_item(&self) -> Index {
-        let last_index = self.0.len() - 1;
-        // If it's a primitve, we can just return the last index
-        if self.0[last_index].is_primitive() {
-            return last_index;
+        let mut last_index = self.0.len() - 1;
+
+        loop {
+            let row = &self.0[last_index];
+
+            if row.is_primitive() {
+                return last_index;
+            }
+
+            if row.is_closing_of_container() && row.is_collapsed() {
+                return row.pair_index().unwrap();
+            }
+
+            last_index -= 1;
         }
-        // Otherwise, it's definitely the closing brace of a container, so
-        // we can just move backwards to the last_visible_item.
-        return self.prev_item(last_index).unwrap();
     }
 
     pub fn prev_visible_row(&self, index: Index) -> OptionIndex {
@@ -646,8 +661,6 @@ mod tests {
             }
         }
     ]"#;
-
-    const NESTED_OBJECT_LINES: usize = 10;
 
     #[test]
     fn test_flatten_json() {

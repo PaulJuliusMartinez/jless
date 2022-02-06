@@ -237,6 +237,7 @@ pub mod test {
     #[rustfmt::skip]
     impl Terminal for TextOnlyTerminal {
         fn clear_screen(&mut self) -> Result { Ok(()) }
+        fn clear_line(&mut self) -> Result { Ok(()) }
         fn position_cursor(&mut self, _row: u16, _col: u16) -> Result { Ok(()) }
         fn position_cursor_col(&mut self, _col: u16) -> Result { Ok(()) }
         fn set_style(&mut self, _style: &Style) -> Result { Ok(()) }
@@ -309,6 +310,10 @@ pub mod test {
 
     impl Terminal for VisibleEscapesTerminal {
         fn clear_screen(&mut self) -> Result {
+            Ok(())
+        }
+
+        fn clear_line(&mut self) -> Result {
             Ok(())
         }
 
