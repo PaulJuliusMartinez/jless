@@ -1,6 +1,3 @@
-#[macro_use]
-extern crate lazy_static;
-
 use std::fs::File;
 use std::io;
 use std::io::Read;

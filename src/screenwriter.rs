@@ -18,29 +18,6 @@ use crate::truncatedstrview::{TruncatedStrSlice, TruncatedStrView};
 use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
-#[derive(Copy, Clone)]
-#[allow(dead_code)]
-pub enum Color {
-    Black,
-    Red,
-    Green,
-    Yellow,
-    Blue,
-    Magenta,
-    Cyan,
-    White,
-    LightBlack,
-    LightRed,
-    LightGreen,
-    LightYellow,
-    LightBlue,
-    LightMagenta,
-    LightCyan,
-    LightWhite,
-}
-
-use Color::*;
-
 pub struct ScreenWriter {
     pub stdout: Box<dyn std::io::Write>,
     pub command_editor: Editor<()>,
