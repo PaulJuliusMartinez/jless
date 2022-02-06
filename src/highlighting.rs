@@ -69,11 +69,6 @@ pub const BOLD_STYLE: Style = Style {
     ..Style::default()
 };
 
-pub const INVERTED_STYLE: Style = Style {
-    inverted: true,
-    ..Style::default()
-};
-
 pub const BOLD_INVERTED_STYLE: Style = Style {
     inverted: true,
     bold: true,
@@ -92,27 +87,12 @@ pub const SEARCH_MATCH_HIGHLIGHTED: Style = Style {
     ..Style::default()
 };
 
-pub const GRAY_STYLE: Style = Style {
-    fg: terminal::LIGHT_BLACK,
+pub const DIMMED_STYLE: Style = Style {
+    dimmed: true,
     ..Style::default()
 };
 
-pub const PREVIEW_STYLES: (&'static Style, &'static Style) = (&GRAY_STYLE, &GRAY_INVERTED_STYLE);
-
-pub const YELLOW_STYLE: Style = Style {
-    fg: terminal::LIGHT_YELLOW,
-    ..Style::default()
-};
-
-pub const MAGENTA_STYLE: Style = Style {
-    fg: terminal::LIGHT_MAGENTA,
-    ..Style::default()
-};
-
-pub const GREEN_STYLE: Style = Style {
-    fg: terminal::LIGHT_GREEN,
-    ..Style::default()
-};
+pub const PREVIEW_STYLES: (&'static Style, &'static Style) = (&DIMMED_STYLE, &GRAY_INVERTED_STYLE);
 
 pub const BLUE_STYLE: Style = Style {
     fg: terminal::LIGHT_BLUE,
@@ -149,7 +129,7 @@ pub fn highlight_truncated_str_view<'a>(
     }
 
     if leading_ellipsis {
-        out.set_style(&GRAY_STYLE)?;
+        out.set_style(&DIMMED_STYLE)?;
         out.write_char('…')?;
     }
 
@@ -175,7 +155,7 @@ pub fn highlight_truncated_str_view<'a>(
 
     // Print trailing ellipsis
     if trailing_ellipsis {
-        out.set_style(&GRAY_STYLE)?;
+        out.set_style(&DIMMED_STYLE)?;
         out.write_char('…')?;
     }
 
@@ -230,10 +210,7 @@ pub fn highlight_matches<'a>(
         // Highlight the matching substring.
         if match_start < string_end {
             if match_is_focused_match {
-                out.set_style(&Style {
-                    bold: highlight_style.bold,
-                    ..INVERTED_STYLE
-                })?;
+                out.set_style(&BOLD_INVERTED_STYLE)?;
             } else {
                 out.set_style(highlight_style)?;
             }

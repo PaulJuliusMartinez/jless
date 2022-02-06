@@ -341,7 +341,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 if self.focused {
                     style = &highlighting::BOLD_STYLE;
                 } else {
-                    style = &highlighting::GRAY_STYLE;
+                    style = &highlighting::DIMMED_STYLE;
                 }
 
                 // No match highlighting for index labels.
@@ -935,7 +935,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             } else {
                 Some(value_range_start)
             },
-            &highlighting::GRAY_STYLE,
+            &highlighting::DIMMED_STYLE,
             &highlighting::GRAY_INVERTED_STYLE,
             &mut self.search_matches.as_mut(),
             self.focused_search_match,
@@ -1224,10 +1224,7 @@ mod tests {
         };
 
         let used_space = line.fill_in_label(100)?;
-        assert_eq!(
-            format!("_FG({})_[12345]_FG(Default)_: ", terminal::LIGHT_BLACK),
-            line.terminal.output()
-        );
+        assert_eq!("_D_[12345]_!D_: ", line.terminal.output());
         assert_eq!(9, used_space);
 
         line.focused = true;

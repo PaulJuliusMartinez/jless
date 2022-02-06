@@ -30,6 +30,7 @@ pub struct Style {
     pub bg: Color,
     pub inverted: bool,
     pub bold: bool,
+    pub dimmed: bool,
 }
 
 impl Style {
@@ -39,6 +40,7 @@ impl Style {
             bg: Color::Default,
             inverted: false,
             bold: false,
+            dimmed: false,
         }
     }
 }
@@ -63,6 +65,7 @@ pub trait Terminal: Write {
     fn set_bg(&mut self, color: Color) -> Result;
     fn set_inverted(&mut self, inverted: bool) -> Result;
     fn set_bold(&mut self, bold: bool) -> Result;
+    fn set_dimmed(&mut self, dimmed: bool) -> Result;
 
     fn output(&self) -> &str;
 
@@ -121,6 +124,7 @@ impl Terminal for AnsiTerminal {
         self.set_bg(style.bg)?;
         self.set_inverted(style.inverted)?;
         self.set_bold(style.bold)?;
+        self.set_dimmed(style.dimmed)?;
         Ok(())
     }
 
@@ -169,8 +173,28 @@ impl Terminal for AnsiTerminal {
                 write!(self, "\x1b[1m")?;
             } else {
                 write!(self, "\x1b[22m")?;
+                // Also resets dimmed, so set that if we need to
+                if self.style.dimmed {
+                    write!(self, "\x1b[2m")?;
+                }
             }
             self.style.bold = bold;
+        }
+        Ok(())
+    }
+
+    fn set_dimmed(&mut self, dimmed: bool) -> Result {
+        if self.style.dimmed != dimmed {
+            if dimmed {
+                write!(self, "\x1b[2m")?;
+            } else {
+                write!(self, "\x1b[22m")?;
+                // Also resets bold, so set that if we need to
+                if self.style.bold {
+                    write!(self, "\x1b[1m")?;
+                }
+            }
+            self.style.dimmed = dimmed;
         }
         Ok(())
     }
@@ -246,6 +270,7 @@ pub mod test {
         fn set_bg(&mut self, _color: Color) -> Result { Ok(()) }
         fn set_inverted(&mut self, _inverted: bool) -> Result { Ok(()) }
         fn set_bold(&mut self, _bold: bool) -> Result { Ok(()) }
+        fn set_dimmed(&mut self, _bold: bool) -> Result { Ok(()) }
         fn output(&self) -> &str { &self.output }
         fn clear_output(&mut self) { self.output.clear() }
     }
@@ -291,6 +316,13 @@ pub mod test {
                         write!(self.output, "_B_")?;
                     } else {
                         write!(self.output, "_!B_")?;
+                    }
+                }
+                if self.style.dimmed != self.pending_style.dimmed {
+                    if self.pending_style.dimmed {
+                        write!(self.output, "_D_")?;
+                    } else {
+                        write!(self.output, "_!D_")?;
                     }
                 }
             }
@@ -364,6 +396,11 @@ pub mod test {
 
         fn set_bold(&mut self, bold: bool) -> Result {
             self.pending_style.bold = bold;
+            Ok(())
+        }
+
+        fn set_dimmed(&mut self, dimmed: bool) -> Result {
+            self.pending_style.dimmed = dimmed;
             Ok(())
         }
 

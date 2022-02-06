@@ -10,7 +10,6 @@ use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
 use jless::app::App;
-use jless::flatjson::{parse_top_level_json2, Value};
 use jless::input;
 use jless::options::Opt;
 
