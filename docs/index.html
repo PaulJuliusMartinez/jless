@@ -7,7 +7,7 @@
     <meta name="og:title" content="jless - Command Line JSON Viewer" />
     <meta name="twitter:card" content="summary" />
     <meta name="twitter:creator" content="@CodeIsTheEnd" />
-    <link rel="icon" href="/assets/logo/mascot.svg" type="image/svg+xml">
+    <link rel="icon" href="./assets/logo/mascot.svg" type="image/svg+xml">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;700&family=Roboto+Slab:wght@800&display=swap" rel="stylesheet">
@@ -72,6 +72,9 @@
       #mac-install:checked ~ #mac-install-block { display: block; }
       #linux-install:checked ~ #linux-install-block { display: block; }
 
+      #mac-install:checked ~ div #mac-install-label { background-color: #cacaca; }
+      #linux-install:checked ~ div #linux-install-label { background-color: #cacaca; }
+
       .code-snippet label {
         background-color: #dddddd;
         margin-left: 8px;
@@ -84,7 +87,7 @@
       }
 
       .code-snippet label:hover {
-        background-color: #c8c8c8;
+        background-color: #bebebe;
       }
 
       .code-block {
@@ -113,27 +116,27 @@
   </head>
   <body>
     <header>
-      <img id="text-logo-with-mascot" src="/assets/logo/text-logo-with-mascot.svg">
+      <img id="text-logo-with-mascot" src="./assets/logo/text-logo-with-mascot.svg">
       <h2>jless — a command-line JSON viewer</h3>
     </header>
     <nav>
-      <a href="/">About</a>
-      <a href="/usage.html">User Guide</a>
-      <a href="/releases.html">Releases</a>
+      <a href="./">About</a>
+      <a href="./usage.html">User Guide</a>
+      <a href="./releases.html">Releases</a>
       <a href="https://github.com/PaulJuliusMartinez/jless">GitHub</a>
     </nav>
     <p>
       JLess is a command-line JSON viewer designed for reading, exploring, and searching through JSON data.
     </p>
-    <img id="jless-recording" src="/assets/jless-recording.gif">
+    <img id="jless-recording" src="./assets/jless-recording.gif">
     <div class="text-and-mascot">
       <p>
         JLess will pretty print your JSON and apply syntax highlighting. Use it when exploring external APIs, or debugging request payloads.
       </p>
-      <img src="/assets/logo/mascot-indentation.svg">
+      <img src="./assets/logo/mascot-indentation.svg">
     </div>
     <div class="text-and-mascot">
-      <img src="/assets/logo/mascot-rocks-collapsing.svg">
+      <img src="./assets/logo/mascot-rocks-collapsing.svg">
       <p>
         Expand and collapse Objects and Arrays to grasp the high- and low-level structure of a JSON document. JLess has a large suite of vim-inspired commands that make exploring data a breeze.
       </p>
@@ -142,7 +145,7 @@
       <p>
         JLess supports full text regular-expression based search. Quickly find the data you're looking for in long String values, or jump between values of the same Object key.
       </p>
-      <img src="/assets/logo/mascot-searching.svg">
+      <img src="./assets/logo/mascot-searching.svg">
     </div>
     <h2>Installation</h2>
     <p>
@@ -151,8 +154,8 @@
       <input type="radio" id="mac-install" name="install" value="mac" style="display: none;" checked="checked">
       <input type="radio" id="linux-install" name="install" value="linux" style="display: none;">
       <div>
-        <label for="mac-install">macOS</label>
-        <label for="linux-install">Linux</label>
+        <label id="mac-install-label" for="mac-install">macOS</label>
+        <label id="linux-install-label" for="linux-install">Linux</label>
       </div>
 <div id="mac-install-block" class="code-block">$ curl -OL https://github.com/PaulJuliusMartinez/jless/releases/download/v0.7.0/jless-v0.7.0-x86_64-apple-darwin.zip
 $ unzip jless-v0.7.0-x86_64-apple-darwin.zip
@@ -167,10 +170,10 @@ $ ./jless data.json</div>
       <div class="code-block">$ cargo install jless</div>
     </p>
     <p>
-      Check out the <a href="/usage.html">user guide</a> to learn about the full functionality of JLess.
+      Check out the <a href="./usage.html">user guide</a> to learn about the full functionality of JLess.
     </p>
     <footer>
-      <img style="width: max(25%, 225px);" src="/assets/logo/mascot.svg">
+      <img style="width: max(25%, 225px);" src="./assets/logo/mascot.svg">
       <div style="margin-top: 24px">
         Created by <a href="https://twitter.com/CodeIsTheEnd">CodeIsTheEnd</a>.
       </div>
