@@ -2,6 +2,13 @@
 name = "jless"
 version = "0.1.0"
 authors = ["Paul Julius Martinez <pauljuliusmartinez@gmail.com>"]
+license = "MIT"
+description = "A command-line JSON viewer"
+keywords = ["cli", "json"]
+categories = ["command-line-utilities"]
+repository = "https://github.com/PaulJuliusMartinez/jless"
+homepage = "https://github.com/PaulJuliusMartinez/jless"
+documentation = "https://github.com/PaulJuliusMartinez/jless/blob/master/src/jless.help"
 edition = "2018"
 
 [dependencies]
