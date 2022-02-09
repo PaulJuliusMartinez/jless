@@ -475,7 +475,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             .cached_formatted_value
             .take()
             .map(|entry| {
-                entry
+                *entry
                     .and_modify(|tsv| {
                         *tsv = tsv.resize(value_ref, available_space);
                     })
@@ -508,7 +508,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
                         tsv.focus(value_ref, &offset_focused_range)
                     })
-                    .clone()
             })
             .unwrap_or_else(|| TruncatedStrView::init_start(value_ref, available_space));
 

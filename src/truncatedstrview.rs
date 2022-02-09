@@ -213,7 +213,7 @@ impl TruncatedStrView {
     /// number of characters (unless the end of the string is reached).
     pub fn scroll_right(&self, s: &str, count: usize) -> TruncatedStrView {
         if self.range.is_none() {
-            return self.clone();
+            return *self;
         }
 
         // If we only have two columns, we can't represent the middle
@@ -247,7 +247,7 @@ impl TruncatedStrView {
     /// number of characters (unless the start of the string is reached).
     pub fn scroll_left(&self, s: &str, count: usize) -> TruncatedStrView {
         if self.range.is_none() {
-            return self.clone();
+            return *self;
         }
 
         // If we only have two columns, we can't represent the middle
@@ -285,7 +285,7 @@ impl TruncatedStrView {
     /// will jump to the front.
     pub fn jump_to_an_end(&self, s: &str) -> TruncatedStrView {
         match self.range {
-            None => self.clone(),
+            None => *self,
             Some(range) => {
                 if range.end < s.len() {
                     TruncatedStrView::init_back(s, self.available_space)
@@ -311,7 +311,7 @@ impl TruncatedStrView {
         } else if available_space > self.available_space {
             self.expand(s, available_space)
         } else {
-            self.clone()
+            *self
         }
     }
 
@@ -383,7 +383,7 @@ impl TruncatedStrView {
     /// Scroll a view so that a particular subrange is shown.
     pub fn focus(&self, s: &str, range: &Range<usize>) -> TruncatedStrView {
         if self.range.is_none() {
-            return self.clone();
+            return *self;
         }
 
         let Range { mut start, mut end } = *range;
@@ -398,7 +398,7 @@ impl TruncatedStrView {
 
         // If the entire match is already visible, don't do anything.
         if visible_range.start <= start && end <= visible_range.end {
-            return self.clone();
+            return *self;
         }
 
         // But otherwise, we'll just jump to the match and try to center it.
