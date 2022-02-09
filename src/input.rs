@@ -96,7 +96,7 @@ impl<const N: usize> BufferedInput<N> {
             return true;
         }
 
-        return false;
+        false
     }
 
     fn read_more_if_needed(&mut self) -> Option<io::Error> {
@@ -172,16 +172,14 @@ impl TuiInput {
         }
 
         match self.buffered_input.next() {
-            Some(Ok(byte)) => {
-                return match parse_event(byte, &mut self.buffered_input) {
-                    Ok(Event::Key(k)) => Some(Ok(TuiEvent::KeyEvent(k))),
-                    Ok(Event::Mouse(m)) => Some(Ok(TuiEvent::MouseEvent(m))),
-                    Ok(Event::Unsupported(_)) => Some(Ok(TuiEvent::Unknown)),
-                    Err(err) => Some(Err(err)),
-                };
-            }
-            Some(Err(err)) => return Some(Err(err)),
-            None => return None,
+            Some(Ok(byte)) => match parse_event(byte, &mut self.buffered_input) {
+                Ok(Event::Key(k)) => Some(Ok(TuiEvent::KeyEvent(k))),
+                Ok(Event::Mouse(m)) => Some(Ok(TuiEvent::MouseEvent(m))),
+                Ok(Event::Unsupported(_)) => Some(Ok(TuiEvent::Unknown)),
+                Err(err) => Some(Err(err)),
+            },
+            Some(Err(err)) => Some(Err(err)),
+            None => None,
         }
     }
 }
@@ -224,7 +222,7 @@ impl Iterator for TuiInput {
             return Some(Ok(TuiEvent::WinChEvent));
         }
 
-        return self.get_event_from_buffered_input();
+        self.get_event_from_buffered_input()
     }
 }
 
