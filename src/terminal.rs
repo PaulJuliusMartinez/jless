@@ -212,7 +212,7 @@ impl Terminal for AnsiTerminal {
 pub mod test {
     use super::*;
 
-    const COLOR_NAMES: [&'static str; 16] = [
+    const COLOR_NAMES: [&str; 16] = [
         "Black",
         "Red",
         "Green",

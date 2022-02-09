@@ -44,7 +44,7 @@ impl MessageSeverity {
     }
 }
 
-const PATH_BASE: &'static str = "input";
+const PATH_BASE: &str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {

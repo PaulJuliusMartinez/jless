@@ -798,7 +798,7 @@ mod tests {
         }
     }
 
-    const OBJECT: &'static str = r#"{
+    const OBJECT: &str = r#"{
         "1": 1,
         "2": [
             3,
@@ -813,7 +813,7 @@ mod tests {
     }"#;
 
     // Same object as DATA, but formatted as it would appear in data mode
-    const DATA_OBJECT: &'static str = r#"{
+    const DATA_OBJECT: &str = r#"{
         "1": 1,
         "2": [
             3,
@@ -1239,7 +1239,7 @@ mod tests {
         );
     }
 
-    const TALL_OBJECT: &'static str = "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]";
+    const TALL_OBJECT: &str = "[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20]";
 
     #[test]
     fn test_ensure_focused_line_is_visible_centers_focus_line_after_big_jump() {
@@ -1627,7 +1627,7 @@ mod tests {
         assert_movements(&mut viewer, vec![(Action::FocusMatchingPair, 6)]);
     }
 
-    const LOTS_OF_OBJECTS: &'static str = r#"{
+    const LOTS_OF_OBJECTS: &str = r#"{
         "1": {
             "2": 2
         },

@@ -32,10 +32,10 @@ enum Command {
 }
 
 // Help contents that we pipe to less.
-const HELP: &'static str = std::include_str!("./jless.help");
+const HELP: &str = std::include_str!("./jless.help");
 
 pub const MAX_BUFFER_SIZE: usize = 9;
-const BELL: &'static str = "\x07";
+const BELL: &str = "\x07";
 
 impl App {
     pub fn new(

@@ -529,12 +529,12 @@ fn focus_bottom(focus: &mut Focus) {
 mod tests {
     use super::*;
 
-    const SIMPLE_OBJ: &'static str = r#"{
+    const SIMPLE_OBJ: &str = r#"{
         "a": { "aa": 1, "ab": 2, "ac": 3 },
         "z": [1, 2, 3]
     }"#;
 
-    const SIMPLE_OBJ_WITH_EMPTY: &'static str = r#"{
+    const SIMPLE_OBJ_WITH_EMPTY: &str = r#"{
         "a": {},
         "b": [1, 2, 3]
     }"#;

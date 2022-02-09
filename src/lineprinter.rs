@@ -130,11 +130,11 @@ use crate::viewer::Mode;
 // print KVColon if available_space
 // print " >"
 
-const FOCUSED_LINE: &'static str = "▶ ";
-const FOCUSED_COLLAPSED_CONTAINER: &'static str = "▶ ";
-const FOCUSED_EXPANDED_CONTAINER: &'static str = "▼ ";
-const COLLAPSED_CONTAINER: &'static str = "▷ ";
-const EXPANDED_CONTAINER: &'static str = "▽ ";
+const FOCUSED_LINE: &str = "▶ ";
+const FOCUSED_COLLAPSED_CONTAINER: &str = "▶ ";
+const FOCUSED_EXPANDED_CONTAINER: &str = "▼ ";
+const COLLAPSED_CONTAINER: &str = "▷ ";
+const EXPANDED_CONTAINER: &str = "▽ ";
 const INDICATOR_WIDTH: usize = 2;
 
 lazy_static::lazy_static! {
@@ -1030,7 +1030,7 @@ mod tests {
 
     use super::*;
 
-    const OBJECT: &'static str = r#"{
+    const OBJECT: &str = r#"{
         "1": 1,
         "2": [
             3,

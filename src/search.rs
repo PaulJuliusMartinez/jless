@@ -48,7 +48,7 @@ pub enum ImmediateSearchState {
 }
 
 pub type MatchRangeIter<'a> = std::slice::Iter<'a, Range<usize>>;
-const STATIC_EMPTY_SLICE: &'static [Range<usize>] = &[];
+const STATIC_EMPTY_SLICE: &[Range<usize>] = &[];
 
 lazy_static::lazy_static! {
     static ref SQUARE_AND_CURLY_BRACKETS: Regex = Regex::new(r"(\\\[|\[|\\\]|\]|\\\{|\{|\\\}|\})").unwrap();
@@ -378,7 +378,7 @@ mod tests {
     use super::SearchDirection::*;
     use super::SearchState;
 
-    const SEARCHABLE: &'static str = r#"{
+    const SEARCHABLE: &str = r#"{
         "1": "aaa",
         "2": [
             "3 bbb",
@@ -539,7 +539,7 @@ mod tests {
 
     #[test]
     fn test_no_wrap_when_opening_of_collapsed_container_and_contents_match_search() {
-        const TEST: &'static str = r#"{
+        const TEST: &str = r#"{
             "term": [
                 "term"
             ],

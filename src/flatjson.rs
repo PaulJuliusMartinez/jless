@@ -635,7 +635,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
 mod tests {
     use super::*;
 
-    const OBJECT: &'static str = r#"{
+    const OBJECT: &str = r#"{
         "1": 1,
         "2": [
             3,
@@ -651,7 +651,7 @@ mod tests {
 
     const OBJECT_LINES: usize = 13;
 
-    const NESTED_OBJECT: &'static str = r#"[
+    const NESTED_OBJECT: &str = r#"[
         {
             "2": [
                 3

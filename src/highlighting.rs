@@ -92,7 +92,7 @@ pub const DIMMED_STYLE: Style = Style {
     ..Style::default()
 };
 
-pub const PREVIEW_STYLES: (&'static Style, &'static Style) = (&DIMMED_STYLE, &GRAY_INVERTED_STYLE);
+pub const PREVIEW_STYLES: (&Style, &Style) = (&DIMMED_STYLE, &GRAY_INVERTED_STYLE);
 
 pub const BLUE_STYLE: Style = Style {
     fg: terminal::LIGHT_BLUE,
