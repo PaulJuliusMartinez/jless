@@ -152,7 +152,7 @@ impl SearchState {
     }
 
     pub fn any_matches(&self) -> bool {
-        self.matches.len() > 0
+        !self.matches.is_empty()
     }
 
     pub fn no_matches_message(&self) -> String {

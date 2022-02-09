@@ -144,7 +144,7 @@ impl TruncatedStrView {
     /// this function, when called on the string the TruncatedStrView is
     /// associated with, returns true.
     pub fn can_str_fit_at_all(s: &str, available_space: isize) -> bool {
-        available_space > 0 || (available_space == 0 && s.len() == 0)
+        available_space > 0 || (available_space == 0 && s.is_empty())
     }
 
     /// Create a truncated view of a string that shows the beginning of
@@ -664,7 +664,7 @@ impl<'a> RangeAdjuster<'a> {
                 // But we have room to showing something...
                 self.available_space > 1 &&
                     // And there's something to show.
-                    self.s.len() > 0;
+                    !self.s.is_empty();
 
         let mut used_space = self.used_space;
         if showing_replacement_character {

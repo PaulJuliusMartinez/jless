@@ -451,7 +451,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
             ..row
         }),
         SerdeValue::Array(vs) => {
-            if vs.len() == 0 {
+            if vs.is_empty() {
                 flat_json.push(Row {
                     value: Value::EmptyArray,
                     ..row
@@ -522,7 +522,7 @@ fn flatten_json(serde_value: SerdeValue, flat_json: &mut Vec<Row>, parents: &mut
             }
         }
         SerdeValue::Object(obj) => {
-            if obj.len() == 0 {
+            if obj.is_empty() {
                 flat_json.push(Row {
                     value: Value::EmptyObject,
                     ..row

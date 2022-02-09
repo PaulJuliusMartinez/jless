@@ -234,7 +234,7 @@ impl App {
                             let search_term = self.screen_writer.get_command("/").unwrap();
 
                             // In vim, /<CR> is a longcut for repeating the previous search.
-                            if search_term == "" {
+                            if search_term.is_empty() {
                                 let count = self.parse_input_buffer_as_number();
                                 jumped_to_search_match = true;
                                 self.jump_to_next_search_match(count)
@@ -260,7 +260,7 @@ impl App {
                             let search_term = self.screen_writer.get_command("?").unwrap();
 
                             // In vim, /<CR> is a longcut for repeating the previous search.
-                            if search_term == "" {
+                            if search_term.is_empty() {
                                 let count = self.parse_input_buffer_as_number();
                                 jumped_to_search_match = true;
                                 self.jump_to_prev_search_match(count)
