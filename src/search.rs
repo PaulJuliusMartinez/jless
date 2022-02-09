@@ -72,10 +72,10 @@ impl SearchState {
         let regex_input;
         let mut case_sensitive_specified = false;
 
-        if search_input.ends_with("/") {
-            regex_input = &search_input[..search_input.len() - 1];
-        } else if search_input.ends_with("/s") {
-            regex_input = &search_input[..search_input.len() - 2];
+        if let Some(stripped_of_slash) = search_input.strip_suffix('/') {
+            regex_input = stripped_of_slash;
+        } else if let Some(stripped_of_slash_s) = search_input.strip_suffix("/s") {
+            regex_input = stripped_of_slash_s;
             case_sensitive_specified = true;
         } else {
             regex_input = search_input;
@@ -307,7 +307,7 @@ impl SearchState {
                             next_match - 1
                         };
 
-                        self.cycle_match(next_match_index, -1 * (jumps - 1) as isize)
+                        self.cycle_match(next_match_index, -((jumps - 1) as isize))
                     }
                 }
             }
@@ -318,7 +318,7 @@ impl SearchState {
             } => {
                 let delta: isize = match true_direction {
                     SearchDirection::Forward => jumps as isize,
-                    SearchDirection::Reverse => -1 * (jumps as isize),
+                    SearchDirection::Reverse => -(jumps as isize),
                 };
 
                 if last_search_into_collapsed_container {

@@ -374,7 +374,7 @@ impl App {
 
     fn buffer_input(&mut self, ch: u8) {
         // Don't buffer leading 0s.
-        if self.input_buffer.is_empty() && ch == '0' as u8 {
+        if self.input_buffer.is_empty() && ch == b'0' {
             return;
         }
 
@@ -391,7 +391,7 @@ impl App {
             Some(Action::MoveFocusedLineToCenter)
         } else {
             self.input_buffer.clear();
-            self.buffer_input('z' as u8);
+            self.buffer_input(b'z');
             None
         }
     }

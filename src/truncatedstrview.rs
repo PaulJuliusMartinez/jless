@@ -95,7 +95,7 @@ struct RangeAdjuster<'a> {
 impl TruncatedRange {
     // Create a RangeAdjuster representing the current state of the
     // TruncatedRange.
-    fn to_adjuster<'a, 'b>(&'a self, s: &'b str, available_space: isize) -> RangeAdjuster<'b> {
+    fn adjuster<'a, 'b>(&'a self, s: &'b str, available_space: isize) -> RangeAdjuster<'b> {
         let mut used_space = self.used_space;
         // The adjuster doesn't keep track of the replacement character.
         if self.showing_replacement_character {
@@ -183,10 +183,8 @@ impl TruncatedStrView {
     /// Return the amount of space used by a string view, if the string
     /// is representable.
     pub fn used_space(&self) -> Option<isize> {
-        match self.range {
-            None => None,
-            Some(TruncatedRange { used_space, .. }) => Some(used_space),
-        }
+        self.range
+            .map(|TruncatedRange { used_space, .. }| used_space)
     }
 
     /// Check whether this is a view of a string that is totally elided,
@@ -206,7 +204,7 @@ impl TruncatedStrView {
     // is representable and we have a view.
     fn range_adjuster<'a, 'b>(&'a self, s: &'b str) -> RangeAdjuster<'b> {
         debug_assert!(self.range.is_some());
-        self.range.unwrap().to_adjuster(s, self.available_space)
+        self.range.unwrap().adjuster(s, self.available_space)
     }
 
     /// Scrolls a string view to the right by at least the specified
@@ -488,14 +486,14 @@ impl<'a> RangeAdjuster<'a> {
     /// Add as many characters to the right side of the string as we
     /// can without exceeding the available space.
     pub fn fill_right(&mut self) {
-        let mut right_graphemes = self.s[self.end..].graphemes(true);
+        let right_graphemes = self.s[self.end..].graphemes(true);
         // Note that we should consider the next grapheme even if we
         // have already used up all the available space, because the
         // next grapheme might be the end of the string, and we'd no
         // longer have to show the ellipsis.
         //
         // This allows converting "…xy…" to "…xyz".
-        while let Some(grapheme) = right_graphemes.next() {
+        for grapheme in right_graphemes {
             if !self.add_grapheme_to_right_if_it_will_fit(grapheme) {
                 break;
             }

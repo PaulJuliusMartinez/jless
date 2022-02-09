@@ -211,8 +211,8 @@ impl Iterator for TuiInput {
             };
         }
 
-        if poll_res.is_some() {
-            return Some(Err(poll_res.unwrap()));
+        if let Some(poll_err) = poll_res {
+            return Some(Err(poll_err));
         }
 
         if self.poll_fds[SIGWINCH_PIPE_INDEX].revents & libc::POLLIN != 0 {

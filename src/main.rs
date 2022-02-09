@@ -93,7 +93,7 @@ fn print_pretty_printed_json(json: String) {
         if trailing_comma {
             print!(",");
         }
-        println!("");
+        println!();
     }
 }
 

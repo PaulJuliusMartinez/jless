@@ -282,7 +282,7 @@ impl<'a> JsonParser<'a> {
                 self.pretty_printed.push_str(", ");
             } else {
                 // Add space inside objects.
-                self.pretty_printed.push_str(" ");
+                self.pretty_printed.push(' ');
             }
 
             if self.peek_token()? != JsonToken::String {
@@ -338,7 +338,7 @@ impl<'a> JsonParser<'a> {
             self.rows[object_open_index].range.end = self.rows[object_open_index].range.start + 2;
         } else {
             // Print space inside closing brace.
-            self.pretty_printed.push_str(" ");
+            self.pretty_printed.push(' ');
 
             let close_value = Value::CloseContainer {
                 container_type: ContainerType::Object,
@@ -383,8 +383,7 @@ impl<'a> JsonParser<'a> {
         let (bool_str, len) = if b { ("true", 4) } else { ("false", 5) };
 
         self.rows[row_index].range.end = self.rows[row_index].range.start + len;
-        self.pretty_printed
-            .push_str(if b { bool_str } else { bool_str });
+        self.pretty_printed.push_str(bool_str);
 
         Ok(row_index)
     }

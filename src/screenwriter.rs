@@ -170,7 +170,7 @@ impl ScreenWriter {
         result
     }
 
-    fn print_line<'a>(
+    fn print_line(
         &mut self,
         viewer: &JsonViewer,
         screen_index: u16,
