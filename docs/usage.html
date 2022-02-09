@@ -18,7 +18,7 @@
         margin: 0 auto;
         padding: 16px;
         max-width: 800px;
-        background-color: #efeff8;
+        background-color: #f4f4f8;
         font-family: 'Fira Sans', sans-serif;
         font-size: 22px;
       }
@@ -88,7 +88,13 @@
       }
 
       footer img {
-        width: max(25%, 225px);
+        width: max(25%, 160px);
+      }
+
+      @media (max-width: 540px) {
+        body {
+          font-size: 19px;
+        }
       }
     </style>
   </head>
@@ -334,7 +340,7 @@
     In line mode you can press <code>%</code> when focused on a open or close delimiter of an object or array to jump to its matching pair.
     </p>
     <footer>
-      <img style="width: max(25%, 225px);" src="./assets/logo/mascot-rocket.svg">
+      <img src="./assets/logo/mascot-rocket.svg">
       <div style="margin-top: 24px">
         Created by <a href="https://twitter.com/CodeIsTheEnd">CodeIsTheEnd</a>.
       </div>
