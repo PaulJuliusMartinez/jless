@@ -788,7 +788,7 @@ impl JsonViewer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::flatjson::{parse_top_level_json, parse_top_level_json2, NIL};
+    use crate::flatjson::{parse_top_level_json, NIL};
 
     impl OptionIndex {
         pub fn to_usize(&self) -> usize {
@@ -1575,7 +1575,7 @@ mod tests {
             }
         "#;
 
-        let fj = parse_top_level_json2(nd_json.to_owned()).unwrap();
+        let fj = parse_top_level_json(nd_json.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
 
         assert_window_tracking(

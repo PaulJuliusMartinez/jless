@@ -44,7 +44,7 @@ impl App {
         input_filename: String,
         stdout: Box<dyn Write>,
     ) -> Result<App, String> {
-        let flatjson = match flatjson::parse_top_level_json2(json) {
+        let flatjson = match flatjson::parse_top_level_json(json) {
             Ok(flatjson) => flatjson,
             Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
         };

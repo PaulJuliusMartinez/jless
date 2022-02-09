@@ -1028,7 +1028,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 mod tests {
     use unicode_width::UnicodeWidthStr;
 
-    use crate::flatjson::parse_top_level_json2;
+    use crate::flatjson::parse_top_level_json;
     use crate::terminal;
     use crate::terminal::test::{TextOnlyTerminal, VisibleEscapesTerminal};
 
@@ -1111,7 +1111,7 @@ mod tests {
 
     #[test]
     fn test_data_mode_focus_indicators() -> std::fmt::Result {
-        let mut fj = parse_top_level_json2(OBJECT.to_owned()).unwrap();
+        let mut fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
         let value_range = 0..fj.1.len();
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = LinePrinter {
@@ -1465,7 +1465,7 @@ mod tests {
         //           01234567890123456789012345678901 (31 characters)
         //            {a: 1, d: {…}, "b c": null}
         //           0123456789012345678901234567 (27 characters)
-        let fj = parse_top_level_json2(json.to_owned()).unwrap();
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
@@ -1510,7 +1510,7 @@ mod tests {
         let json = r#"[1, {"x": true}, null, "hello", true]"#;
         //            [1, {…}, null, "hello", true]
         //           012345678901234567890123456789 (29 characters)
-        let fj = parse_top_level_json2(json.to_owned()).unwrap();
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
@@ -1559,7 +1559,7 @@ mod tests {
         let json = r#"{"a": [1, {"x": true}, null, "hello", true]}"#;
         //            {a: [1, {…}, null, "hello", true]}
         //           01234567890123456789012345678901234 (34 characters)
-        let fj = parse_top_level_json2(json.to_owned()).unwrap();
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
@@ -1585,7 +1585,7 @@ mod tests {
         let json = r#"[{"a": 1, "d": {"x": true}, "b c": null}]"#;
         //            [{a: 1, d: {…}, "b c": null}]
         //           012345678901234567890123456789 (29 characters)
-        let fj = parse_top_level_json2(json.to_owned()).unwrap();
+        let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {

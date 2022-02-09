@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::fmt;
 use std::ops::Range;
 
@@ -300,16 +301,16 @@ impl TruncatedStrView {
             return TruncatedStrView::init_start(s, available_space);
         }
 
-        if available_space < self.available_space {
-            if !Self::can_str_fit_at_all(s, available_space) {
-                Self::init_no_view(available_space)
-            } else {
-                self.shrink(s, available_space)
+        match available_space.cmp(&self.available_space) {
+            Ordering::Less => {
+                if !Self::can_str_fit_at_all(s, available_space) {
+                    Self::init_no_view(available_space)
+                } else {
+                    self.shrink(s, available_space)
+                }
             }
-        } else if available_space > self.available_space {
-            self.expand(s, available_space)
-        } else {
-            *self
+            Ordering::Greater => self.expand(s, available_space),
+            Ordering::Equal => *self,
         }
     }
 

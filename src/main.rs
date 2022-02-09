@@ -1,3 +1,7 @@
+// I don't like this rule because it changes the semantic
+// structure of the code.
+#![allow(clippy::collapsible_else_if)]
+
 extern crate lazy_static;
 
 use std::fs::File;
@@ -60,7 +64,7 @@ fn main() {
 }
 
 fn print_pretty_printed_json(json: String) {
-    let flatjson = match flatjson::parse_top_level_json2(json) {
+    let flatjson = match flatjson::parse_top_level_json(json) {
         Ok(flatjson) => flatjson,
         Err(err) => {
             eprintln!("Unable to parse input: {:?}", err);
