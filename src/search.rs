@@ -120,7 +120,7 @@ impl SearchState {
 
         // The default Display implementation for these errors spills
         // onto multiple lines.
-        let inverted = Self::invert_square_and_curly_bracket_escaping(&regex_input);
+        let inverted = Self::invert_square_and_curly_bracket_escaping(regex_input);
 
         let regex = RegexBuilder::new(&inverted)
             .case_insensitive(!case_sensitive)

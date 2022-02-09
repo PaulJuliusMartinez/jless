@@ -851,9 +851,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            self.generate_container_preview(flatjson, &row, available_space, quoted_object_keys)?
+            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?
         } else {
-            self.fill_in_value_preview(&flatjson.1, &row, available_space)?
+            self.fill_in_value_preview(&flatjson.1, row, available_space)?
         };
         used_space += space_used_for_value;
 

@@ -348,7 +348,7 @@ impl ScreenWriter {
         let path_to_node = ScreenWriter::get_path_to_focused_node(viewer);
         self.print_path_to_node_and_file_name(
             &path_to_node,
-            &input_filename,
+            input_filename,
             viewer.dimensions.width as isize,
         )?;
 
@@ -541,7 +541,7 @@ impl ScreenWriter {
             // Make tsv not a reference.
             let mut tsv = *tsv;
             let value_ref = self
-                .line_primitive_value_ref(&viewer.flatjson[row], &viewer)
+                .line_primitive_value_ref(&viewer.flatjson[row], viewer)
                 .unwrap();
             if to_right {
                 tsv = tsv.scroll_right(value_ref, count);
@@ -564,7 +564,7 @@ impl ScreenWriter {
             // Make tsv not a reference.
             let mut tsv = *tsv;
             let value_ref = self
-                .line_primitive_value_ref(&viewer.flatjson[row], &viewer)
+                .line_primitive_value_ref(&viewer.flatjson[row], viewer)
                 .unwrap();
             tsv = tsv.jump_to_an_end(value_ref);
             self.truncated_row_value_views
@@ -587,7 +587,7 @@ impl ScreenWriter {
             }
 
             let json_row = &viewer.flatjson[row];
-            let value_ref = self.line_primitive_value_ref(json_row, &viewer).unwrap();
+            let value_ref = self.line_primitive_value_ref(json_row, viewer).unwrap();
 
             let mut range = json_row.range.clone();
             if json_row.is_string() {
