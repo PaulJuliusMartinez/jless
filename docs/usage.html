@@ -278,7 +278,7 @@
       A trailing slash will be removed from a pattern; to search for a pattern ending in <code>/</code> (or <code>/s</code>), just add another <code>/</code> to the end.
     </p>
     <p>
-    The search pattern are interpreted as mostly standard regular expressions, with one exception. Because JSON data occurs many square and curly brackets (<code>[]{}</code>), these characters do <i>not</i> take on their usual meanings (specifying characters classes and repetition counts respectively) and are instead interpreted literally.
+    Search patterns are interpreted as mostly standard regular expressions, with one exception. Because JSON data contains many square and curly brackets (<code>[]{}</code>), these characters do <i>not</i> take on their usual meanings (specifying characters classes and repetition counts respectively) and are instead interpreted literally.
     </p>
     <p>
       To use character classes or repetition counts, escape these characters with a backslash.
@@ -322,7 +322,7 @@
       (No spaces inside empty objects or arrays, one space inside objects with values, no spaces inside array square brackets, no space between an object key and ':', one space after the ':', and one space after commas separating object entries and array elements.)
     </p>
     <p>
-      Searching will performed over this internal representation so that patterns can include multiple elements without worrying about newlines or the exact input format.
+      Searching will be performed over this internal representation so that patterns can include multiple elements without worrying about newlines or the exact input format.
     </p>
     <p>
       When the input is newline-delimited JSON, an actual newline will separate each top-level JSON element in the internal representation.
@@ -331,13 +331,13 @@
     <h3 id="data-mode-vs-line-mode">Data Mode vs. Line Mode</h3>
     </p>
     <p>
-      JLess starts in "data" mode, which displays the JSON data in a more streamlined fashion: no closing delimiters for objects or arrays, no trailing commas, no quotes around object keys that are valid identifiers in JavaScript. It also shows single-line previous of objects and arrays, and array indexes before array elements. Note that when using full-text search, object keys will still be surrounded by quotes.
+      JLess starts in "data" mode, which displays the JSON data in a more streamlined fashion: no closing delimiters for objects or arrays, no trailing commas, no quotes around object keys that are valid identifiers in JavaScript. It also shows single-line previews of objects and arrays, and array indexes before array elements. Note that when using full-text search, object keys will still be surrounded by quotes.
     </p>
     <p>
     By pressing <code>m</code>, you can switch jless to "line" mode, which displays the input as pretty printed JSON.
     </p>
     <p>
-    In line mode you can press <code>%</code> when focused on a open or close delimiter of an object or array to jump to its matching pair.
+    In line mode you can press <code>%</code> when focused on an open or close delimiter of an object or array to jump to its matching pair.
     </p>
     <footer>
       <img src="./assets/logo/mascot-rocket.svg">

@@ -91,10 +91,10 @@
       A trailing slash will be removed from a pattern; to search for a
       pattern ending in '/' (or '/s'), just add another '/' to the end.
 
-      The search pattern are interpreted as mostly standard regular
-      expressions, with one exception. Because JSON data occurs many square
-      and curly brackets ("[]{}"), these characters do *not* take on their
-      usual meanings (specifying characters classes and repetition counts
+      Search patterns are interpreted as mostly standard regular expressions,
+      with one exception. Because JSON data contains many square and curly
+      brackets ("[]{}"), these characters do *not* take on their usual
+      meanings (specifying characters classes and repetition counts
       respectively) and are instead interpreted literally.
 
       To use character classes or repetition counts, escape these characters
@@ -140,7 +140,7 @@
       an object key and ':', one space after the ':', and one space after
       commas separating object entries and array elements.)
 
-      Searching will performed over this internal representation so that
+      Searching will be performed over this internal representation so that
       patterns can include multiple elements without worrying about
       newlines or the exact input format.
 
@@ -152,15 +152,15 @@
       jless starts in "data" mode, which displays the JSON data in a more
       streamlined fashion: no closing delimiters for objects or arrays,
       no trailing commas, no quotes around object keys that are valid
-      identifiers in JavaScript. It also shows single-line previous of
+      identifiers in JavaScript. It also shows single-line previews of
       objects and arrays, and array indexes before array elements. Note
       that when using full-text search, object keys will still be
       surrounded by quotes.
 
       By pressing 'm', you can switch jless to "line" mode, which displays
-      the input as pretty printed JSON.
+      the input as pretty-printed JSON.
 
-      In line mode you can press '%' when focused on a open or close
+      In line mode you can press '%' when focused on an open or close
       delimiter of an object or array to jump to its matching pair.
 
 
