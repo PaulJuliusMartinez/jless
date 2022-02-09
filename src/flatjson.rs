@@ -260,20 +260,6 @@ pub enum ContainerType {
 }
 
 impl ContainerType {
-    pub fn open_char(&self) -> char {
-        match self {
-            ContainerType::Object => '{',
-            ContainerType::Array => '[',
-        }
-    }
-
-    pub fn close_char(&self) -> char {
-        match self {
-            ContainerType::Object => '}',
-            ContainerType::Array => ']',
-        }
-    }
-
     pub fn open_str(&self) -> &'static str {
         match self {
             ContainerType::Object => "{",
@@ -285,13 +271,6 @@ impl ContainerType {
         match self {
             ContainerType::Object => "}",
             ContainerType::Array => "]",
-        }
-    }
-
-    pub fn type_str(&self) -> &'static str {
-        match self {
-            ContainerType::Object => "Object",
-            ContainerType::Array => "Array",
         }
     }
 
@@ -648,8 +627,6 @@ mod tests {
         },
         "11": 11
     }"#;
-
-    const OBJECT_LINES: usize = 13;
 
     const NESTED_OBJECT: &str = r#"[
         {

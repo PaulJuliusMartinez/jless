@@ -757,7 +757,12 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 // If we're not the first child, the previous elem will have
                 // printed the ", " separator.
                 self.highlight_str("…", None, highlighting::PREVIEW_STYLES)?;
+
+                // This variable technically isn't used again, but for "correctness"
+                // we'll keep it in case we do use the variable later, or code gets
+                // moved around.
                 available_space -= 1;
+
                 num_printed += 1;
                 break;
             } else {

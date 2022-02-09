@@ -30,7 +30,6 @@ pub struct SearchState {
     pub direction: SearchDirection,
 
     pub search_term: String,
-    compiled_regex: Regex,
 
     matches: Vec<Range<usize>>,
 
@@ -63,7 +62,6 @@ impl SearchState {
         SearchState {
             direction: SearchDirection::Forward,
             search_term: "".to_owned(),
-            compiled_regex: Regex::new("").unwrap(),
             matches: vec![],
             immediate_state: ImmediateSearchState::NotSearching,
             ever_searched: false,
@@ -132,7 +130,6 @@ impl SearchState {
         Ok(SearchState {
             direction,
             search_term: regex_input.to_owned(),
-            compiled_regex: regex,
             matches,
             immediate_state: ImmediateSearchState::NotSearching,
             ever_searched: true,
