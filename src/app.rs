@@ -157,12 +157,12 @@ impl App {
                         Key::Char('n') => {
                             let count = self.parse_input_buffer_as_number();
                             jumped_to_search_match = true;
-                            self.jump_to_next_search_match(count)
+                            self.jump_to_search_match(JumpDirection::Next, count)
                         }
                         Key::Char('N') => {
                             let count = self.parse_input_buffer_as_number();
                             jumped_to_search_match = true;
-                            self.jump_to_prev_search_match(count)
+                            self.jump_to_search_match(JumpDirection::Prev, count)
                         }
                         Key::Char('.') => {
                             let count = self.parse_input_buffer_as_number();
@@ -175,6 +175,34 @@ impl App {
                             self.screen_writer
                                 .scroll_focused_line_left(&self.viewer, count);
                             None
+                        }
+                        Key::Char('/') => {
+                            let count = self.parse_input_buffer_as_number();
+                            let action = self
+                                .get_search_input_and_start_search(SearchDirection::Forward, count);
+                            jumped_to_search_match = action.is_some();
+                            action
+                        }
+                        Key::Char('?') => {
+                            let count = self.parse_input_buffer_as_number();
+                            let action = self
+                                .get_search_input_and_start_search(SearchDirection::Reverse, count);
+                            jumped_to_search_match = action.is_some();
+                            action
+                        }
+                        Key::Char('*') => {
+                            let count = self.parse_input_buffer_as_number();
+                            let action =
+                                self.start_object_key_search(SearchDirection::Forward, count);
+                            jumped_to_search_match = action.is_some();
+                            action
+                        }
+                        Key::Char('#') => {
+                            let count = self.parse_input_buffer_as_number();
+                            let action =
+                                self.start_object_key_search(SearchDirection::Reverse, count);
+                            jumped_to_search_match = action.is_some();
+                            action
                         }
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
@@ -234,82 +262,6 @@ impl App {
                             }
 
                             None
-                        }
-                        Key::Char('/') => {
-                            let search_term = self.screen_writer.get_command("/").unwrap();
-
-                            // In vim, /<CR> is a longcut for repeating the previous search.
-                            if search_term.is_empty() {
-                                let count = self.parse_input_buffer_as_number();
-                                jumped_to_search_match = true;
-                                self.jump_to_next_search_match(count)
-                            } else {
-                                if self.initialize_search(SearchDirection::Forward, search_term) {
-                                    jumped_to_search_match = true;
-
-                                    if !self.search_state.any_matches() {
-                                        self.message = Some((
-                                            self.search_state.no_matches_message(),
-                                            MessageSeverity::Warn,
-                                        ));
-                                        None
-                                    } else {
-                                        self.jump_to_next_search_match(1)
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                        }
-                        Key::Char('?') => {
-                            let search_term = self.screen_writer.get_command("?").unwrap();
-
-                            // In vim, /<CR> is a longcut for repeating the previous search.
-                            if search_term.is_empty() {
-                                let count = self.parse_input_buffer_as_number();
-                                jumped_to_search_match = true;
-                                self.jump_to_prev_search_match(count)
-                            } else {
-                                if self.initialize_search(SearchDirection::Reverse, search_term) {
-                                    jumped_to_search_match = true;
-
-                                    if !self.search_state.any_matches() {
-                                        self.message = Some((
-                                            self.search_state.no_matches_message(),
-                                            MessageSeverity::Warn,
-                                        ));
-                                        None
-                                    } else {
-                                        self.jump_to_next_search_match(1)
-                                    }
-                                } else {
-                                    None
-                                }
-                            }
-                        }
-                        Key::Char('*') => {
-                            if self.initialize_object_key_search(SearchDirection::Forward) {
-                                jumped_to_search_match = true;
-                                self.jump_to_next_search_match(1)
-                            } else {
-                                self.message = Some((
-                                    "Must be focused on Object key to use '*'".to_string(),
-                                    MessageSeverity::Warn,
-                                ));
-                                None
-                            }
-                        }
-                        Key::Char('#') => {
-                            if self.initialize_object_key_search(SearchDirection::Reverse) {
-                                jumped_to_search_match = true;
-                                self.jump_to_next_search_match(1)
-                            } else {
-                                self.message = Some((
-                                    "Must be focused on Object key to use '#'".to_string(),
-                                    MessageSeverity::Warn,
-                                ));
-                                None
-                            }
                         }
                         _ => {
                             eprint!("{}\r", BELL);
@@ -407,6 +359,39 @@ impl App {
         n.unwrap_or(1)
     }
 
+    fn get_search_input_and_start_search(
+        &mut self,
+        direction: SearchDirection,
+        jumps: usize,
+    ) -> Option<Action> {
+        let prompt_str = match direction {
+            SearchDirection::Forward => "/",
+            SearchDirection::Reverse => "?",
+        };
+        let search_term = self.screen_writer.get_command(prompt_str).unwrap();
+
+        // In vim, /<CR> or ?<CR> is a longcut for repeating the previous search.
+        if search_term.is_empty() {
+            // This will actually set the direction of a search going forward.
+            self.search_state.direction = direction;
+            self.jump_to_search_match(JumpDirection::Next, jumps)
+        } else {
+            if self.initialize_search(direction, search_term) {
+                if !self.search_state.any_matches() {
+                    self.message = Some((
+                        self.search_state.no_matches_message(),
+                        MessageSeverity::Warn,
+                    ));
+                    None
+                } else {
+                    self.jump_to_search_match(JumpDirection::Next, jumps)
+                }
+            } else {
+                None
+            }
+        }
+    }
+
     fn initialize_search(&mut self, direction: SearchDirection, search_term: String) -> bool {
         match SearchState::initialize_search(search_term, &self.viewer.flatjson.1, direction) {
             Ok(ss) => {
@@ -420,6 +405,23 @@ impl App {
         }
     }
 
+    fn start_object_key_search(
+        &mut self,
+        direction: SearchDirection,
+        jumps: usize,
+    ) -> Option<Action> {
+        if self.initialize_object_key_search(direction) {
+            self.jump_to_search_match(JumpDirection::Next, jumps)
+        } else {
+            let message = match direction {
+                SearchDirection::Forward => "Must be focused on Object key to use '*'".to_string(),
+                SearchDirection::Reverse => "Must be focused on Object key to use '#'".to_string(),
+            };
+            self.message = Some((message, MessageSeverity::Warn));
+            None
+        }
+    }
+
     fn initialize_object_key_search(&mut self, direction: SearchDirection) -> bool {
         if let Some(key_range) = &self.viewer.flatjson[self.viewer.focused_row].key_range {
             // Note key_range already includes quotes around key.
@@ -430,7 +432,11 @@ impl App {
         }
     }
 
-    fn jump_to_next_search_match(&mut self, jumps: usize) -> Option<Action> {
+    fn jump_to_search_match(
+        &mut self,
+        jump_direction: JumpDirection,
+        jumps: usize,
+    ) -> Option<Action> {
         if !self.search_state.ever_searched {
             self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
             return None;
@@ -445,28 +451,7 @@ impl App {
         let destination = self.search_state.jump_to_match(
             self.viewer.focused_row,
             &self.viewer.flatjson,
-            JumpDirection::Next,
-            jumps,
-        );
-        Some(Action::MoveTo(destination))
-    }
-
-    fn jump_to_prev_search_match(&mut self, jumps: usize) -> Option<Action> {
-        if !self.search_state.ever_searched {
-            self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
-            return None;
-        } else if !self.search_state.any_matches() {
-            self.message = Some((
-                self.search_state.no_matches_message(),
-                MessageSeverity::Warn,
-            ));
-            return None;
-        }
-
-        let destination = self.search_state.jump_to_match(
-            self.viewer.focused_row,
-            &self.viewer.flatjson,
-            JumpDirection::Prev,
+            jump_direction,
             jumps,
         );
         Some(Action::MoveTo(destination))

@@ -70,8 +70,8 @@
 
       jless supports full-text search over the input JSON.
 
-  /pattern     Search forward   for the given pattern
-  ?pattern     Search backwards for the given pattern
+  /pattern  *  Search forward   for the given pattern (or its [4mN[0mth occurrence).
+  ?pattern  *  Search backwards for the given pattern (or its [4mN[0mth occurrence).
 
   *         *  Move to the next occurrence of the object key on the focused
                  line (or move forward [4mN[0m occurrences)
