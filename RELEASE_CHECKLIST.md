@@ -1,0 +1,32 @@
+## Release Checklist
+
+- `VERSION=<new version>`
+- Update version in [`Cargo.toml`](./Cargo.toml).
+- Run `cargo build` to update [`Cargo.lock`](./Cargo.lock).
+- Add changes since last release to [`CHANGELOG.md`](./CHANGELOG.md). (You
+  should do this with every commit!)
+- Update [`docs/releases.html`](./docs/releases.html)
+  - Create new release section
+  - Copy changes from `CHANGELOG.md` to new section
+  - Add binaries section to new release with updated paths
+- Update version number in [`docs/index.html`](./docs/index.html) install instructions
+- Commit all changes with commit message: `vX.Y.Z Release`
+- Tag commit and push it to GitHub: `git tag $VERSION && git push origin $VERSION`
+- Publish new version to crates.io: `cargo publish`
+- Generate new binaries:
+  - macOS:
+    - `cargo build --release`
+    - `cd target/release`
+    - `zip -r -X jless-$VERSION-x86_64-apple-darwin.zip jless`
+  - Linux:
+    - Make sure you can cross-compile for Linux:
+      - `brew tap SergioBenitez/osxct`
+      - `brew install x86_64-unknown-linux-gnu`
+    - `CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER=x86_64-unknown-linux-gnu-gcc cargo build --release --target=x86_64-unknown-linux-gnu`
+    - `cd target/x86_64-unknown-linux-gnu/release`
+    - `zip -r -X jless-$VERSION-x86_64-unknown-linux-gnu.zip target/x86_64-unknown-linux-gnu/release/jless`
+- Create GitHub release
+  - Click "Create new release"
+  - Select tag
+  - Copy stuff from `CHANGELOG.md` to description
+  - Attach binaries generated above
