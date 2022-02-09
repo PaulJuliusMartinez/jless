@@ -64,6 +64,10 @@
         font-size: 16px;
       }
 
+      .code-block .prefix {
+        user-select: none;
+      }
+
       code {
         position: relative;
         top: -2px;
@@ -103,9 +107,9 @@
     <p>
       JLess can read files directly, or read JSON data from standard input:
     </p>
-    <div class="code-block">$ curl https://api.github.com/repos/PaulJuliusMartinez/jless/commits -o commits.json
-$ jless commits.json
-$ cat commits.json | jless -</div>
+    <div class="code-block"><span class="prefix">$ </span>curl https://api.github.com/repos/PaulJuliusMartinez/jless/commits -o commits.json
+<span class="prefix">$ </span>jless commits.json
+<span class="prefix">$ </span>cat commits.json | jless</div>
     <p>
     JLess can handle newline-delimited JSON, so feel free to pipe in the output from <a href="https://stedolan.github.io/jq/">jq</a> or some dense log files.
     </p>

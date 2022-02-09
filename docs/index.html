@@ -102,6 +102,10 @@
         font-size: 16px;
       }
 
+      .code-block .prefix {
+        user-select: none;
+      }
+
       footer {
         display: flex;
         flex-direction: column;
@@ -157,9 +161,9 @@
         <label id="mac-install-label" for="mac-install">macOS</label>
         <label id="linux-install-label" for="linux-install">Linux</label>
       </div>
-<div id="mac-install-block" class="code-block">$ curl -OL https://github.com/PaulJuliusMartinez/jless/releases/download/v0.7.0/jless-v0.7.0-x86_64-apple-darwin.zip
-$ unzip jless-v0.7.0-x86_64-apple-darwin.zip
-$ ./jless data.json</div>
+    <div id="mac-install-block" class="code-block"><span class="prefix">$ </span>curl -OL https://github.com/PaulJuliusMartinez/jless/releases/download/v0.7.0/jless-v0.7.0-x86_64-apple-darwin.zip
+<span class="prefix">$ </span>unzip jless-v0.7.0-x86_64-apple-darwin.zip
+<span class="prefix">$ </span>./jless data.json</div>
 <div id="linux-install-block" class="code-block">$ curl -OL https://github.com/PaulJuliusMartinez/jless/releases/download/v0.7.0/jless-v0.7.0-x86_64-unknown-linux-gnu.zip
 $ unzip jless-v0.7.0-x86_64-unknown-linux-gnu.zip
 $ ./jless data.json</div>
@@ -167,7 +171,7 @@ $ ./jless data.json</div>
     </p>
     <p>
       If you have a Rust toolchain installed, you can also install directly from source using cargo:
-      <div class="code-block">$ cargo install jless</div>
+      <div class="code-block"><span class="prefix">$ </span>cargo install jless</div>
     </p>
     <p>
       Check out the <a href="./usage.html">user guide</a> to learn about the full functionality of JLess.
