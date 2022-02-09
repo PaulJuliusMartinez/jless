@@ -194,21 +194,21 @@ impl JsonViewer {
     }
 
     fn should_reset_desired_depth(action: &Action) -> bool {
-        match action {
-            Action::NoOp => false,
-            Action::FocusPrevSibling(_) => false,
-            Action::FocusNextSibling(_) => false,
-            Action::ScrollUp(_) => false,
-            Action::ScrollDown(_) => false,
-            Action::PageUp(_) => false,
-            Action::PageDown(_) => false,
-            Action::MoveFocusedLineToTop => false,
-            Action::MoveFocusedLineToCenter => false,
-            Action::MoveFocusedLineToBottom => false,
-            Action::ToggleMode => false,
-            Action::ResizeViewerDimensions(_) => false,
-            _ => true,
-        }
+        !matches!(
+            action,
+            Action::NoOp
+                | Action::FocusPrevSibling(_)
+                | Action::FocusNextSibling(_)
+                | Action::ScrollUp(_)
+                | Action::ScrollDown(_)
+                | Action::PageUp(_)
+                | Action::PageDown(_)
+                | Action::MoveFocusedLineToTop
+                | Action::MoveFocusedLineToCenter
+                | Action::MoveFocusedLineToBottom
+                | Action::ToggleMode
+                | Action::ResizeViewerDimensions(_)
+        )
     }
 
     fn move_up(&mut self, rows: usize) {

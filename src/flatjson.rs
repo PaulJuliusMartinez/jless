@@ -15,10 +15,7 @@ pub enum OptionIndex {
 
 impl OptionIndex {
     pub fn is_nil(&self) -> bool {
-        match self {
-            OptionIndex::Nil => true,
-            _ => false,
-        }
+        matches!(self, OptionIndex::Nil)
     }
 
     pub fn is_some(&self) -> bool {
@@ -310,18 +307,14 @@ impl Value {
     }
 
     pub fn is_container(&self) -> bool {
-        match self {
-            Value::OpenContainer { .. } => true,
-            Value::CloseContainer { .. } => true,
-            _ => false,
-        }
+        matches!(
+            self,
+            Value::OpenContainer { .. } | Value::CloseContainer { .. }
+        )
     }
 
     pub fn is_string(&self) -> bool {
-        match self {
-            Value::String => true,
-            _ => false,
-        }
+        matches!(self, Value::String)
     }
 
     pub fn container_type(&self) -> Option<ContainerType> {
@@ -333,17 +326,11 @@ impl Value {
     }
 
     pub fn is_opening_of_container(&self) -> bool {
-        match self {
-            Value::OpenContainer { .. } => true,
-            _ => false,
-        }
+        matches!(self, Value::OpenContainer { .. })
     }
 
     pub fn is_closing_of_container(&self) -> bool {
-        match self {
-            Value::CloseContainer { .. } => true,
-            _ => false,
-        }
+        matches!(self, Value::CloseContainer { .. })
     }
 
     pub fn is_collapsed(&self) -> bool {
@@ -359,17 +346,16 @@ impl Value {
     }
 
     pub fn is_array(&self) -> bool {
-        match self {
+        matches!(
+            self,
             Value::OpenContainer {
                 container_type: ContainerType::Array,
                 ..
-            } => true,
-            Value::CloseContainer {
+            } | Value::CloseContainer {
                 container_type: ContainerType::Array,
                 ..
-            } => true,
-            _ => false,
-        }
+            }
+        )
     }
 
     fn toggle_collapsed(&mut self) {
