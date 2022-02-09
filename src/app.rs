@@ -98,7 +98,12 @@ impl App {
             let event = event.unwrap();
             let action = match event {
                 // These inputs quit.
-                KeyEvent(Key::Ctrl('c')) | KeyEvent(Key::Char('q')) => break,
+                KeyEvent(Key::Ctrl('c') | Key::Char('q')) => break,
+                // Show the help page
+                KeyEvent(Key::F(1)) => {
+                    self.show_help();
+                    None
+                }
                 // These inputs may be buffered.
                 KeyEvent(Key::Char(ch @ '0'..='9')) => {
                     if ch == '0' && self.input_buffer.is_empty() {
@@ -307,7 +312,7 @@ impl App {
                             }
                         }
                         _ => {
-                            print!("{}Got: {:?}\r", BELL, event);
+                            eprint!("{}\r", BELL);
                             None
                         }
                     };
@@ -335,7 +340,7 @@ impl App {
                     ))
                 }
                 _ => {
-                    print!("{}Got: {:?}\r", BELL, event);
+                    eprint!("{}\r", BELL);
                     None
                 }
             };
