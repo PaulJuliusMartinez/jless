@@ -1,3 +1,16 @@
+v0.7.1 (2022-02-09)
+==================
+
+New features:
+- F1 now opens help page
+- Search initialization commands (/, ?, *, #) all now accept count
+  arguments
+
+Internal code cleanup:
+- Address a lot of issues reported by clippy
+- Remove chunks of unused code, including serde dependency
+- Fix typos in help page
+
 v0.7.0 (2022-02-06)
 ==================
 
