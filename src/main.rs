@@ -110,6 +110,7 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
     if opt.clipboard {
         filename = "CLIPBOARD".to_string();
         json_string = get_clipboard()?;
+        return Ok((json_string, filename));
     }
 
     match &opt.input {
