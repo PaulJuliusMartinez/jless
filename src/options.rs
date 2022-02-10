@@ -12,6 +12,10 @@ pub struct Opt {
     #[structopt(parse(from_os_str))]
     pub input: Option<PathBuf>,
 
+    /// Should jless read input from clipboard
+    #[structopt(short, long)]
+    pub clipboard: bool,
+
     /// Initial viewing mode. In line mode (--mode line), opening
     /// and closing curly and square brackets are shown and all
     /// Object keys are quoted. In data mode (--mode data; the default),

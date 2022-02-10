@@ -15,6 +15,8 @@ use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
+use clipboard::{ClipboardContext, ClipboardProvider};
+
 mod app;
 mod flatjson;
 mod highlighting;
@@ -105,6 +107,11 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
     let mut json_string = String::new();
     let filename;
 
+    if opt.clipboard {
+        filename = "CLIPBOARD".to_string();
+        json_string = get_clipboard()?;
+    }
+
     match &opt.input {
         None => {
             if isatty::stdin_isatty() {
@@ -126,4 +133,15 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
     }
 
     Ok((json_string, filename))
+}
+
+fn get_clipboard() -> io::Result<String> {
+    let ctx: Result<ClipboardContext> = match ClipboardProvider::new() {
+        Ok(ctx) => Ok(ctx),
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))
+    };
+    match ctx?.get_contents() {
+        Ok(contents) => Ok(contents),
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))
+    }
 }
