@@ -136,7 +136,7 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
 }
 
 fn get_clipboard() -> io::Result<String> {
-    let ctx: Result<ClipboardContext> = match ClipboardProvider::new() {
+    let ctx: io::Result<ClipboardContext> = match ClipboardProvider::new() {
         Ok(ctx) => Ok(ctx),
         Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))
     };
