@@ -1,22 +1,12 @@
+use clap::ArgEnum;
+
 use crate::flatjson::{FlatJson, Index, OptionIndex};
 use crate::types::TTYDimensions;
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
 pub enum Mode {
     Line,
     Data,
-}
-
-impl std::str::FromStr for Mode {
-    type Err = String;
-
-    fn from_str(mode: &str) -> Result<Self, Self::Err> {
-        match mode {
-            "line" => Ok(Mode::Line),
-            "data" => Ok(Mode::Data),
-            _ => Err(format!("Unknown visual mode: {}", mode)),
-        }
-    }
 }
 
 const DEFAULT_SCROLLOFF: u16 = 3;
