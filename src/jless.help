@@ -11,6 +11,8 @@
 
   F1 :help         Show this help screen.
 
+  p                Display the path of the item under the cursor.
+
                                     [1mMOVING[0m
 
   j  DownArrow  *  Move focus down one line (or [4mN[0m lines).

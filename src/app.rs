@@ -122,6 +122,13 @@ impl App {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::MoveUp(lines))
                         }
+                        Key::Char('p') => {
+                            self.message = Some((
+                                    format!("Path: \"{}\"", self.viewer.path()),
+                                    MessageSeverity::Info
+                            ));
+                            None
+                        }
                         Key::Down
                         | Key::Char('j')
                         | Key::Char(' ')

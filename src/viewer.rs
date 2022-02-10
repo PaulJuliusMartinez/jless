@@ -50,6 +50,28 @@ impl JsonViewer {
             mode,
         }
     }
+    pub fn path(&self) -> String {
+        let mut p = String::new();
+        let mut row = &self.flatjson[self.focused_row];
+        loop {
+            let label = if let Some(ref k) = row.key_range {
+                self.flatjson.1[k.start+1..k.end-1].to_string()
+            } else {
+                row.index.to_string()
+            };
+            if let OptionIndex::Index(i) = row.parent {
+                row = &self.flatjson[i];
+                p = format!("{}.{}", label, p);
+            } else {
+                break;
+            }
+        }
+        if p.len() > 0 {
+            p[..p.len()-1].to_string()
+        } else {
+            String::new()
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
