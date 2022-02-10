@@ -45,7 +45,7 @@ fn main() {
     };
 
     if !isatty::stdout_isatty() {
-        print_pretty_printed_json(json_string);
+        print!("{}", print_pretty_printed_json(json_string));
         std::process::exit(0);
     }
 
@@ -63,7 +63,7 @@ fn main() {
     app.run(Box::new(input::get_input()));
 }
 
-fn print_pretty_printed_json(json: String) {
+pub fn print_pretty_printed_json(json: String) -> String {
     let flatjson = match flatjson::parse_top_level_json(json) {
         Ok(flatjson) => flatjson,
         Err(err) => {
@@ -71,34 +71,36 @@ fn print_pretty_printed_json(json: String) {
             std::process::exit(1);
         }
     };
+    let mut output = String::new();
 
     for row in flatjson.0.iter() {
         for _ in 0..row.depth {
-            print!("  ");
+            output += "  ";
         }
         if let Some(ref key_range) = row.key_range {
-            print!("{}: ", &flatjson.1[key_range.clone()]);
+            output += &format!("{}: ", &flatjson.1[key_range.clone()]);
         }
         let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
         if let Some(container_type) = row.value.container_type() {
             if row.value.is_opening_of_container() {
-                print!("{}", container_type.open_str());
+                output += &container_type.open_str();
                 // Don't print trailing commas after { or [.
                 trailing_comma = false;
             } else {
-                print!("{}", container_type.close_str());
+                output += &container_type.close_str();
                 // Check container opening to see if we have a next sibling.
                 trailing_comma = row.parent.is_some()
                     && flatjson.0[row.pair_index().unwrap()].next_sibling.is_some();
             }
         } else {
-            print!("{}", &flatjson.1[row.range.clone()]);
+            output += &flatjson.1[row.range.clone()];
         }
         if trailing_comma {
-            print!(",");
+            output += ",";
         }
-        println!();
+        output += "\n";
     }
+    output
 }
 
 fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {

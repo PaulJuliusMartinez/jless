@@ -23,6 +23,7 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+    key_comb: Option<char>,
 }
 
 enum Command {
@@ -62,6 +63,7 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
+            key_comb: None,
         })
     }
 
@@ -115,8 +117,22 @@ impl App {
                 }
                 KeyEvent(Key::Char('z')) => self.handle_z_input(),
                 // These inputs always clear the input_buffer (but may use its current contents).
+                KeyEvent(key) if self.key_comb == Some('y') => {
+                    self.key_comb = None;
+                    match key {
+                        Key::Char('y') => Some(Action::CopyValuePretty),
+                        Key::Char('o') => Some(Action::CopyValuePrettyLine),
+                        Key::Char('p') => Some(Action::CopyPathSimple),
+                        Key::Char('j') => Some(Action::CopyPathPure),
+                        _ => None,
+                    }
+                }
                 KeyEvent(key) => {
                     let action = match key {
+                        Key::Char('y') => {
+                            self.key_comb = Some('y');
+                            None
+                        }
                         // These interpret the input buffer as a number.
                         Key::Up | Key::Char('k') | Key::Ctrl('p') | Key::Backspace => {
                             let lines = self.parse_input_buffer_as_number();

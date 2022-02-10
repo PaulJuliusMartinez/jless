@@ -1,3 +1,5 @@
+use clipboard::{ClipboardContext, ClipboardProvider};
+
 use crate::flatjson::{FlatJson, Index, OptionIndex};
 use crate::types::TTYDimensions;
 
@@ -36,6 +38,7 @@ pub struct JsonViewer {
     // Access the functional value via .scrolloff().
     pub scrolloff_setting: u16,
     pub mode: Mode,
+    pub clipboard_ctx: ClipboardContext,
 }
 
 impl JsonViewer {
@@ -48,7 +51,29 @@ impl JsonViewer {
             dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
+            clipboard_ctx: ClipboardContext::new().unwrap(),
         }
+    }
+    pub fn path<F>(&self, formatter: F) -> String
+    where
+        F: Fn(bool, String, String) -> String,
+    {
+        let mut p = String::new();
+        let mut row = &self.flatjson[self.focused_row];
+        loop {
+            let label = if let Some(ref k) = row.key_range {
+                self.flatjson.1[k.start + 1..k.end - 1].to_string()
+            } else {
+                row.index.to_string()
+            };
+            if let OptionIndex::Index(i) = row.parent {
+                row = &self.flatjson[i];
+                p = formatter(row.is_array(), label, p);
+            } else {
+                break;
+            }
+        }
+        p
     }
 }
 
@@ -108,6 +133,11 @@ pub enum Action {
     ToggleMode,
 
     ResizeViewerDimensions(TTYDimensions),
+
+    CopyPathSimple,
+    CopyPathPure,
+    CopyValuePrettyLine,
+    CopyValuePretty,
 }
 
 impl JsonViewer {
@@ -148,6 +178,42 @@ impl JsonViewer {
                 self.toggle_mode();
             }
             Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
+            Action::CopyPathSimple => {
+                self.clipboard_ctx
+                    .set_contents(self.path(|is_arr, label, s| {
+                        if !is_arr {
+                            format!(".{}{}", label, s)
+                        } else {
+                            format!("[{}]{}", label, s)
+                        }
+                    }))
+                    .unwrap();
+            }
+            Action::CopyPathPure => {
+                self.clipboard_ctx
+                    .set_contents(self.path(|is_arr, label, s| {
+                        if !is_arr {
+                            format!("[\"{}\"]{}", label, s)
+                        } else {
+                            format!("[{}]{}", label, s)
+                        }
+                    }))
+                    .unwrap();
+            }
+            Action::CopyValuePrettyLine => {
+                self.clipboard_ctx
+                    .set_contents(
+                        self.flatjson.1[self.flatjson[self.focused_row].range.clone()].to_string(),
+                    )
+                    .unwrap();
+            }
+            Action::CopyValuePretty => {
+                self.clipboard_ctx
+                    .set_contents(crate::print_pretty_printed_json(
+                        self.flatjson.1[self.flatjson[self.focused_row].range.clone()].to_string(),
+                    ))
+                    .unwrap();
+            }
         }
 
         if reset_desired_depth {
