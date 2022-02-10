@@ -146,6 +146,14 @@ impl App {
                             let count = self.parse_input_buffer_as_number();
                             Some(Action::PageDown(count))
                         }
+                        Key::Ctrl('u') => {
+                            let count = self.parse_input_buffer_as_number();
+                            Some(Action::PageUp(count))
+                        }
+                        Key::Ctrl('d') => {
+                            let count = self.parse_input_buffer_as_number();
+                            Some(Action::PageDown(count))
+                        }
                         Key::Char('K') => {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::FocusPrevSibling(lines))
