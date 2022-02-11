@@ -27,6 +27,19 @@ The [releases](https://github.com/PaulJuliusMartinez/jless/releases)
 contains links to the latest release. If you have a Rust toolchain
 installed, you can build from source by running `cargo install jless`.
 
+### NetBSD ([Official repositories])
+```sh
+pkgin install jless
+```
+
+or, if you prefer to build it from source
+```sh
+cd /usr/pkgsrc/textproc/jless
+make install
+```
+
+[Official repositories]: https://pkgsrc.se/textproc/jless/
+
 ## Logo
 
 The mascot of the `jless` project is Jules the jellyfish.
