@@ -19,7 +19,7 @@ is written in Rust and can be installed as a single standalone binary.
 - Full regex-based search for finding exactly the data you're looking
   for.
 
-`jless` currently supports macOS and Linux. Windows support is planned.
+`jless` currently supports macOS, NetBSD and Linux. Windows support is planned.
 
 ## Installation
 
