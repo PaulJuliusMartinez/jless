@@ -70,11 +70,22 @@
       }
 
       .code-snippet.multi .code-block { display: none; }
-      #mac-install:checked ~ #mac-install-block { display: block; }
-      #linux-install:checked ~ #linux-install-block { display: block; }
 
-      #mac-install:checked ~ div #mac-install-label { background-color: #cacaca; }
-      #linux-install:checked ~ div #linux-install-label { background-color: #cacaca; }
+      #mac-install:checked ~ #mac-install-block,
+      #linux-install:checked ~ #linux-install-block,
+      #homebrew-install:checked ~ #homebrew-install-block,
+      #macports-install:checked ~ #macports-install-block,
+      #nix-install:checked ~ #nix-install-block,
+      #netbsdport-install:checked ~ #netbsdport-install-block { display: block; }
+
+      #mac-install:checked ~ div #mac-install-label,
+      #linux-install:checked ~ div #linux-install-label,
+      #homebrew-install:checked ~ div #homebrew-install-label,
+      #macports-install:checked ~ div #macports-install-label,
+      #nix-install:checked ~ div #nix-install-label,
+      #netbsdport-install:checked ~ div #netbsdport-install-label { background-color: #cacaca; }
+
+      .code-snippet .tabs { display: flex; }
 
       .code-snippet label {
         background-color: #dddddd;
@@ -171,11 +182,12 @@
     </div>
     <h2>Installation</h2>
     <p>
-    The latest JLess releases are available on <a href="https://github.com/PaulJuliusMartinez/jless/releases">GitHub</a>. Jless currently supports macOS and Linux.
+    macOS and Linux binaries for the latest JLess releases are available on <a href="https://github.com/PaulJuliusMartinez/jless/releases">GitHub</a>.
+    </p>
     <div class="code-snippet multi">
       <input type="radio" id="mac-install" name="install" value="mac" style="display: none;" checked="checked">
       <input type="radio" id="linux-install" name="install" value="linux" style="display: none;">
-      <div>
+      <div class="tabs">
         <label id="mac-install-label" for="mac-install">macOS</label>
         <label id="linux-install-label" for="linux-install">Linux</label>
       </div>
@@ -186,11 +198,32 @@
 <span class="prefix">$ </span>unzip jless-v0.7.1-x86_64-unknown-linux-gnu.zip
 <span class="prefix">$ </span>./jless data.json</div>
     </div>
-    </p>
     <p>
-      If you have a Rust toolchain installed, you can also install directly from source using cargo:
-      <div class="code-block"><span class="prefix">$ </span>cargo install jless</div>
+      If you have a Rust toolchain installed, you can install directly from source using cargo:
     </p>
+    <div class="code-block"><span class="prefix">$ </span>cargo install jless</div>
+    <p>
+      JLess is also available via several operating system and standalone package managers:
+    </p>
+    <div class="code-snippet multi">
+      <input type="radio" id="homebrew-install" name="package" value="homebrew" style="display: none;" checked="checked">
+      <input type="radio" id="macports-install" name="package" value="macports" style="display: none;">
+      <input type="radio" id="nix-install" name="package" value="nix" style="display: none;">
+      <input type="radio" id="netbsdport-install" name="package" value="netbsdport" style="display: none;">
+      <div class="tabs">
+        <label id="homebrew-install-label" for="homebrew-install">Homebrew</label>
+        <label id="macports-install-label" for="macports-install">MacPorts</label>
+        <label id="nix-install-label" for="nix-install">Nix</label>
+        <label id="netbsdport-install-label" for="netbsdport-install">NetBSD</label>
+      </div>
+      <div id="homebrew-install-block" class="code-block"><span class="prefix">$ </span>brew install jless</div>
+      <div id="macports-install-block" class="code-block"><span class="prefix">$ </span>sudo port install jless</div>
+      <div id="nix-install-block" class="code-block"><span class="prefix">$ </span>nix run github:PaulJuliusMartinez/jless</div>
+      <div id="netbsdport-install-block" class="code-block"><span class="prefix">$ </span>pkgin install jless
+<span class="prefix"># or, if you prefer to build from source</span>
+<span class="prefix">$ </span>cd /usr/pkgsrc/textproc/jless
+<span class="prefix">$ </span>make install</div>
+    </div>
     <p>
       Check out the <a href="./usage.html">user guide</a> to learn about the full functionality of JLess.
     </p>
