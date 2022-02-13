@@ -23,3 +23,8 @@ signal-hook = "0.3.8"
 libc = "0.2"
 structopt = "0.3"
 isatty = "0.1"
+
+[package.metadata.binstall]
+pkg-url = "{ repo }/releases/download/v{ version }/{ name }-v{ version }-{ target }.{ format }"
+bin-dir = "{ bin }{ format }"
+pkg-fmt = "zip"
