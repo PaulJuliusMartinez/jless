@@ -1,3 +1,10 @@
+latest
+==================
+
+Internal:
+- [PR #17]: Upgrade from structopt to clap v3
+
+
 v0.7.1 (2022-02-09)
 ==================
 

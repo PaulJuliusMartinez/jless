@@ -9,7 +9,7 @@ use std::io;
 use std::io::Read;
 use std::path::PathBuf;
 
-use structopt::StructOpt;
+use clap::Parser;
 use termion::cursor::HideCursor;
 use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
@@ -34,7 +34,7 @@ use app::App;
 use options::Opt;
 
 fn main() {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     let (json_string, input_filename) = match get_json_input(&opt) {
         Ok(json_string) => json_string,
