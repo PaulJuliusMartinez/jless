@@ -15,8 +15,6 @@ use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
-use clipboard::{ClipboardContext, ClipboardProvider};
-
 mod app;
 mod flatjson;
 mod highlighting;
@@ -107,6 +105,7 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
     let mut json_string = String::new();
     let filename;
 
+    #[cfg(feature = "clip")]
     if opt.clipboard {
         filename = "CLIPBOARD".to_string();
         json_string = get_clipboard()?;
@@ -136,13 +135,15 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
     Ok((json_string, filename))
 }
 
+#[cfg(feature = "clip")]
 fn get_clipboard() -> io::Result<String> {
+    use clipboard::{ClipboardContext, ClipboardProvider};
     let ctx: io::Result<ClipboardContext> = match ClipboardProvider::new() {
         Ok(ctx) => Ok(ctx),
-        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string())),
     };
     match ctx?.get_contents() {
         Ok(contents) => Ok(contents),
-        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string()))
+        Err(e) => Err(io::Error::new(io::ErrorKind::InvalidInput, e.to_string())),
     }
 }

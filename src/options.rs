@@ -12,6 +12,7 @@ pub struct Opt {
     #[structopt(parse(from_os_str))]
     pub input: Option<PathBuf>,
 
+    #[cfg(feature = "clip")]
     /// Should jless read input from clipboard
     #[structopt(short, long)]
     pub clipboard: bool,
