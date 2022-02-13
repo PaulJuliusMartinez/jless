@@ -3,6 +3,7 @@
 #![allow(clippy::collapsible_else_if)]
 
 extern crate lazy_static;
+extern crate libc_stdhandle;
 
 use std::fs::File;
 use std::io;
@@ -52,6 +53,8 @@ fn main() {
     let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
         io::stdout().into_raw_mode().unwrap(),
     )));
+    let input = Box::new(input::get_input());
+
     let mut app = match App::new(&opt, json_string, input_filename, Box::new(stdout)) {
         Ok(jl) => jl,
         Err(err) => {
@@ -60,7 +63,7 @@ fn main() {
         }
     };
 
-    app.run(Box::new(input::get_input()));
+    app.run(input);
 }
 
 fn print_pretty_printed_json(json: String) {
