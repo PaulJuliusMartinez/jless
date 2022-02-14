@@ -7,7 +7,7 @@ pub enum Color {
 }
 
 // Commented out colors are unused.
-pub const BLACK: Color = Color::C16(0);
+// pub const BLACK: Color = Color::C16(0);
 pub const RED: Color = Color::C16(1);
 pub const GREEN: Color = Color::C16(2);
 pub const YELLOW: Color = Color::C16(3);

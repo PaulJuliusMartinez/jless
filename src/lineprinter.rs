@@ -705,6 +705,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         Ok(used_space)
     }
 
+    #[allow(unused_assignments)]
     fn generate_container_preview(
         &mut self,
         flatjson: &FlatJson,
@@ -1363,7 +1364,7 @@ mod tests {
     fn test_fill_value_not_enough_space() -> std::fmt::Result {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term);
-        let color = terminal::BLACK;
+        let color = terminal::RED;
 
         // QUOTED VALUE
 
