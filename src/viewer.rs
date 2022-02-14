@@ -92,6 +92,8 @@ pub enum Action {
 
     ScrollUp(usize),
     ScrollDown(usize),
+    HalfPageUp(usize),
+    HalfPageDown(usize),
     PageUp(usize),
     PageDown(usize),
 
@@ -134,6 +136,8 @@ impl JsonViewer {
             Action::FocusMatchingPair => self.focus_matching_pair(),
             Action::ScrollUp(n) => self.scroll_up(n),
             Action::ScrollDown(n) => self.scroll_down(n),
+            Action::HalfPageUp(n) => self.scroll_up((self.dimensions.height / 2) as usize * n),
+            Action::HalfPageDown(n) => self.scroll_down((self.dimensions.height / 2) as usize * n),
             Action::PageUp(n) => self.scroll_up(self.dimensions.height as usize * n),
             Action::PageDown(n) => self.scroll_down(self.dimensions.height as usize * n),
             Action::MoveFocusedLineToTop => self.move_focused_line_to_top(),
@@ -179,6 +183,8 @@ impl JsonViewer {
             Action::FocusMatchingPair => true,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
+            Action::HalfPageUp(_) => false,
+            Action::HalfPageDown(_) => false,
             Action::PageUp(_) => false,
             Action::PageDown(_) => false,
             Action::MoveFocusedLineToTop => false,
@@ -201,6 +207,8 @@ impl JsonViewer {
                 | Action::FocusNextSibling(_)
                 | Action::ScrollUp(_)
                 | Action::ScrollDown(_)
+                | Action::HalfPageUp(_)
+                | Action::HalfPageDown(_)
                 | Action::PageUp(_)
                 | Action::PageDown(_)
                 | Action::MoveFocusedLineToTop

@@ -40,6 +40,9 @@
   PageDown  *  Move down by one window (or [4mN[0m windows).
   PageUp    *  Move up   by one window (or [4mN[0m windows).
 
+  ^d        *  Move down by one half window (or [4mN[0m half windows).
+  ^u        *  Move up   by one half window (or [4mN[0m half windows).
+
   0  ^         Move to the first sibling of the focused node's parent.
   $            Move to the last  sibling of the focused node's parent.
 
