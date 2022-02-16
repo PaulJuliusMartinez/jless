@@ -36,7 +36,7 @@ pub struct JsonViewer {
 }
 
 impl JsonViewer {
-    pub fn new(flatjson: FlatJson, mode: Mode, preview: Preview) -> JsonViewer {
+    pub fn new(flatjson: FlatJson, mode: Mode) -> JsonViewer {
         JsonViewer {
             flatjson,
             top_row: 0,
@@ -45,7 +45,7 @@ impl JsonViewer {
             dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
-            preview,
+            preview: Preview::Full,
         }
     }
 }

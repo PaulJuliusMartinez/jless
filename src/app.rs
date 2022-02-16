@@ -49,7 +49,8 @@ impl App {
             Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
         };
 
-        let mut viewer = JsonViewer::new(flatjson, opt.mode, opt.preview);
+        let mut viewer = JsonViewer::new(flatjson, opt.mode);
+        viewer.preview = opt.preview;
         viewer.scrolloff_setting = opt.scrolloff;
 
         let screen_writer =
