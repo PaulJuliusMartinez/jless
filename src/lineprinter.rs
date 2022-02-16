@@ -831,28 +831,37 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let container_type = row.value.container_type().unwrap();
-        let mut count_str = format!(
+        let count_str = format!(
             "{} {} {}",
             container_type.open_str(),
             count.to_string(),
             container_type.close_str()
         );
+        let short_str = format!(
+            "{}…{}",
+            container_type.open_str(),
+            container_type.close_str()
+        );
 
-        if count_str.len() as isize > available_space {
-            count_str = format!(
-                "{}…{}",
-                container_type.open_str(),
-                container_type.close_str()
-            );
+        if count_str.len() as isize <= available_space {
+            self.highlight_str(
+                &count_str,
+                Some(self.value_range.start),
+                highlighting::PREVIEW_STYLES
+            )?;
+            let len = count_str.len() as isize;
+            available_space -= len;
+            return Ok(len)
         }
-        self.highlight_str(
-            &count_str,
-            Some(self.value_range.start),
-            highlighting::PREVIEW_STYLES
-        )?;
-        let len = count_str.len() as isize;
-        available_space -= len;
-        Ok(len)
+        else {
+            self.highlight_str(
+                &short_str,
+                Some(self.value_range.start),
+                highlighting::PREVIEW_STYLES
+            )?;
+            available_space -= 3;
+            return Ok(3)
+       }
     }
 
     // {a…: …, …}
@@ -1113,6 +1122,7 @@ mod tests {
     fn default_line_printer(terminal: &mut dyn Terminal) -> LinePrinter {
         LinePrinter {
             mode: Mode::Data,
+            preview: Preview::Full,
             terminal,
             node_depth: 0,
             depth: 0,
@@ -1549,6 +1559,66 @@ mod tests {
         {
             let used =
                 line.generate_container_preview(&fj, &fj[0], available_space, quoted_object_keys)?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(line.terminal.output()),
+            );
+            assert_eq!(used_space, used);
+
+            line.terminal.clear_output();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_countainer_count() -> std::fmt::Result {
+        let json_arr = r#"[1,2,3]       "#;
+        let json_obj = r#"{"a":1, "b":2}"#;
+        //               012345678901234 (14 chars)
+        let fj_arr = parse_top_level_json(json_arr.to_owned()).unwrap();
+        let fj_obj = parse_top_level_json(json_obj.to_owned()).unwrap();
+
+        let mut term = TextOnlyTerminal::new();
+        let mut line: LinePrinter = LinePrinter {
+            value_range: &(0..json_obj.len()),
+            preview: Preview::Count,
+            ..default_line_printer(&mut term)
+        };
+
+        for (available_space, used_space, expected) in vec![
+            (14, 5, r#"[ 3 ]"#),
+            (4,  3, r#"[…]"#),
+            (2,  0, r#""#),
+        ]
+        .into_iter()
+        {
+            let used =
+                line.generate_container_count(&fj_arr, &fj_arr[0], available_space)?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(line.terminal.output()),
+            );
+            assert_eq!(used_space, used);
+
+            line.terminal.clear_output();
+        }
+
+        for (available_space, used_space, expected) in vec![
+            (14, 5, r#"{ 2 }"#),
+            (4,  3, r#"{…}"#),
+            (2,  0, r#""#),
+        ]
+        .into_iter()
+        {
+            let used =
+                line.generate_container_count(&fj_obj, &fj_obj[0], available_space)?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
