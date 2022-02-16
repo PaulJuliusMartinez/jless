@@ -13,6 +13,7 @@ use crate::terminal;
 use crate::terminal::{Color, Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
 use crate::viewer::Mode;
+use crate::viewer::Preview;
 
 // # Printing out individual lines
 //
@@ -195,6 +196,7 @@ pub enum LineValue<'a> {
 
 pub struct LinePrinter<'a, 'b, 'c> {
     pub mode: Mode,
+    pub preview: Preview,
     pub terminal: &'c mut dyn Terminal,
 
     pub node_depth: usize,
@@ -685,22 +687,30 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             available_space -= 1;
         }
 
-        let quoted_object_keys = self.mode == Mode::Line;
-        let mut used_space =
-            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?;
+        let mut used_space = 0;
 
-        if self.trailing_comma {
-            used_space += 1;
+        if self.preview == Preview::Full {
+            let quoted_object_keys = self.mode == Mode::Line;
+            used_space =
+                self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?;
+
             if self.trailing_comma {
-                self.highlight_str(
-                    ",",
-                    Some(self.value_range.end),
-                    (
-                        &highlighting::DEFAULT_STYLE,
-                        &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                    ),
-                )?;
+                used_space += 1;
+                if self.trailing_comma {
+                    self.highlight_str(
+                        ",",
+                        Some(self.value_range.end),
+                        (
+                            &highlighting::DEFAULT_STYLE,
+                            &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                        ),
+                    )?;
+                }
             }
+        }
+        else {
+            used_space =
+                self.generate_container_count(flatjson, row, available_space)?;
         }
 
         Ok(used_space)

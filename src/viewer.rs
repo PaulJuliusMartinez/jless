@@ -9,6 +9,12 @@ pub enum Mode {
     Data,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
+pub enum Preview {
+    Full,
+    Count,
+}
+
 const DEFAULT_SCROLLOFF: u16 = 3;
 
 pub struct JsonViewer {
@@ -26,10 +32,11 @@ pub struct JsonViewer {
     // Access the functional value via .scrolloff().
     pub scrolloff_setting: u16,
     pub mode: Mode,
+    pub preview: Preview,
 }
 
 impl JsonViewer {
-    pub fn new(flatjson: FlatJson, mode: Mode) -> JsonViewer {
+    pub fn new(flatjson: FlatJson, mode: Mode, preview: Preview) -> JsonViewer {
         JsonViewer {
             flatjson,
             top_row: 0,
@@ -38,6 +45,7 @@ impl JsonViewer {
             dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
+            preview,
         }
     }
 }
@@ -96,6 +104,7 @@ pub enum Action {
     ExpandNodeAndSiblings,
 
     ToggleMode,
+    TogglePreview,
 
     ResizeViewerDimensions(TTYDimensions),
 }
@@ -137,6 +146,7 @@ impl JsonViewer {
                 // TODO: custom window management here
                 self.toggle_mode();
             }
+            Action::TogglePreview => self.toggle_preview(),
             Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
         }
 
@@ -178,6 +188,7 @@ impl JsonViewer {
             Action::CollapseNodeAndSiblings => true,
             Action::ExpandNodeAndSiblings => true,
             Action::ToggleMode => false,
+            Action::TogglePreview => false,
             Action::ResizeViewerDimensions(_) => true,
             _ => false,
         }
@@ -197,6 +208,7 @@ impl JsonViewer {
                 | Action::MoveFocusedLineToCenter
                 | Action::MoveFocusedLineToBottom
                 | Action::ToggleMode
+                | Action::TogglePreview
                 | Action::ResizeViewerDimensions(_)
         )
     }
@@ -583,6 +595,13 @@ impl JsonViewer {
         self.mode = match self.mode {
             Mode::Line => Mode::Data,
             Mode::Data => Mode::Line,
+        }
+    }
+
+    fn toggle_preview(&mut self) {
+        self.preview = match self.preview {
+            Preview::Full => Preview::Count,
+            Preview::Count => Preview::Full,
         }
     }
 
