@@ -796,6 +796,78 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         Ok(num_printed)
     }
 
+    // similar to generate_container_preview, except it only prints the count
+    // of the number of children:
+    // - number of key-val pairs in a hash, ie "{ 3 }"
+    // - number of items in an array, ie "[ 2 ]"
+    fn generate_container_count(
+        &mut self,
+        flatjson: &FlatJson,
+        row: &Row,
+        mut available_space: isize,
+        quoted_object_keys: bool,
+    ) -> Result<isize, fmt::Error> {
+        debug_assert!(row.is_opening_of_container());
+
+        // Minimum amount of space required == 3: […]
+        if available_space < 3 {
+            return Ok(0);
+        }
+
+        let container_type = row.value.container_type().unwrap();
+        let mut num_printed = 0;
+
+        // Print opening character, either "[" or "{"
+        self.highlight_str(
+            container_type.open_str(),
+            Some(self.value_range.start),
+            highlighting::PREVIEW_STYLES,
+        )?;
+
+        num_printed += 1;
+
+        let mut next_sibling = row.first_child();
+        let mut count:usize = 0;
+        while let OptionIndex::Index(child) = next_sibling {
+            next_sibling = flatjson[child].next_sibling;
+            count += 1;
+        }
+
+        // Print count with spaces around it: " N "
+        self.highlight_str(
+            " ",
+            Some(self.value_range.start+num_printed),
+            highlighting::PREVIEW_STYLES
+        )?;
+        num_printed += 1;
+
+        let count_as_str = count.to_string();
+        let count_length = count_as_str.len();
+        self.highlight_str(
+            &count_as_str,
+            Some(self.value_range.start+num_printed),
+            highlighting::PREVIEW_STYLES
+        )?;
+        num_printed += count_length;
+
+        self.highlight_str(
+            " ",
+            Some(self.value_range.start+num_printed),
+            highlighting::PREVIEW_STYLES
+        )?;
+        num_printed += 1;
+
+        // Print closing char, "]" or "}"
+        self.highlight_str(
+            container_type.close_str(),
+            Some(self.value_range.end - 1),
+            highlighting::PREVIEW_STYLES,
+        )?;
+        num_printed += 1;
+
+        Ok(num_printed)
+    }
+
     // {a…: …, …}
     //
     // [a, …]
