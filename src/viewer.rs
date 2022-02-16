@@ -13,6 +13,7 @@ pub enum Mode {
 pub enum Preview {
     Full,
     Count,
+    None,
 }
 
 const DEFAULT_SCROLLOFF: u16 = 3;
@@ -601,7 +602,8 @@ impl JsonViewer {
     fn toggle_preview(&mut self) {
         self.preview = match self.preview {
             Preview::Full => Preview::Count,
-            Preview::Count => Preview::Full,
+            Preview::Count => Preview::None,
+            Preview::None => Preview::Full,
         }
     }
 

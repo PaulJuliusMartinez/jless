@@ -25,8 +25,9 @@ pub struct Opt {
     /// Initial preview of container nodes. In full mode (--preview full;
     /// the default), containers will be rendered as much as they can be in
     /// the width of the terminal. In count mode (--preview count), only
-    /// the child node count will be rendered. This can be toggled by
-    /// pressing 'p'.
+    /// the child node count will be rendered. In none mode (--preview none),
+    /// no preview will be rendered at all. This can be toggled by pressing
+    /// 'p'.
     #[clap(short, long, arg_enum, hide_possible_values = true, default_value_t = Preview::Full)]
     pub preview: Preview,
 

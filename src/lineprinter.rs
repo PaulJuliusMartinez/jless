@@ -707,6 +707,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 }
             }
         }
+        else if self.preview == Preview::None {
+            used_space = 0;
+        }
         else {
             used_space =
                 self.generate_container_count(flatjson, row, available_space)?;
