@@ -2,6 +2,7 @@ use std::collections::hash_map::Entry;
 use std::fmt;
 use std::iter::Peekable;
 use std::ops::Range;
+use std::convert::TryInto;
 
 use regex::Regex;
 
@@ -804,8 +805,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         &mut self,
         flatjson: &FlatJson,
         row: &Row,
-        mut available_space: isize,
-        quoted_object_keys: bool,
+        mut available_space: isize
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
@@ -865,7 +865,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         )?;
         num_printed += 1;
 
-        Ok(num_printed)
+        Ok(num_printed.try_into().unwrap())
     }
 
     // {a…: …, …}
