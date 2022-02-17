@@ -4,7 +4,7 @@ latest
 New features / changes:
 - [PR #42]: Space now toggles the collapsed state of the currently focused
   node, rather than moving down a line. (Functionality was previous
-  available via `i`, but was undocumnted; `i` has become unmapped.)
+  available via `i`, but was undocumented; `i` has become unmapped.)
 
 Internal:
 - [PR #17]: Upgrade from structopt to clap v3
