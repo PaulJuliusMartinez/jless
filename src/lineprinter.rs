@@ -842,37 +842,29 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let container_type = row.value.container_type().unwrap();
-        let count_str = format!(
+        let mut count_str = format!(
             "{} {} {}",
             container_type.open_str(),
             count.to_string(),
             container_type.close_str()
         );
-        let short_str = format!(
-            "{}…{}",
-            container_type.open_str(),
-            container_type.close_str()
-        );
 
-        if count_str.len() as isize <= available_space {
-            self.highlight_str(
-                &count_str,
-                Some(self.value_range.start),
-                highlighting::PREVIEW_STYLES
-            )?;
-            let len = count_str.len() as isize;
-            available_space -= len;
-            return Ok(len)
+        if count_str.len() as isize > available_space {
+            count_str = format!(
+                 "{}…{}",
+                container_type.open_str(),
+                container_type.close_str()
+            );
         }
-        else {
-            self.highlight_str(
-                &short_str,
-                Some(self.value_range.start),
-                highlighting::PREVIEW_STYLES
-            )?;
-            available_space -= 3;
-            return Ok(3)
-       }
+
+        self.highlight_str(
+            &count_str,
+            Some(self.value_range.start),
+            highlighting::PREVIEW_STYLES
+        )?;
+        let len = count_str.chars().count() as isize;
+        available_space -= len;
+        Ok(len)
     }
 
     // {a…: …, …}
