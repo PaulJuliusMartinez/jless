@@ -14,7 +14,7 @@
                                     [1mMOVING[0m
 
   j  DownArrow  *  Move focus down one line (or [4mN[0m lines).
-  ^n Enter Space
+  ^n Enter
 
   k  UpArrow    *  Move focus up   one line (or [4mN[0m lines).
   ^p Backspace
@@ -48,6 +48,8 @@
 
   c            Collapse the focused node and all its siblings.
   e            Expand   the focused node and all its siblings.
+
+  Space        Toggle the collapsed state of the currently focused node.
 
                                     [1mSCROLLING[0m
 
