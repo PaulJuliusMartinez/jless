@@ -1,6 +1,10 @@
 latest
 ==================
 
+New features:
+- Space now toggles the collapsed state of the currently focused node,
+  rather than moving down a line.
+
 Internal:
 - [PR #17]: Upgrade from structopt to clap v3
 
