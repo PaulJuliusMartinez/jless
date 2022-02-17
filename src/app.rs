@@ -123,11 +123,7 @@ impl App {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::MoveUp(lines))
                         }
-                        Key::Down
-                        | Key::Char('j')
-                        | Key::Char(' ')
-                        | Key::Ctrl('n')
-                        | Key::Char('\n') => {
+                        Key::Down | Key::Char('j') | Key::Ctrl('n') | Key::Char('\n') => {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::MoveDown(lines))
                         }
@@ -227,7 +223,7 @@ impl App {
                         Key::Char('H') => Some(Action::FocusParent),
                         Key::Char('c') => Some(Action::CollapseNodeAndSiblings),
                         Key::Char('e') => Some(Action::ExpandNodeAndSiblings),
-                        Key::Char('i') => Some(Action::ToggleCollapsed),
+                        Key::Char(' ') => Some(Action::ToggleCollapsed),
                         Key::Char('^') => Some(Action::FocusFirstSibling),
                         Key::Char('$') => Some(Action::FocusLastSibling),
                         Key::Char('g') | Key::Home => Some(Action::FocusTop),
