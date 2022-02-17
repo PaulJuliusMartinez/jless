@@ -708,7 +708,15 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             }
         }
         else if self.preview == Preview::None {
-            used_space = 0;
+            self.highlight_str(
+                " ",
+                Some(self.value_range.end),
+                (
+                    &highlighting::DEFAULT_STYLE,
+                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                ),
+            )?;
+            used_space = 1;
         }
         else {
             used_space =
