@@ -344,6 +344,46 @@
     <p>
     In line mode you can press <code>%</code> when focused on an open or close delimiter of an object or array to jump to its matching pair.
     </p>
+    <h3 id="container-previews">Changing preview of child nodes</h3>
+    </p>
+    <p>
+      The way JLess displays previews can be changed, either by passing <code>--preview</code> or <code>-p</code> with one of: <code>full</code> (the default), <code>count</code>, or <code>none</code>. By pressing <code>p</code>, you can cycle between these three.
+    </p>
+    <div class="code-block">
+# full (default)
+▽ [{…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, {…}, …]
+  ▽ [0]: {sha: "cdcb02038730f0cd3f5ccea594511e3cfb37887a", node_id: "C_kwDOFYWjXtoAK…", …}
+      sha: "cdcb02038730f0cd3f5ccea594511e3cfb37887a"
+      node_id: "C_kwDOFYWjXtoAKGNkY2IwMjAzODczMGYwY2QzZjVjY2VhNTk0NTExZTNjZmIzNzg4N2E"
+    ▽ commit: {author: {…}, committer: {…}, message: "Upgrade arg parsing to clap v3…", …}
+      ▽ author: {name: "Marcin Puc", email: "5671049+tranzystorek-io@users.noreply.g…", …}
+          name: "Marcin Puc"
+          email: "5671049+tranzystorek-io@users.noreply.github.com"
+          date: "2022-02-13T20:23:20Z"
+
+# count
+▽ [ 30 ]
+  ▽ [0]: { 9 }
+      sha: "cdcb02038730f0cd3f5ccea594511e3cfb37887a"
+      node_id: "C_kwDOFYWjXtoAKGNkY2IwMjAzODczMGYwY2QzZjVjY2VhNTk0NTExZTNjZmIzNzg4N2E"
+    ▽ commit: { 7 }
+      ▽ author: { 3 }
+          name: "Marcin Puc"
+          email: "5671049+tranzystorek-io@users.noreply.github.com"
+          date: "2022-02-13T20:23:20Z"
+
+# none
+▽
+  ▽ [0]:
+      sha: "cdcb02038730f0cd3f5ccea594511e3cfb37887a"
+      node_id: "C_kwDOFYWjXtoAKGNkY2IwMjAzODczMGYwY2QzZjVjY2VhNTk0NTExZTNjZmIzNzg4N2E"
+    ▽ commit:
+      ▽ author:
+          name: "Marcin Puc"
+          email: "5671049+tranzystorek-io@users.noreply.github.com"
+          date: "2022-02-13T20:23:20Z"
+    </div>
+    <p></p>
     <footer>
       <img src="./assets/logo/mascot-rocket.svg">
       <div style="margin-top: 24px">
