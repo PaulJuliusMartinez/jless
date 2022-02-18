@@ -843,9 +843,10 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         let container_type = row.value.container_type().unwrap();
         let mut count_str = format!(
-            "{} {} {}",
+            "{} {} item{} {}",
             container_type.open_str(),
             count.to_string(),
+            if count == 1 { "" } else { "s" },
             container_type.close_str()
         );
 
@@ -1581,9 +1582,11 @@ mod tests {
     fn test_generate_countainer_count() -> std::fmt::Result {
         let json_arr = r#"[1,2,3]       "#;
         let json_obj = r#"{"a":1, "b":2}"#;
+        let json_one = r#"{"c":3}"#;
         //               012345678901234 (14 chars)
         let fj_arr = parse_top_level_json(json_arr.to_owned()).unwrap();
         let fj_obj = parse_top_level_json(json_obj.to_owned()).unwrap();
+        let fj_one = parse_top_level_json(json_one.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
@@ -1593,7 +1596,7 @@ mod tests {
         };
 
         for (available_space, used_space, expected) in vec![
-            (14, 5, r#"[ 3 ]"#),
+            (14, 11, r#"[ 3 items ]"#),
             (4,  3, r#"[…]"#),
             (2,  0, r#""#),
         ]
@@ -1614,7 +1617,7 @@ mod tests {
         }
 
         for (available_space, used_space, expected) in vec![
-            (14, 5, r#"{ 2 }"#),
+            (14, 11, r#"{ 2 items }"#),
             (4,  3, r#"{…}"#),
             (2,  0, r#""#),
         ]
@@ -1622,6 +1625,25 @@ mod tests {
         {
             let used =
                 line.generate_container_count(&fj_obj, &fj_obj[0], available_space)?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(line.terminal.output()),
+            );
+            assert_eq!(used_space, used);
+
+            line.terminal.clear_output();
+        }
+
+        for (available_space, used_space, expected) in vec![
+            (14, 10, r#"{ 1 item }"#),
+        ]
+        .into_iter()
+        {
+            let used =
+                line.generate_container_count(&fj_one, &fj_one[0], available_space)?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
