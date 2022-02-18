@@ -33,7 +33,9 @@ pub struct JsonViewer {
     // Access the functional value via .scrolloff().
     pub scrolloff_setting: u16,
     pub mode: Mode,
-    pub preview: Preview,
+
+    // Private because it has funny rules re: mode, see set_preview()
+    preview: Preview,
 }
 
 impl JsonViewer {
@@ -596,14 +598,42 @@ impl JsonViewer {
         self.mode = match self.mode {
             Mode::Line => Mode::Data,
             Mode::Data => Mode::Line,
+        };
+
+        // Line mode doesn't use Preview::None
+        if self.mode == Mode::Line && self.preview == Preview::None {
+            self.preview = Preview::Count;
         }
     }
 
+    pub fn set_preview(&mut self, val: Preview) {
+        if val == Preview::None && self.mode == Mode::Line {
+            // Emit a warning....?
+            self.preview = Preview::Count;
+        }
+        else {
+            self.preview = val;
+        }
+    }
+
+    pub fn get_preview(&self) -> Preview {
+        self.preview
+    }
+
     fn toggle_preview(&mut self) {
-        self.preview = match self.preview {
-            Preview::Full => Preview::Count,
-            Preview::Count => Preview::None,
-            Preview::None => Preview::Full,
+        if self.mode == Mode::Data {
+            self.preview = match self.preview {
+                Preview::Full => Preview::Count,
+                Preview::Count => Preview::None,
+                Preview::None => Preview::Full,
+            }
+        }
+        else {
+            self.preview = match self.preview {
+                Preview::Full => Preview::Count,
+                Preview::Count => Preview::Full,
+                Preview::None => Preview::Count, // this shouldn't happen, see toggle_mode()
+            }
         }
     }
 

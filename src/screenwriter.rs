@@ -275,7 +275,7 @@ impl ScreenWriter {
 
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
-            preview: viewer.preview,
+            preview: viewer.get_preview(),
             terminal: &mut self.terminal,
 
             node_depth: row.depth,

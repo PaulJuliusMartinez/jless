@@ -50,7 +50,7 @@ impl App {
         };
 
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
-        viewer.preview = opt.preview;
+        viewer.set_preview(opt.preview);
         viewer.scrolloff_setting = opt.scrolloff;
 
         let screen_writer =
