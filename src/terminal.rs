@@ -7,6 +7,7 @@ pub enum Color {
 }
 
 // Commented out colors are unused.
+#[cfg(test)]
 pub const BLACK: Color = Color::C16(0);
 pub const RED: Color = Color::C16(1);
 pub const GREEN: Color = Color::C16(2);

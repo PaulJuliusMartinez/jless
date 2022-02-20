@@ -758,10 +758,11 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 // printed the ", " separator.
                 self.highlight_str("…", None, highlighting::PREVIEW_STYLES)?;
 
-                // This variable technically isn't used again, but for "correctness"
-                // we'll keep it in case we do use the variable later, or code gets
-                // moved around.
-                available_space -= 1;
+                // This variable isn't used again, but if it were, we'd need this
+                // line for correctness. Unfortunately Cargo check complains about it,
+                // so we'll just leave it here commented out in case code moves around
+                // and we need it.
+                // available_space -= 1;
 
                 num_printed += 1;
                 break;

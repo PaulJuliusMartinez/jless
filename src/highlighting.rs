@@ -106,6 +106,7 @@ pub const INVERTED_BOLD_BLUE_STYLE: Style = Style {
     ..Style::default()
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn highlight_truncated_str_view<'a>(
     out: &mut dyn Terminal,
     mut s: &str,
