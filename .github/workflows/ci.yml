@@ -8,7 +8,6 @@ jobs:
         version: [ 1.54.0, stable ]
         platform:
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu  }
-          - { os: ubuntu-latest, target: x86_64-unknown-linux-musl }
           - { os: macos-latest , target: x86_64-apple-darwin       }
     runs-on: ${{ matrix.platform.os }}
     steps:
