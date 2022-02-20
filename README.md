@@ -29,6 +29,8 @@ The [releases](https://github.com/PaulJuliusMartinez/jless/releases)
 contains links to the latest release. If you have a Rust toolchain
 installed, you can build from source by running `cargo install jless`.
 
+`jless` is also available with Homebrew: `brew install jless`.
+
 ## Logo
 
 The mascot of the `jless` project is Jules the jellyfish.
