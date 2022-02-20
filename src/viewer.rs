@@ -166,10 +166,7 @@ impl JsonViewer {
             Action::ToggleCollapsed => self.toggle_collapsed(),
             Action::CollapseNodeAndSiblings => self.collapse_node_and_siblings(),
             Action::ExpandNodeAndSiblings => self.expand_node_and_siblings(),
-            Action::ToggleMode => {
-                // TODO: custom window management here
-                self.toggle_mode();
-            }
+            Action::ToggleMode => self.toggle_mode(),
             Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
         }
 
@@ -682,12 +679,33 @@ impl JsonViewer {
     }
 
     fn toggle_mode(&mut self) {
-        // If toggling from line mode to data mode, and the cursor is currently and a closing
-        // brace, move the cursor up to the last visible child.
+        let index_of_focused_row = self.index_of_focused_row_on_screen();
+
+        // If we're transitioning from line mode to focused mode, and we're focused on
+        // the closing of a container, we need to move the focuse.
+        if self.mode == Mode::Line && self.flatjson[self.focused_row].is_closing_of_container() {
+            // We'll move focus to the next item, unless we're at the end of
+            // the file and have to move focus backwards.
+            //
+            // By focusing the next item, and ensuring that the focus stays in the
+            // same place on the screen, it will look the surrounding data is getting
+            // "pulled" towards the focused line.
+            if let OptionIndex::Index(next) = self.flatjson.next_item(self.focused_row) {
+                self.focused_row = next;
+            } else {
+                self.focused_row = self.flatjson.prev_item(self.focused_row).unwrap();
+            }
+        }
+
+        // Toggle the mode.
         self.mode = match self.mode {
             Mode::Line => Mode::Data,
             Mode::Data => Mode::Line,
-        }
+        };
+
+        // Ensure focused line stays in same place on the screen.
+        self.top_row =
+            self.count_n_lines_before(self.focused_row, index_of_focused_row as usize, self.mode);
     }
 
     fn scrolloff(&self) -> u16 {
@@ -1873,6 +1891,48 @@ mod tests {
         assert!(viewer.flatjson[1].is_expanded());
         assert!(viewer.flatjson[4].is_expanded());
         assert!(viewer.flatjson[12].is_expanded());
+    }
+
+    #[test]
+    fn test_toggle_mode() {
+        let fj = parse_top_level_json(LOTS_OF_OBJECTS.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        viewer.dimensions.height = 5;
+        viewer.scrolloff_setting = 1;
+
+        let tests = vec![
+            (Mode::Data, 0, 0, 0, 0),
+            (Mode::Line, 0, 0, 0, 0),
+            (Mode::Data, 2, 4, 3, 4), // Closing brace appears above focus
+            (Mode::Line, 2, 4, 1, 4), // Closing brace disappears above focus
+            // Focused on a closing brace
+            (Mode::Line, 7, 11, 5, 12),
+            // Focused on a closing brace at end of file
+            (Mode::Line, 12, 15, 8, 13),
+        ];
+
+        for (i, (mode, start_top, start_focused, end_top, end_focused)) in
+            tests.into_iter().enumerate()
+        {
+            viewer.mode = mode;
+            viewer.top_row = start_top;
+            viewer.focused_row = start_focused;
+            viewer.perform_action(Action::ToggleMode);
+
+            assert_eq!(
+                viewer.focused_row,
+                end_focused,
+                "Incorrect focused_row after test {}",
+                i + 1
+            );
+            assert_eq!(
+                viewer.top_row,
+                end_top,
+                "Incorrect top_row after test {}",
+                i + 1
+            );
+        }
     }
 
     #[track_caller]
