@@ -1,4 +1,4 @@
-latest
+v0.7.2 (2022-02-20)
 ==================
 
 New features / changes:
