@@ -1,3 +1,10 @@
+latest
+======
+
+New features:
+- Implement `ctrl-u` and `ctrl-d` commands to jump up and down by half
+  the screen's height, or by a specified number of lines.
+
 v0.7.2 (2022-02-20)
 ==================
 

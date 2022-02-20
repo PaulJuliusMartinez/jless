@@ -15,8 +15,12 @@ pub struct JsonViewer {
     pub flatjson: FlatJson,
     pub top_row: Index,
     pub focused_row: Index,
+
     // Used for Focus{Prev,Next}Sibling actions.
     desired_depth: usize,
+
+    // Used for JumpDown/JumpUp (ctrl-d/ctrl-u) actions.
+    jump_distance: Option<usize>,
 
     pub dimensions: TTYDimensions,
     // We call this scrolloff_setting, to differentiate between
@@ -35,6 +39,7 @@ impl JsonViewer {
             top_row: 0,
             focused_row: 0,
             desired_depth: 0,
+            jump_distance: None,
             dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
@@ -82,6 +87,32 @@ pub enum Action {
 
     ScrollUp(usize),
     ScrollDown(usize),
+
+    // By default, these move by half a screen, and move the focus by
+    // the same number of lines, so the focus doesn't appear to move
+    // on the screen. When jumping down, it will not show lines past
+    // the end of the file.
+    //
+    // When a count is provided, we'll move by that many *lines* (not
+    // N half screen sizes). This count is stored in
+    // JsonViewer.jump_distance and used for subsequent jumps, rather
+    // than half a screen size.
+    //
+    // vim always moves both the viewing window and the focused line
+    // by the appropriate lines, so the location of the focused line
+    // on the screen will move when jumping past the end of the file
+    // (or before the start).
+    //
+    // We'll implement a slight variation on this behavior. If the
+    // viewing window moves, we'll keep the focused line in the same
+    // vertical location, but once we're at the top of the file, and
+    // the viewing window doesn't change at all, then we will change
+    // the focused line by the expected count.
+    //
+    // These commands ignore the scrolloff option.
+    JumpUp(Option<usize>),
+    JumpDown(Option<usize>),
+
     PageUp(usize),
     PageDown(usize),
 
@@ -124,6 +155,8 @@ impl JsonViewer {
             Action::FocusMatchingPair => self.focus_matching_pair(),
             Action::ScrollUp(n) => self.scroll_up(n),
             Action::ScrollDown(n) => self.scroll_down(n),
+            Action::JumpUp(option_n) => self.jump_up(option_n),
+            Action::JumpDown(option_n) => self.jump_down(option_n),
             Action::PageUp(n) => self.scroll_up(self.dimensions.height as usize * n),
             Action::PageDown(n) => self.scroll_down(self.dimensions.height as usize * n),
             Action::MoveFocusedLineToTop => self.move_focused_line_to_top(),
@@ -169,6 +202,8 @@ impl JsonViewer {
             Action::FocusMatchingPair => true,
             Action::ScrollUp(_) => false,
             Action::ScrollDown(_) => false,
+            Action::JumpUp(_) => false,
+            Action::JumpDown(_) => false,
             Action::PageUp(_) => false,
             Action::PageDown(_) => false,
             Action::MoveFocusedLineToTop => false,
@@ -191,8 +226,6 @@ impl JsonViewer {
                 | Action::FocusNextSibling(_)
                 | Action::ScrollUp(_)
                 | Action::ScrollDown(_)
-                | Action::PageUp(_)
-                | Action::PageDown(_)
                 | Action::MoveFocusedLineToTop
                 | Action::MoveFocusedLineToCenter
                 | Action::MoveFocusedLineToBottom
@@ -498,6 +531,77 @@ impl JsonViewer {
         }
     }
 
+    fn jump_up(&mut self, distance: Option<usize>) {
+        let lines = self.determine_jump_distance(distance);
+
+        let original_top_row = self.top_row;
+        let num_visible_before_focused = self.index_of_focused_row_on_screen();
+
+        self.top_row = self.count_n_lines_before(self.top_row, lines, self.mode);
+
+        // If the viewing window moved at all, then keep the focused line in the
+        // same place vertically. But if we're at the top of the file, then move
+        // the focused line by the expected amount. This prevents the viewing
+        // window and the focused line from both changing, but by different amounts.
+        if original_top_row != self.top_row {
+            self.focused_row = self.count_n_lines_past(
+                self.top_row,
+                num_visible_before_focused as usize,
+                self.mode,
+            );
+        } else {
+            self.focused_row = self.count_n_lines_before(self.focused_row, lines, self.mode);
+        }
+    }
+
+    fn jump_down(&mut self, distance: Option<usize>) {
+        let lines = self.determine_jump_distance(distance);
+
+        let original_top_row = self.top_row;
+        let num_visible_before_focused = self.index_of_focused_row_on_screen();
+
+        self.top_row = self.count_n_lines_past(self.top_row, lines, self.mode);
+
+        let last_line = match self.mode {
+            Mode::Line => self.flatjson.last_visible_index(),
+            Mode::Data => self.flatjson.last_visible_item(),
+        };
+        let top_row_if_last_row_is_at_bottom =
+            self.count_n_lines_before(last_line, self.dimensions.height as usize - 1, self.mode);
+
+        // When jumping, we won't show lines past EOF, unless we already
+        // are showing lines past EOF.
+        if self.top_row > top_row_if_last_row_is_at_bottom {
+            self.top_row = top_row_if_last_row_is_at_bottom.max(original_top_row);
+        }
+
+        // If the viewing window moved at all, then keep the focused line in the
+        // same place vertically. But if we're at the bottom of the file, then move
+        // the focused line by the expected amount. This prevents the viewing
+        // window and the focused line from both changing, but by different amounts.
+        if original_top_row != self.top_row {
+            self.focused_row = self.count_n_lines_past(
+                self.top_row,
+                num_visible_before_focused as usize,
+                self.mode,
+            );
+        } else {
+            self.focused_row = self.count_n_lines_past(self.focused_row, lines, self.mode);
+        }
+    }
+
+    // If the user provided a count to a jump command, sets that as the the new
+    // jump distance. Otherwise, use the stored jump distance, or if none has
+    // been set yet, use the default of half a window size.
+    fn determine_jump_distance(&mut self, distance: Option<usize>) -> usize {
+        self.jump_distance = distance.or(self.jump_distance);
+
+        match self.jump_distance {
+            Some(n) => n,
+            None => (self.dimensions.height as usize / 2).max(1),
+        }
+    }
+
     fn move_focused_line_to_top(&mut self) {
         let padding = self.scrolloff() as usize;
         self.top_row = self.count_n_lines_before(self.focused_row, padding, self.mode);
@@ -772,6 +876,16 @@ impl JsonViewer {
             };
         }
         num_visible
+    }
+
+    // Returns the index of the focused row within the actual viewing window.
+    fn index_of_focused_row_on_screen(&self) -> u16 {
+        self.count_visible_rows_before(
+            self.top_row,
+            self.focused_row,
+            self.dimensions.height,
+            self.mode,
+        )
     }
 }
 
@@ -1302,6 +1416,89 @@ mod tests {
                 (Action::ScrollUp(1), 5, 10),
                 // Can't scroll up past top of file
                 (Action::ScrollUp(6), 0, 5),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_jump() {
+        const TALL_OBJECT: &str = r#"{
+            "1": [2],
+            "4": [5],
+            "7": [8],
+            "10": [11],
+            "13": [14],
+            "16": [17],
+        }"#; // 19
+
+        let fj = parse_top_level_json(TALL_OBJECT.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+        viewer.dimensions.height = 5;
+        viewer.scrolloff_setting = 0;
+        viewer.focused_row = 3;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                // Moves by half-screen rounded down.
+                (Action::JumpDown(None), 2, 5),
+                (Action::JumpDown(None), 4, 7),
+                (Action::JumpUp(None), 2, 5),
+                // Count moves by that many lines
+                (Action::JumpDown(Some(4)), 6, 9),
+                // And count is remembered
+                (Action::JumpDown(None), 10, 13),
+                // ... by both up and down
+                (Action::JumpUp(None), 6, 9),
+            ],
+        );
+
+        // Prioritize keeping focused line in same place, but once we're
+        // at the top or bottom of the file, we will move it.
+        viewer.dimensions.height = 8;
+        viewer.top_row = 3;
+        viewer.focused_row = 7;
+        viewer.scrolloff_setting = 3;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::JumpUp(Some(2)), 1, 5),
+                (Action::JumpUp(None), 0, 4),
+                (Action::JumpUp(None), 0, 2),
+                (Action::JumpUp(None), 0, 0),
+                // Scrolloff is ignored.
+                (Action::JumpDown(None), 2, 2),
+            ],
+        );
+
+        viewer.dimensions.height = 8;
+        viewer.top_row = 9;
+        viewer.focused_row = 11;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::JumpDown(Some(2)), 11, 13),
+                (Action::JumpDown(None), 12, 14),
+                (Action::JumpDown(None), 12, 16),
+                (Action::JumpDown(None), 12, 18),
+                (Action::JumpDown(None), 12, 19),
+                // Scrolloff is ignored.
+                (Action::JumpUp(None), 10, 17),
+            ],
+        );
+
+        // We won't move past the end of the file (tested above),
+        // unless we're already past it.
+        viewer.top_row = 14;
+        viewer.focused_row = 15;
+
+        assert_window_tracking(
+            &mut viewer,
+            vec![
+                (Action::JumpDown(Some(2)), 14, 17),
+                (Action::JumpDown(None), 14, 19),
             ],
         );
     }

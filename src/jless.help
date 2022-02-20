@@ -56,6 +56,12 @@
   ^e        *  Scroll down one line (or [4mN[0m lines).
   ^y        *  Scroll up   one line (or [4mN[0m lines).
 
+  ^d        *  Scroll down by half the height of the screen (or by [4mN[0m lines).
+  ^u        *  Scroll up   by half the height of the screen (or by [4mN[0m lines).
+                 For this command and ^d, focus is also moved by the specified
+                 number of lines. If no count is specified, the number of
+                 lines to scroll by is recalled from previous executions.
+
   zz           Move the focused node to the center of the screen.
   zt           Move the focused node to the top of the screen.
   zb           Move the focused node to the bottom of the screen.
