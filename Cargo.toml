@@ -10,6 +10,7 @@ repository = "https://github.com/PaulJuliusMartinez/jless"
 homepage = "https://github.com/PaulJuliusMartinez/jless"
 documentation = "https://github.com/PaulJuliusMartinez/jless/blob/master/src/jless.help"
 edition = "2018"
+rust-version = "1.54"
 
 [dependencies]
 logos = "0.12.0"
