@@ -6,6 +6,11 @@ New features / changes:
   node, rather than moving down a line. (Functionality was previous
   available via `i`, but was undocumented; `i` has become unmapped.)
 
+Bug Fixes:
+- [Issue #7 / PR #32]: Fix issue with rustyline always reading from
+  STDIN preventing `/` command from working when input provided via
+  STDIN.
+
 Internal:
 - [PR #17]: Upgrade from structopt to clap v3
 

@@ -50,10 +50,15 @@ fn main() {
         std::process::exit(0);
     }
 
+    // Create our input *before* constructing the App. When we get the input,
+    // we use freopen to remap /dev/tty to STDIN so that rustyline works when
+    // JSON input is provided via STDIN. rustyline gets initialized when we
+    // create the App, so by putting this before, we make sure rustyline gets
+    // the /dev/tty input.
+    let input = Box::new(input::get_input());
     let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
         io::stdout().into_raw_mode().unwrap(),
     )));
-    let input = Box::new(input::get_input());
 
     let mut app = match App::new(&opt, json_string, input_filename, Box::new(stdout)) {
         Ok(jl) => jl,
