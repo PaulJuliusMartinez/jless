@@ -2,15 +2,16 @@ name: release
 on:
   push:
     # Enable testing on branches
-    # branches: test-release
-    tag: "v[0-9]+.[0-9]+.[0-9]+"
+    # branches:
+    #   - test-release
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
 jobs:
   create-binaries:
     name: create-binaries
     strategy:
       matrix:
         platform:
-          - { os: ubuntu-latest, target: aarch64-unknown-linux-gnu }
           - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu  }
           - { os: macos-latest , target: x86_64-apple-darwin       }
     runs-on: ${{ matrix.platform.os }}
