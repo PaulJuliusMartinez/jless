@@ -452,8 +452,8 @@ mod tests {
         assert_eq!(search.jump_to_match(7, &fj, Prev, 3), 7);
 
         assert_eq!(search.jump_to_match(7, &fj, Next, 1), 1);
-        assert_eq!(search.jump_to_match(1, &fj, Next, 1000000000001), 4);
-        assert_eq!(search.jump_to_match(4, &fj, Prev, 1000000000001), 1);
+        assert_eq!(search.jump_to_match(1, &fj, Next, 4_000_000_001), 4);
+        assert_eq!(search.jump_to_match(4, &fj, Prev, 4_000_000_001), 1);
     }
 
     #[test]

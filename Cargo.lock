@@ -209,12 +209,13 @@ dependencies = [
 
 [[package]]
 name = "jless"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "clap",
  "isatty",
  "lazy_static",
  "libc",
+ "libc-stdhandle",
  "logos",
  "regex",
  "rustyline",
@@ -235,6 +236,16 @@ name = "libc"
 version = "0.2.99"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a7f823d141fe0a24df1e23b4af4e3c7ba9e5966ec514ea068c93024aa7deb765"
+
+[[package]]
+name = "libc-stdhandle"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6dac2473dc28934c5e0b82250dab231c9d3b94160d91fe9ff483323b05797551"
+dependencies = [
+ "cc",
+ "libc",
+]
 
 [[package]]
 name = "log"

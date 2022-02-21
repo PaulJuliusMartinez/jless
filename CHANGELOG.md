@@ -1,10 +1,27 @@
 latest
+======
+
+New features:
+- Implement `ctrl-u` and `ctrl-d` commands to jump up and down by half
+  the screen's height, or by a specified number of lines.
+
+Improvements:
+- Keep focused in same place on screen when toggling between line and
+  data modes; fix a crash when focused on a closing delimiter and
+  switching to data mode.
+
+v0.7.2 (2022-02-20)
 ==================
 
 New features / changes:
 - [PR #42]: Space now toggles the collapsed state of the currently focused
   node, rather than moving down a line. (Functionality was previous
   available via `i`, but was undocumented; `i` has become unmapped.)
+
+Bug Fixes:
+- [Issue #7 / PR #32]: Fix issue with rustyline always reading from
+  STDIN preventing `/` command from working when input provided via
+  STDIN.
 
 Internal:
 - [PR #17]: Upgrade from structopt to clap v3

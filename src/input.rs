@@ -2,9 +2,8 @@ use signal_hook::consts::SIGWINCH;
 use signal_hook::low_level::pipe;
 use termion::event::{parse_event, Event, Key, MouseEvent};
 
-use std::fs::File;
 use std::io;
-use std::io::Read;
+use std::io::{stdin, Read, Stdin};
 use std::os::unix::io::AsRawFd;
 use std::os::unix::net::UnixStream;
 
@@ -15,13 +14,29 @@ const BUFFER_SIZE: usize = 1024;
 const ESCAPE: u8 = 0o33;
 
 pub fn get_input() -> impl Iterator<Item = io::Result<TuiEvent>> {
-    let tty = File::open("/dev/tty").unwrap();
+    // The readline library we use, rustyline, always gets its input from STDIN.
+    // If jless accepts its input from STDIN, then rustyline can't accept input.
+    // To fix this, we open up /dev/tty, and remap it to STDIN, as suggested in
+    // this StackOverflow post:
+    //
+    // https://stackoverflow.com/questions/29689034/piped-stdin-and-keyboard-same-time-in-c
+    //
+    // rustyline may add its own fix to support reading from /dev/tty:
+    //
+    // https://github.com/kkawakam/rustyline/issues/599
+    unsafe {
+        // freopen(3) docs: https://linux.die.net/man/3/freopen
+        let filename = std::ffi::CString::new("/dev/tty").unwrap();
+        let path = std::ffi::CString::new("r").unwrap();
+        let _ = libc::freopen(filename.as_ptr(), path.as_ptr(), libc_stdhandle::stdin());
+    }
+
     let (sigwinch_read, sigwinch_write) = UnixStream::pair().unwrap();
     pipe::register(SIGWINCH, sigwinch_write).unwrap();
-    TuiInput::new(tty, sigwinch_read)
+    TuiInput::new(stdin(), sigwinch_read)
 }
 
-fn read_and_retry_on_interrupt(input: &mut File, buf: &mut [u8]) -> io::Result<usize> {
+fn read_and_retry_on_interrupt(input: &mut Stdin, buf: &mut [u8]) -> io::Result<usize> {
     loop {
         match input.read(buf) {
             res @ Ok(_) => {
@@ -38,7 +53,7 @@ fn read_and_retry_on_interrupt(input: &mut File, buf: &mut [u8]) -> io::Result<u
 }
 
 struct BufferedInput<const N: usize> {
-    input: File,
+    input: Stdin,
     buffer: [u8; N],
     buffer_size: usize,
     buffer_index: usize,
@@ -46,7 +61,7 @@ struct BufferedInput<const N: usize> {
 }
 
 impl<const N: usize> BufferedInput<N> {
-    fn new(input: File) -> BufferedInput<N> {
+    fn new(input: Stdin) -> BufferedInput<N> {
         BufferedInput {
             input,
             buffer: [0; N],
@@ -136,7 +151,7 @@ struct TuiInput {
 }
 
 impl TuiInput {
-    fn new(input: File, sigwinch_pipe: UnixStream) -> TuiInput {
+    fn new(input: Stdin, sigwinch_pipe: UnixStream) -> TuiInput {
         let sigwinch_fd = sigwinch_pipe.as_raw_fd();
         let stdin_fd = input.as_raw_fd();
 

@@ -1,0 +1,43 @@
+name: release
+on:
+  push:
+    # Enable testing on branches
+    # branches:
+    #   - test-release
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+jobs:
+  create-binaries:
+    name: create-binaries
+    strategy:
+      matrix:
+        platform:
+          - { os: ubuntu-latest, target: x86_64-unknown-linux-gnu  }
+          - { os: macos-latest , target: x86_64-apple-darwin       }
+    runs-on: ${{ matrix.platform.os }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+      - name: Install Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          override: true
+          target: ${{ matrix.platform.target }}
+          components: clippy, rustfmt
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --verbose --release --target=${{ matrix.platform.target }}
+      - name: Strip binary
+        run: strip target/${{ matrix.platform.target }}/release/jless
+      - name: Compress binary
+        run: |
+          mv target/${{ matrix.platform.target }}/release/jless .
+          zip -X jless-${{ matrix.platform.target }}.zip jless
+      - name: Upload binary
+        uses: actions/upload-artifact@v2
+        with:
+          name: jless-${{ matrix.platform.target }}.zip
+          path: jless-${{ matrix.platform.target }}.zip

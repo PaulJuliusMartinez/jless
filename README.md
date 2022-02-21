@@ -8,6 +8,8 @@ is written in Rust and can be installed as a single standalone binary.
 `jless` is under active development. I often stream development live on
 [Twitch](https://twitch.tv/CodeIsTheEnd).
 
+[![ci](https://github.com/PaulJuliusMartinez/jless/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/PaulJuliusMartinez/jless/actions/workflows/ci.yml)
+
 ### Features
 
 - Clean syntax highlighted display of JSON data, omitting quotes around

@@ -135,6 +135,14 @@ impl App {
                             let lines = self.parse_input_buffer_as_number();
                             Some(Action::ScrollUp(lines))
                         }
+                        Key::Ctrl('d') => {
+                            let maybe_distance = self.maybe_parse_input_buffer_as_number();
+                            Some(Action::JumpDown(maybe_distance))
+                        }
+                        Key::Ctrl('u') => {
+                            let maybe_distance = self.maybe_parse_input_buffer_as_number();
+                            Some(Action::JumpUp(maybe_distance))
+                        }
                         Key::PageUp => {
                             let count = self.parse_input_buffer_as_number();
                             Some(Action::PageUp(count))
@@ -351,10 +359,14 @@ impl App {
         }
     }
 
-    fn parse_input_buffer_as_number(&mut self) -> usize {
+    fn maybe_parse_input_buffer_as_number(&mut self) -> Option<usize> {
         let n = str::parse::<usize>(std::str::from_utf8(&self.input_buffer).unwrap());
         self.input_buffer.clear();
-        n.unwrap_or(1)
+        n.ok()
+    }
+
+    fn parse_input_buffer_as_number(&mut self) -> usize {
+        self.maybe_parse_input_buffer_as_number().unwrap_or(1)
     }
 
     fn get_search_input_and_start_search(
