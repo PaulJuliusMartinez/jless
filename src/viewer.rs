@@ -732,8 +732,7 @@ impl JsonViewer {
         if val == Preview::None && self.mode == Mode::Line {
             // Emit a warning....?
             self.preview = Preview::Count;
-        }
-        else {
+        } else {
             self.preview = val;
         }
     }
@@ -749,8 +748,7 @@ impl JsonViewer {
                 Preview::Count => Preview::None,
                 Preview::None => Preview::Full,
             }
-        }
-        else {
+        } else {
             self.preview = match self.preview {
                 Preview::Full => Preview::Count,
                 Preview::Count => Preview::Full,

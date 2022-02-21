@@ -686,12 +686,16 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             available_space -= 1;
         }
 
-        let mut used_space = 0;
+        let mut used_space;
 
         if self.preview == Preview::Full {
             let quoted_object_keys = self.mode == Mode::Line;
-            used_space =
-                self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?;
+            used_space = self.generate_container_preview(
+                flatjson,
+                row,
+                available_space,
+                quoted_object_keys,
+            )?;
 
             if self.trailing_comma {
                 used_space += 1;
@@ -706,8 +710,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                     )?;
                 }
             }
-        }
-        else if self.preview == Preview::None {
+        } else if self.preview == Preview::None {
             self.highlight_str(
                 " ",
                 Some(self.value_range.end),
@@ -717,10 +720,8 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 ),
             )?;
             used_space = 1;
-        }
-        else {
-            used_space =
-                self.generate_container_count(flatjson, row, available_space)?;
+        } else {
+            used_space = self.generate_container_count(flatjson, row, available_space)?;
         }
 
         Ok(used_space)
@@ -826,7 +827,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         &mut self,
         flatjson: &FlatJson,
         row: &Row,
-        mut available_space: isize
+        available_space: isize,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
@@ -836,7 +837,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let mut next_sibling = row.first_child();
-        let mut count:usize = 0;
+        let mut count: usize = 0;
         while let OptionIndex::Index(child) = next_sibling {
             next_sibling = flatjson[child].next_sibling;
             count += 1;
@@ -846,14 +847,14 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         let mut count_str = format!(
             "{} {} item{} {}",
             container_type.open_str(),
-            count.to_string(),
+            count,
             if count == 1 { "" } else { "s" },
             container_type.close_str()
         );
 
         if count_str.len() as isize > available_space {
             count_str = format!(
-                 "{}…{}",
+                "{}…{}",
                 container_type.open_str(),
                 container_type.close_str()
             );
@@ -862,10 +863,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         self.highlight_str(
             &count_str,
             Some(self.value_range.start),
-            highlighting::PREVIEW_STYLES
+            highlighting::PREVIEW_STYLES,
         )?;
         let len = count_str.chars().count() as isize;
-        available_space -= len;
         Ok(len)
     }
 
@@ -1596,15 +1596,10 @@ mod tests {
             ..default_line_printer(&mut term)
         };
 
-        for (available_space, used_space, expected) in vec![
-            (14, 11, r#"[ 3 items ]"#),
-            (4,  3, r#"[…]"#),
-            (2,  0, r#""#),
-        ]
-        .into_iter()
+        for (available_space, used_space, expected) in
+            vec![(14, 11, r#"[ 3 items ]"#), (4, 3, r#"[…]"#), (2, 0, r#""#)].into_iter()
         {
-            let used =
-                line.generate_container_count(&fj_arr, &fj_arr[0], available_space)?;
+            let used = line.generate_container_count(&fj_arr, &fj_arr[0], available_space)?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
@@ -1617,15 +1612,10 @@ mod tests {
             line.terminal.clear_output();
         }
 
-        for (available_space, used_space, expected) in vec![
-            (14, 11, r#"{ 2 items }"#),
-            (4,  3, r#"{…}"#),
-            (2,  0, r#""#),
-        ]
-        .into_iter()
+        for (available_space, used_space, expected) in
+            vec![(14, 11, r#"{ 2 items }"#), (4, 3, r#"{…}"#), (2, 0, r#""#)].into_iter()
         {
-            let used =
-                line.generate_container_count(&fj_obj, &fj_obj[0], available_space)?;
+            let used = line.generate_container_count(&fj_obj, &fj_obj[0], available_space)?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
@@ -1638,13 +1628,8 @@ mod tests {
             line.terminal.clear_output();
         }
 
-        for (available_space, used_space, expected) in vec![
-            (14, 10, r#"{ 1 item }"#),
-        ]
-        .into_iter()
-        {
-            let used =
-                line.generate_container_count(&fj_one, &fj_one[0], available_space)?;
+        for (available_space, used_space, expected) in vec![(14, 10, r#"{ 1 item }"#)].into_iter() {
+            let used = line.generate_container_count(&fj_one, &fj_one[0], available_space)?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
