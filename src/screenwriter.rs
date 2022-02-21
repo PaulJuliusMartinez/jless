@@ -648,7 +648,11 @@ impl ScreenWriter {
 
         for (i, val) in history.iter().enumerate() {
             let _ = self.terminal.position_cursor(2 + col, row + (i as u16) + 1);
-            let _ = self.terminal.set_dimmed(i < history.len() - 1);
+            let _ = self.terminal.set_fg(if i < history.len() - 1 {
+                terminal::LIGHT_BLACK
+            } else {
+                terminal::DEFAULT
+            });
             let _ = write!(self.terminal, "{}", val);
         }
 
