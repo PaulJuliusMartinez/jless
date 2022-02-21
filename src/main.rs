@@ -60,7 +60,13 @@ fn main() {
         io::stdout().into_raw_mode().unwrap(),
     )));
 
-    let mut app = match App::new(&opt, json_string, input_filename, Box::new(stdout)) {
+    let mut app = match App::new(
+        &opt,
+        json_string,
+        input_filename,
+        Box::new(stdout),
+        opt.show_command_history,
+    ) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{}", err);

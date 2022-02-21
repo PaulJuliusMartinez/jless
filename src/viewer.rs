@@ -131,6 +131,24 @@ pub enum Action {
     ResizeViewerDimensions(TTYDimensions),
 }
 
+impl Action {
+    pub fn takes_count(&self) -> bool {
+        matches!(
+            self,
+            Action::MoveUp(_)
+                | Action::MoveDown(_)
+                | Action::FocusPrevSibling(_)
+                | Action::FocusNextSibling(_)
+                | Action::ScrollUp(_)
+                | Action::ScrollDown(_)
+                | Action::JumpUp(_)
+                | Action::JumpDown(_)
+                | Action::PageUp(_)
+                | Action::PageDown(_)
+        )
+    }
+}
+
 impl JsonViewer {
     pub fn perform_action(&mut self, action: Action) {
         let track_window = JsonViewer::should_refocus_window(&action);

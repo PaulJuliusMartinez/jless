@@ -19,10 +19,14 @@ use crate::viewer::{Action, JsonViewer};
 pub struct App {
     viewer: JsonViewer,
     screen_writer: ScreenWriter,
+
+    buffering_input: bool,
     input_buffer: Vec<u8>,
+
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+    command_history: Option<Vec<String>>,
 }
 
 enum Command {
@@ -37,12 +41,15 @@ const HELP: &str = std::include_str!("./jless.help");
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &str = "\x07";
 
+pub const COMMAND_HISTORY_SIZE: u16 = 3;
+
 impl App {
     pub fn new(
         opt: &Opt,
         json: String,
         input_filename: String,
         stdout: Box<dyn Write>,
+        show_command_history: bool,
     ) -> Result<App, String> {
         let flatjson = match flatjson::parse_top_level_json(json) {
             Ok(flatjson) => flatjson,
@@ -55,13 +62,22 @@ impl App {
         let screen_writer =
             ScreenWriter::init(stdout, Editor::<()>::new(), TTYDimensions::default());
 
+        let mut command_history = None;
+        if show_command_history {
+            command_history = Some(vec![]);
+        };
+
         Ok(App {
             viewer,
             screen_writer,
+
+            buffering_input: false,
             input_buffer: vec![],
+
             input_filename,
             search_state: SearchState::empty(),
             message: None,
+            command_history,
         })
     }
 
@@ -76,6 +92,8 @@ impl App {
             &self.search_state,
             &self.message,
         );
+        self.screen_writer
+            .print_command_history(self.command_history.as_ref());
 
         for event in input {
             // When "actively" searching, we want to show highlighted search terms.
@@ -95,25 +113,36 @@ impl App {
             let previous_collapsed_state_of_focused_row =
                 self.viewer.flatjson[focused_row_before].is_collapsed();
 
+            // For managing command history.
+            let was_buffering_input = self.buffering_input;
+            let mut took_other_action = false;
+            let mut action_used_buffered_input = false;
+
             let event = event.unwrap();
-            let action = match event {
+            let action = match &event {
                 // These inputs quit.
                 KeyEvent(Key::Ctrl('c') | Key::Char('q')) => break,
                 // Show the help page
                 KeyEvent(Key::F(1)) => {
                     self.show_help();
+                    took_other_action = true;
+                    self.clear_input_buffer();
                     None
                 }
                 // These inputs may be buffered.
                 KeyEvent(Key::Char(ch @ '0'..='9')) => {
-                    if ch == '0' && self.input_buffer.is_empty() {
+                    if *ch == '0' && self.input_buffer.is_empty() {
                         Some(Action::FocusFirstSibling)
                     } else {
-                        self.buffer_input(ch as u8);
+                        self.buffer_input(*ch as u8);
                         None
                     }
                 }
-                KeyEvent(Key::Char('z')) => self.handle_z_input(),
+                KeyEvent(Key::Char('z')) => {
+                    let action = self.handle_z_input();
+                    action_used_buffered_input = action.is_some();
+                    action
+                }
                 // These inputs always clear the input_buffer (but may use its current contents).
                 KeyEvent(key) => {
                     let action = match key {
@@ -161,27 +190,40 @@ impl App {
                         Key::Char('n') => {
                             let count = self.parse_input_buffer_as_number();
                             jumped_to_search_match = true;
+                            // jump to search match may return none
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             self.jump_to_search_match(JumpDirection::Next, count)
                         }
                         Key::Char('N') => {
                             let count = self.parse_input_buffer_as_number();
                             jumped_to_search_match = true;
+                            // jump to search match may return none
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             self.jump_to_search_match(JumpDirection::Prev, count)
                         }
                         Key::Char('.') => {
                             let count = self.parse_input_buffer_as_number();
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             self.screen_writer
                                 .scroll_focused_line_right(&self.viewer, count);
                             None
                         }
                         Key::Char(',') => {
                             let count = self.parse_input_buffer_as_number();
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             self.screen_writer
                                 .scroll_focused_line_left(&self.viewer, count);
                             None
                         }
                         Key::Char('/') => {
                             let count = self.parse_input_buffer_as_number();
+                            // search actions may return none
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             let action = self
                                 .get_search_input_and_start_search(SearchDirection::Forward, count);
                             jumped_to_search_match = action.is_some();
@@ -189,6 +231,9 @@ impl App {
                         }
                         Key::Char('?') => {
                             let count = self.parse_input_buffer_as_number();
+                            // search actions may return none
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             let action = self
                                 .get_search_input_and_start_search(SearchDirection::Reverse, count);
                             jumped_to_search_match = action.is_some();
@@ -196,6 +241,9 @@ impl App {
                         }
                         Key::Char('*') => {
                             let count = self.parse_input_buffer_as_number();
+                            // search actions may return none
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             let action =
                                 self.start_object_key_search(SearchDirection::Forward, count);
                             jumped_to_search_match = action.is_some();
@@ -203,6 +251,9 @@ impl App {
                         }
                         Key::Char('#') => {
                             let count = self.parse_input_buffer_as_number();
+                            // search actions may return none
+                            took_other_action = true;
+                            action_used_buffered_input = true;
                             let action =
                                 self.start_object_key_search(SearchDirection::Reverse, count);
                             jumped_to_search_match = action.is_some();
@@ -211,6 +262,7 @@ impl App {
                         // These may interpret the input buffer some other way
                         Key::Char('t') => {
                             if self.input_buffer == "z".as_bytes() {
+                                action_used_buffered_input = true;
                                 Some(Action::MoveFocusedLineToTop)
                             } else {
                                 None
@@ -218,6 +270,7 @@ impl App {
                         }
                         Key::Char('b') => {
                             if self.input_buffer == "z".as_bytes() {
+                                action_used_buffered_input = true;
                                 Some(Action::MoveFocusedLineToBottom)
                             } else {
                                 Some(Action::MoveUpUntilDepthChange)
@@ -238,20 +291,24 @@ impl App {
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
                         Key::Char('<') => {
+                            took_other_action = true;
                             self.screen_writer
                                 .decrease_indentation_level(self.viewer.flatjson.2 as u16);
                             None
                         }
                         Key::Char('>') => {
+                            took_other_action = true;
                             self.screen_writer.increase_indentation_level();
                             None
                         }
                         Key::Char(';') => {
+                            took_other_action = true;
                             self.screen_writer
                                 .scroll_focused_line_to_an_end(&self.viewer);
                             None
                         }
                         Key::Char(':') => {
+                            took_other_action = true;
                             if let Ok(command) = self.screen_writer.get_command(":") {
                                 match Self::parse_command(&command) {
                                     Command::Quit => break,
@@ -273,15 +330,15 @@ impl App {
                         }
                     };
 
-                    self.input_buffer.clear();
+                    self.clear_input_buffer();
 
                     action
                 }
                 MouseEvent(me) => {
-                    self.input_buffer.clear();
+                    self.clear_input_buffer();
 
                     match me {
-                        Press(Left, _, h) => Some(Action::Click(h)),
+                        Press(Left, _, h) => Some(Action::Click(*h)),
                         Press(WheelUp, _, _) => Some(Action::MoveUp(3)),
                         Press(WheelDown, _, _) => Some(Action::MoveDown(3)),
                         /* Ignore other mouse events. */
@@ -300,6 +357,13 @@ impl App {
                     None
                 }
             };
+
+            self.update_command_history(
+                was_buffering_input,
+                action.is_some() || took_other_action,
+                action.map(|a| a.takes_count()).unwrap_or(false) || action_used_buffered_input,
+                event,
+            );
 
             if let Some(action) = action {
                 self.viewer.perform_action(action);
@@ -329,6 +393,8 @@ impl App {
                 &self.search_state,
                 &self.message,
             );
+            self.screen_writer
+                .print_command_history(self.command_history.as_ref());
             self.message = None;
         }
     }
@@ -344,14 +410,20 @@ impl App {
             self.input_buffer.pop();
         }
         self.input_buffer.push(ch);
+        self.buffering_input = true;
+    }
+
+    fn clear_input_buffer(&mut self) {
+        self.input_buffer.clear();
+        self.buffering_input = false;
     }
 
     fn handle_z_input(&mut self) -> Option<Action> {
         if self.input_buffer == "z".as_bytes() {
-            self.input_buffer.clear();
+            self.clear_input_buffer();
             Some(Action::MoveFocusedLineToCenter)
         } else {
-            self.input_buffer.clear();
+            self.clear_input_buffer();
             self.buffer_input(b'z');
             None
         }
@@ -359,7 +431,7 @@ impl App {
 
     fn maybe_parse_input_buffer_as_number(&mut self) -> Option<usize> {
         let n = str::parse::<usize>(std::str::from_utf8(&self.input_buffer).unwrap());
-        self.input_buffer.clear();
+        self.clear_input_buffer();
         n.ok()
     }
 
@@ -498,5 +570,97 @@ impl App {
         }
 
         let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
+    }
+
+    fn update_command_history(
+        &mut self,
+        was_buffering_input: bool,
+        took_action: bool,
+        action_used_buffered_input: bool,
+        event: TuiEvent,
+    ) {
+        if self.command_history.is_none() {
+            return;
+        }
+
+        if took_action {
+            if was_buffering_input {
+                if action_used_buffered_input {
+                    // Add action key to buffered input
+                    self.append_to_buffered_history(&Self::event_to_str(&event));
+                } else {
+                    // Replace buffered input with action key
+                    self.replace_buffered_history(Self::event_to_str(&event));
+                }
+            } else {
+                self.cycle_command_history(Self::event_to_str(&event));
+            }
+        } else {
+            if self.buffering_input {
+                let buffered_input = std::str::from_utf8(&self.input_buffer).unwrap().to_owned();
+                if was_buffering_input {
+                    // Update buffered input
+                    self.replace_buffered_history(buffered_input);
+                } else {
+                    // Cycle buffered input into history
+                    self.cycle_command_history(buffered_input);
+                }
+            } else {
+                if was_buffering_input {
+                    // Add unknown action key to buffered input with ?
+                    self.append_to_buffered_history(&Self::event_to_str(&event));
+                    self.append_to_buffered_history(" ?");
+                } else {
+                    // Cycle unknown action key into history
+                    self.cycle_command_history(Self::event_to_str(&event));
+                    self.append_to_buffered_history(" ?");
+                }
+            }
+        }
+    }
+
+    fn event_to_str(event: &TuiEvent) -> String {
+        match event {
+            TuiEvent::KeyEvent(key) => match key {
+                Key::Backspace => "Backspace".to_owned(),
+                Key::Left => "Left".to_owned(),
+                Key::Right => "Right".to_owned(),
+                Key::Up => "Up".to_owned(),
+                Key::Down => "Down".to_owned(),
+                Key::Home => "Home".to_owned(),
+                Key::End => "End".to_owned(),
+                Key::PageUp => "PageUp".to_owned(),
+                Key::PageDown => "PageDown".to_owned(),
+                Key::F(n) => format!("F{}", n),
+                Key::Char(ch) => format!("{}", ch),
+                Key::Ctrl(ch) => format!("^{}", ch),
+                _ => "???".to_owned(),
+            },
+            TuiEvent::WinChEvent => "SIGWINCH".to_owned(),
+            TuiEvent::MouseEvent(_) => "Mouse".to_owned(),
+            TuiEvent::Unknown => "???".to_owned(),
+        }
+    }
+
+    fn cycle_command_history(&mut self, s: String) {
+        let history = self.command_history.as_mut().unwrap();
+        if history.len() >= COMMAND_HISTORY_SIZE as usize {
+            history.rotate_left(1);
+            history.pop();
+        }
+        history.push(s.to_owned());
+    }
+
+    fn append_to_buffered_history(&mut self, s: &str) {
+        let history = self.command_history.as_mut().unwrap();
+        assert!(!history.is_empty());
+        history.last_mut().unwrap().push_str(s);
+    }
+
+    fn replace_buffered_history(&mut self, s: String) {
+        let history = self.command_history.as_mut().unwrap();
+        assert!(!history.is_empty());
+        let index = history.len() - 1;
+        history[index] = s;
     }
 }

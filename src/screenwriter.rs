@@ -7,7 +7,7 @@ use rustyline::Editor;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-use crate::app::MAX_BUFFER_SIZE;
+use crate::app::{COMMAND_HISTORY_SIZE, MAX_BUFFER_SIZE};
 use crate::flatjson::{Index, OptionIndex, Row, Value};
 use crate::lineprinter as lp;
 use crate::lineprinter::JS_IDENTIFIER;
@@ -616,5 +616,42 @@ impl ScreenWriter {
             self.truncated_row_value_views
                 .insert(viewer.focused_row, tsv);
         }
+    }
+
+    const COMMAND_HISTORY_TOP: &'static str = "┌─ Commands ─┐";
+    const COMMAND_HISTORY_MID: &'static str = "│            │";
+    const COMMAND_HISTORY_BOTTOM: &'static str = "└────────────┘";
+    const COMMAND_HISTORY_WIDTH: u16 = 14;
+
+    // Overlay recently executed commands in the top right.
+    pub fn print_command_history(&mut self, history: Option<&Vec<String>>) {
+        if history.is_none() {
+            return;
+        }
+        let history = history.unwrap();
+
+        let col = self.dimensions.width - Self::COMMAND_HISTORY_WIDTH - 1;
+        let row = 2;
+
+        let _ = self.terminal.position_cursor(col, row);
+        let _ = self.terminal.write_str(Self::COMMAND_HISTORY_TOP);
+
+        for i in 0..COMMAND_HISTORY_SIZE {
+            let _ = self.terminal.position_cursor(col, row + i + 1);
+            let _ = self.terminal.write_str(Self::COMMAND_HISTORY_MID);
+        }
+
+        let _ = self
+            .terminal
+            .position_cursor(col, row + COMMAND_HISTORY_SIZE + 1);
+        let _ = self.terminal.write_str(Self::COMMAND_HISTORY_BOTTOM);
+
+        for (i, val) in history.iter().enumerate() {
+            let _ = self.terminal.position_cursor(2 + col, row + (i as u16) + 1);
+            let _ = self.terminal.set_dimmed(i < history.len() - 1);
+            let _ = write!(self.terminal, "{}", val);
+        }
+
+        let _ = self.terminal.flush_contents(&mut self.stdout);
     }
 }

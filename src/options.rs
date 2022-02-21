@@ -27,4 +27,8 @@ pub struct Opt {
     /// (except at the start or end of a file).
     #[clap(long = "scrolloff", default_value_t = 3)]
     pub scrolloff: u16,
+
+    /// Show command history in top-right corner.
+    #[clap(long = "show-command-history", hide = true)]
+    pub show_command_history: bool,
 }
