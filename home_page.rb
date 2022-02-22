@@ -72,7 +72,7 @@ class HomePage < BasePage
     features = render_features
     installation = render_installation
     user_guide = p(<<~P)
-      Check out the #{a(href: './usage.html') {'user guide'}} to learn
+      Check out the #{a(href: './user-guide.html') {'user guide'}} to learn
       about the full functionality of JLess.
     P
 
