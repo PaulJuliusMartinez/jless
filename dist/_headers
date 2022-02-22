@@ -1,0 +1,7 @@
+# Specify caching headers
+# https://docs.netlify.com/routing/headers/
+
+# Cache static assets for a day
+/assets/*
+  Cache-Control: public
+  Cache-Control: max-age=86400
