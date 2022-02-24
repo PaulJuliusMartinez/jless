@@ -34,6 +34,7 @@ You can install `jless` using various package managers:
 | Linux - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
 | [Arch Linux](https://aur.archlinux.org/packages/jless)     | `pacman -U jless`         |
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
+| [FreeBSD](https://freshports.org/textproc/jless/)          | `pkg install jless`       |
 
 If you have a Rust toolchain installed, you can install `jless` from
 source by running `cargo install jless`.
