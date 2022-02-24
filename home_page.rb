@@ -8,6 +8,7 @@ class HomePage < BasePage
     { os: 'Linux', tool: 'HomeBrew', command: 'brew install jless', link: 'https://formulae.brew.sh/formula/jless' },
     { os: 'Arch Linux', command: 'pacman -U jless', link: 'https://aur.archlinux.org/packages/jless' },
     { os: 'NetBSD', command: 'pkgin install jless', link: 'https://pkgsrc.se/textproc/jless/' },
+    { os: 'FreeBSD', command: 'pkg install jless', link: 'https://freshports.org/textproc/jless/' },
   ].freeze
 
   def self.page_css
