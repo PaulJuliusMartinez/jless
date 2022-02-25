@@ -6,7 +6,7 @@ class HomePage < BasePage
     { os: 'macOS', tool: 'HomeBrew', command: 'brew install jless', link: 'https://formulae.brew.sh/formula/jless' },
     { os: 'macOS', tool: 'MacPorts', command: 'sudo port install jless', link: 'https://ports.macports.org/port/jless/' },
     { os: 'Linux', tool: 'HomeBrew', command: 'brew install jless', link: 'https://formulae.brew.sh/formula/jless' },
-    { os: 'Arch Linux', command: 'pacman -U jless', link: 'https://aur.archlinux.org/packages/jless' },
+    { os: 'Arch Linux', note: "Available in the #{a(href: 'https://aur.archlinux.org/packages/jless') {"AUR"}}" },
     { os: 'NetBSD', command: 'pkgin install jless', link: 'https://pkgsrc.se/textproc/jless/' },
     { os: 'FreeBSD', command: 'pkg install jless', link: 'https://freshports.org/textproc/jless/' },
   ].freeze
@@ -142,13 +142,16 @@ class HomePage < BasePage
           cells << td do
             a(href: pkg[:link]) {pkg[:tool]}
           end
+          cells << td {code {pkg[:command]}}
+        elsif pkg[:note]
+          cells << td {pkg[:os]}
+          cells << td(colspan: '2', style: "text-align: center;") {pkg[:note]}
         else
           cells << td(colspan: '2') do
             a(href: pkg[:link]) {pkg[:os]}
           end
+          cells << td {code {pkg[:command]}}
         end
-
-        cells << td {code {pkg[:command]}}
 
         tr {cells.join}
       end.join
