@@ -1,8 +1,15 @@
 use std::path::PathBuf;
 
+use clap::ArgEnum;
 use clap::Parser;
 
 use crate::viewer::Mode;
+
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
+pub enum DataFormat {
+    Json,
+    Yaml,
+}
 
 /// A pager for JSON data
 #[derive(Debug, Parser)]
@@ -27,4 +34,9 @@ pub struct Opt {
     /// (except at the start or end of a file).
     #[clap(long = "scrolloff", default_value_t = 3)]
     pub scrolloff: u16,
+
+    /// Data format. When given a file as input, jless will check the file
+    /// extension to determine the data format. Falls back to JSON.
+    #[clap(short = 'd', long = "data", arg_enum, hide_possible_values = true)]
+    pub data_format: Option<DataFormat>,
 }

@@ -2,6 +2,7 @@ use std::fmt::Debug;
 use std::ops::Range;
 
 use crate::jsonparser;
+use crate::yamlparser;
 
 pub type Index = usize;
 
@@ -405,7 +406,11 @@ impl Value {
 
 pub fn parse_top_level_json(json: String) -> Result<FlatJson, String> {
     let (rows, pretty, depth) = jsonparser::parse(json)?;
-    // eprintln!("Pretty printed version of input JSON:\n{}", pretty);
+    Ok(FlatJson(rows, pretty, depth))
+}
+
+pub fn parse_top_level_yaml(yaml: String) -> Result<FlatJson, String> {
+    let (rows, pretty, depth) = yamlparser::parse(yaml)?;
     Ok(FlatJson(rows, pretty, depth))
 }
 

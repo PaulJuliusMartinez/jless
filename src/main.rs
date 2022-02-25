@@ -30,6 +30,7 @@ mod terminal;
 mod truncatedstrview;
 mod types;
 mod viewer;
+mod yamlparser;
 
 use app::App;
 use options::Opt;
