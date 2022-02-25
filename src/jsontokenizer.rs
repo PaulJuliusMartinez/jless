@@ -25,7 +25,7 @@ pub enum JsonToken {
     False,
     #[regex(
         r"(?x)(?i)
-            -?
+            [-+]?
             (
                 0 |
                 ([1-9][0-9]*)
