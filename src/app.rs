@@ -409,27 +409,29 @@ impl App {
             SearchDirection::Forward => "/",
             SearchDirection::Reverse => "?",
         };
-        let search_term = self.screen_writer.get_command(prompt_str).unwrap();
 
-        // In vim, /<CR> or ?<CR> is a longcut for repeating the previous search.
-        if search_term.is_empty() {
-            // This will actually set the direction of a search going forward.
-            self.search_state.direction = direction;
-            self.jump_to_search_match(JumpDirection::Next, jumps)
-        } else {
-            if self.initialize_search(direction, search_term) {
-                if !self.search_state.any_matches() {
-                    self.message = Some((
-                        self.search_state.no_matches_message(),
-                        MessageSeverity::Warn,
-                    ));
-                    None
-                } else {
-                    self.jump_to_search_match(JumpDirection::Next, jumps)
-                }
+        if let Ok(search_term) = self.screen_writer.get_command(prompt_str) {
+            if search_term.is_empty() {
+                // This will actually set the direction of a search going forward.
+                self.search_state.direction = direction;
+                self.jump_to_search_match(JumpDirection::Next, jumps)
             } else {
-                None
+                if self.initialize_search(direction, search_term) {
+                    if !self.search_state.any_matches() {
+                        self.message = Some((
+                            self.search_state.no_matches_message(),
+                            MessageSeverity::Warn,
+                        ));
+                        None
+                    } else {
+                        self.jump_to_search_match(JumpDirection::Next, jumps)
+                    }
+                } else {
+                    None
+                }
             }
+        } else {
+            None
         }
     }
 
