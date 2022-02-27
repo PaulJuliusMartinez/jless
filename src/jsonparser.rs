@@ -120,6 +120,9 @@ impl<'a> JsonParser<'a> {
                 JsonToken::Number => {
                     return self.parse_number();
                 }
+                JsonToken::NaN => {
+                    return self.parse_nan();
+                }
                 JsonToken::String => {
                     return self.parse_string();
                 }
@@ -399,6 +402,17 @@ impl<'a> JsonParser<'a> {
         Ok(row_index)
     }
 
+    fn parse_nan(&mut self) -> Result<usize, String> {
+        let row_index = self.create_row(Value::NaN);
+        self.pretty_printed.push_str(self.tokenizer.slice());
+
+        self.rows[row_index].range.end =
+            self.rows[row_index].range.start + self.tokenizer.slice().len();
+
+        self.advance();
+        Ok(row_index)
+    }
+
     fn parse_string(&mut self) -> Result<usize, String> {
         let row_index = self.create_row(Value::String);
 
@@ -454,11 +468,11 @@ mod tests {
 
     #[test]
     fn test_row_ranges() {
-        //            0 2    7  10   15    21   26    32     39 42
-        let json = r#"{ "a": 1, "b": true, "c": null, "ddd": [] }"#.to_owned();
+        //            0 2    7  10   15    21   26    32     39  43     50  54
+        let json = r#"{ "a": 1, "b": true, "c": null, "ddd": [], "val": NaN }"#.to_owned();
         let (rows, _, _) = parse(json).unwrap();
 
-        assert_eq!(rows[0].range, 0..43); // Object
+        assert_eq!(rows[0].range, 0..55); // Object
         assert_eq!(rows[1].key_range, Some(2..5)); // "a": 1
         assert_eq!(rows[1].range, 7..8); // "a": 1
         assert_eq!(rows[2].key_range, Some(10..13)); // "b": true
@@ -466,7 +480,9 @@ mod tests {
         assert_eq!(rows[3].key_range, Some(21..24)); // "c": null
         assert_eq!(rows[3].range, 26..30); // "c": null
         assert_eq!(rows[4].range, 39..41); // "ddd": []
-        assert_eq!(rows[5].range, 42..43); // }
+        assert_eq!(rows[5].key_range, Some(43..48)); // "val": NaN
+        assert_eq!(rows[5].range, 50..53); // "val": NaN
+        assert_eq!(rows[6].range, 54..55); // }
 
         //            01   5        14     21 23
         let json = r#"[14, "apple", false, {}]"#.to_owned();
