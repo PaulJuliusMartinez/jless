@@ -273,9 +273,10 @@ impl ScreenWriter {
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
             terminal: &mut self.terminal,
-            flatjson: &viewer.flatjson,
 
-            node_depth: row.depth,
+            flatjson: &viewer.flatjson,
+            row: &row,
+
             depth,
             width: self.dimensions.width as usize,
             tab_size: 2,

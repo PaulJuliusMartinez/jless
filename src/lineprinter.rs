@@ -194,9 +194,10 @@ pub enum LineValue<'a> {
 pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
     pub terminal: &'a mut dyn Terminal,
-    pub flatjson: &'a FlatJson,
 
-    pub node_depth: usize,
+    pub flatjson: &'a FlatJson,
+    pub row: &'a Row,
+
     pub depth: usize,
     pub width: usize,
 
@@ -273,7 +274,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             }
             _ => {
                 // Print a focused indicator for top-level primitives.
-                if self.focused && self.node_depth == 0 {
+                if self.focused && self.row.depth == 0 {
                     self.terminal.position_cursor_col(0)?;
                     write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
                 }
