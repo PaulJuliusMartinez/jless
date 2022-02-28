@@ -23,31 +23,29 @@ pub fn parse(yaml: String) -> Result<(Vec<Row>, String, usize), String> {
         Err(err) => return Err(format!("{}", err)),
     };
 
+    let mut prev_sibling = OptionIndex::Nil;
+
     for (i, doc) in docs.into_iter().enumerate() {
         if i != 0 {
             parser.pretty_printed.push('\n');
         }
-        parser.parse_yaml_item(doc)?;
-    }
+        let index = parser.parse_yaml_item(doc)?;
 
-    eprintln!("Pretty Printed: {}", parser.pretty_printed);
+        parser.rows[index].prev_sibling = prev_sibling;
+        parser.rows[index].index = i;
+        if let OptionIndex::Index(prev) = prev_sibling {
+            parser.rows[prev].next_sibling = OptionIndex::Index(index);
+        }
+
+        prev_sibling = OptionIndex::Index(index);
+    }
 
     Ok((parser.rows, parser.pretty_printed, parser.max_depth))
 }
 
 impl YamlParser {
     fn parse_yaml_item(&mut self, item: Yaml) -> Result<usize, String> {
-        match &item {
-            Yaml::Array(arr) => {
-                eprintln!("depth: {}, array len: {:?}", self.parents.len(), arr.len());
-            }
-            Yaml::Hash(hash) => {
-                eprintln!("depth: {}, hash len: {:?}", self.parents.len(), hash.len());
-            }
-            _ => {
-                eprintln!("depth: {}, node: {:?}", self.parents.len(), item);
-            }
-        }
+        self.max_depth = self.max_depth.max(self.parents.len());
 
         let index = match item {
             Yaml::BadValue => return Err("Unknown YAML parse error".to_owned()),
@@ -92,6 +90,9 @@ impl YamlParser {
 
     fn parse_string(&mut self, s: String) -> usize {
         let row_index = self.create_row(Value::String);
+
+        // Escape newlines.
+        let s = s.replace("\n", "\\n");
 
         self.pretty_printed.push('"');
         self.pretty_printed.push_str(&s);
@@ -289,6 +290,8 @@ impl YamlParser {
 
     fn pretty_print_key_item(&mut self, item: Yaml, is_key: bool) -> Result<(), String> {
         if let Yaml::String(s) = item {
+            // Replace newlines.
+            let s = s.replace("\n", "\\n");
             self.pretty_printed.push('"');
             self.pretty_printed.push_str(&s);
             self.pretty_printed.push('"');
@@ -383,5 +386,129 @@ impl YamlParser {
         });
 
         index
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use indoc::indoc;
+
+    use super::*;
+
+    #[test]
+    fn test_basic() {
+        // 0 2    7  10   15    21   26    32     39 42
+        // { "a": 1, "b": true, "c": null, "ddd": [] }
+        let yaml = indoc! {r#"
+            ---
+            a: 1
+            b: true
+            c: null
+            ddd: []
+        "#}
+        .to_owned();
+        let (rows, _, _) = parse(yaml).unwrap();
+
+        assert_eq!(rows[0].range, 0..43); // Object
+        assert_eq!(rows[1].key_range, Some(2..5)); // "a": 1
+        assert_eq!(rows[1].range, 7..8); // "a": 1
+        assert_eq!(rows[2].key_range, Some(10..13)); // "b": true
+        assert_eq!(rows[2].range, 15..19); // "b": true
+        assert_eq!(rows[3].key_range, Some(21..24)); // "c": null
+        assert_eq!(rows[3].range, 26..30); // "c": null
+        assert_eq!(rows[4].range, 39..41); // "ddd": []
+        assert_eq!(rows[5].range, 42..43); // }
+
+        // 01   5        14     21 23
+        // [14, "apple", false, {}]
+        let yaml = indoc! {r#"
+            ---
+            - 14
+            - apple
+            - false
+            - {}
+        "#}
+        .to_owned();
+        let (rows, _, _) = parse(yaml).unwrap();
+
+        assert_eq!(rows[0].range, 0..24); // Array
+        assert_eq!(rows[1].range, 1..3); // 14
+        assert_eq!(rows[2].range, 5..12); // "apple"
+        assert_eq!(rows[3].range, 14..19); // false
+        assert_eq!(rows[4].range, 21..23); // {}
+        assert_eq!(rows[5].range, 23..24); // ]
+
+        // 01 3      10     17    23  27   32   37 40    46   51
+        // [{ "abc": "str", "de": 14, "f": null }, true, false]
+        let yaml = indoc! {r#"
+            ---
+            - abc: str
+              de: 14
+              f: null
+            - true
+            - false
+        "#}
+        .to_owned();
+        let (rows, _, _) = parse(yaml).unwrap();
+
+        assert_eq!(rows[0].range, 0..52); // Array
+        assert_eq!(rows[1].range, 1..38); // Object
+        assert_eq!(rows[2].key_range, Some(3..8)); // "abc": "str"
+        assert_eq!(rows[2].range, 10..15); // "abc": "str"
+        assert_eq!(rows[3].key_range, Some(17..21)); // "de": 14
+        assert_eq!(rows[3].range, 23..25); // "de": 14
+        assert_eq!(rows[4].key_range, Some(27..30)); // "f": null
+        assert_eq!(rows[4].range, 32..36); // "f": null
+        assert_eq!(rows[5].range, 37..38); // }
+        assert_eq!(rows[6].range, 40..44); // true
+        assert_eq!(rows[7].range, 46..51); // false
+        assert_eq!(rows[8].range, 51..52); // ]
+    }
+
+    #[test]
+    fn test_non_scalar_keys() {
+        let yaml = indoc! {r#"
+            ---
+            [1, 2]: 1
+            { a: 1, b: 2 }: true
+        "#}
+        .to_owned();
+        //              0 2       1012 15                  3537   42
+        let pretty = r#"{ [[1, 2]]: 1, [{ "a": 1, "b": 2 }]: true }"#;
+        let (rows, parsed_pretty, _) = parse(yaml).unwrap();
+
+        assert_eq!(pretty, parsed_pretty);
+
+        assert_eq!(rows[0].range, 0..43); // Object
+        assert_eq!(rows[1].key_range, Some(2..10)); // [[1, 2]]
+        assert_eq!(rows[1].range, 12..13); // [[1, 2]]: 1
+        assert_eq!(rows[2].key_range, Some(15..35)); // [{ "a": 1, "b": 2 }]
+        assert_eq!(rows[2].range, 37..41); // [{ "a": 1, "b": 2 }]: true
+    }
+
+    #[test]
+    fn test_multiline_strings() {
+        let yaml = indoc! {r#"
+            ---
+            str1:
+              fl
+              ow
+            str2: |
+                a
+                b
+            str3: >
+                fol
+                ded
+            ? |
+                key
+                string
+            : 1
+        "#}
+        .to_owned();
+        let pretty =
+            r#"{ "str1": "fl ow", "str2": "a\nb\n", "str3": "fol ded\n", "key\nstring\n": 1 }"#;
+        let (_, parsed_pretty, _) = parse(yaml).unwrap();
+
+        assert_eq!(pretty, parsed_pretty);
     }
 }

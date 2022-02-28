@@ -448,6 +448,7 @@ impl<'a> JsonParser<'a> {
         index
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
