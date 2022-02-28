@@ -4,6 +4,8 @@ latest
 New features:
 - Implement `ctrl-u` and `ctrl-d` commands to jump up and down by half
   the screen's height, or by a specified number of lines.
+- Support displaying YAML files with autodetection via file extension,
+  or explicit `--yaml` or `--json` flags.
 
 Improvements:
 - Keep focused in same place on screen when toggling between line and
