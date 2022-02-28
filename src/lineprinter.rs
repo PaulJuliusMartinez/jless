@@ -315,35 +315,14 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             self.get_label_range_and_delimiter(&mut index_label_buffer, &self.flatjson.1);
 
         let mut used_space = 0;
-
-        let style: &Style;
-        let highlighted_style: &Style;
         let mut dummy_search_matches = None;
-        let matches_iter;
 
-        match self.label_type() {
-            LabelType::Key => {
-                if self.focused {
-                    style = &highlighting::INVERTED_BOLD_BLUE_STYLE;
-                    highlighted_style = &highlighting::BOLD_INVERTED_STYLE;
-                } else {
-                    style = &highlighting::BLUE_STYLE;
-                    highlighted_style = &highlighting::SEARCH_MATCH_HIGHLIGHTED;
-                }
-                matches_iter = &mut self.search_matches;
-            }
-            LabelType::Index => {
-                if self.focused {
-                    style = &highlighting::BOLD_STYLE;
-                } else {
-                    style = &highlighting::DIMMED_STYLE;
-                }
-
-                // No match highlighting for index labels.
-                matches_iter = &mut dummy_search_matches;
-                highlighted_style = &highlighting::DEFAULT_STYLE;
-            }
-        }
+        let (style, highlighted_style) = self.get_label_styles();
+        let matches_iter = if self.row.key_range.is_some() {
+            &mut self.search_matches
+        } else {
+            &mut dummy_search_matches
+        };
 
         // Remove two characters for either "" or [].
         available_space -= delimiter.width();
@@ -377,6 +356,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         let mut matches = matches_iter.as_mut();
+
         // Print out start of label
         highlighting::highlight_matches(
             self.terminal,
@@ -471,6 +451,34 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             let _ = write!(label, "{}", self.row.index);
 
             (label.as_str(), None, DelimiterPair::Square)
+        }
+    }
+
+    fn get_label_styles(&self) -> (&'static Style, &'static Style) {
+        match self.label_type() {
+            LabelType::Key => {
+                if self.focused {
+                    (
+                        &highlighting::INVERTED_BOLD_BLUE_STYLE,
+                        &highlighting::BOLD_INVERTED_STYLE,
+                    )
+                } else {
+                    (
+                        &highlighting::BLUE_STYLE,
+                        &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                    )
+                }
+            }
+            LabelType::Index => {
+                let style = if self.focused {
+                    &highlighting::BOLD_STYLE
+                } else {
+                    &highlighting::DIMMED_STYLE
+                };
+
+                // No match highlighting for index labels.
+                (style, &highlighting::DEFAULT_STYLE)
+            }
         }
     }
 
