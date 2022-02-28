@@ -44,7 +44,7 @@ impl App {
         input_filename: String,
         stdout: Box<dyn Write>,
     ) -> Result<App, String> {
-        let flatjson = match Self::parse_input(data, opt.data_format, &input_filename) {
+        let flatjson = match Self::parse_input(data, opt.data_format(), &input_filename) {
             Ok(flatjson) => flatjson,
             Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
         };
