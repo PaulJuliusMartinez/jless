@@ -838,10 +838,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             }
 
             let delimiter = if quoted_object_key {
-                match &flatjson.1[key_range.start..key_range.start + 1] {
-                    "[" => LabelStyle::Square,
-                    _ => LabelStyle::Quote,
-                }
+                LabelStyle::Quote
             } else {
                 LabelStyle::None
             };
