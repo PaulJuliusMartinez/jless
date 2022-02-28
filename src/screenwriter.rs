@@ -220,6 +220,7 @@ impl ScreenWriter {
             _ => {
                 let color = match &row.value {
                     Value::Null => terminal::LIGHT_BLACK,
+                    Value::NaN => terminal::LIGHT_RED,
                     Value::Boolean => terminal::YELLOW,
                     Value::Number => terminal::MAGENTA,
                     Value::String => terminal::GREEN,

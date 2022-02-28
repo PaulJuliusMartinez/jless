@@ -283,6 +283,7 @@ pub enum Value {
     Null,
     Boolean,
     Number,
+    NaN,
     String,
     EmptyObject,
     EmptyArray,

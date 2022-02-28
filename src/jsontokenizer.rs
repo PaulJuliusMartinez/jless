@@ -25,6 +25,9 @@ pub enum JsonToken {
     False,
     #[regex(r"-?(0|([1-9][0-9]*))(\.[0-9]+)?([eE][-+]?[0-9]+)?")]
     Number,
+    // Add support for some non-compliant but common not-a-numbers
+    #[regex(r"(NaN|Infinity|-Infinity)")]
+    NaN,
     // I get an error when I do [0-9a-fA-F]{4}.
     #[regex("\"((\\\\([\"\\\\/bfnrt]|u[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]))|[^\"\\\\\x00-\x1F])*\"")]
     String,
