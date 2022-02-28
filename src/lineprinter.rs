@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::fmt;
+use std::fmt::Write;
 use std::iter::Peekable;
 use std::ops::Range;
 
@@ -141,39 +142,38 @@ lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
 }
 
-pub enum LineLabel<'a> {
-    Key { key: &'a str },
-    Index { index: &'a str },
+enum LabelType {
+    Key,
+    Index,
 }
 
-// TODO: Rename to "DelimiterPair"
 #[derive(Eq, PartialEq)]
-enum LabelStyle {
+enum DelimiterPair {
     None,
     Quote,
     Square,
 }
 
-impl LabelStyle {
+impl DelimiterPair {
     fn left(&self) -> &'static str {
         match self {
-            LabelStyle::None => "",
-            LabelStyle::Quote => "\"",
-            LabelStyle::Square => "[",
+            DelimiterPair::None => "",
+            DelimiterPair::Quote => "\"",
+            DelimiterPair::Square => "[",
         }
     }
 
     fn right(&self) -> &'static str {
         match self {
-            LabelStyle::None => "",
-            LabelStyle::Quote => "\"",
-            LabelStyle::Square => "]",
+            DelimiterPair::None => "",
+            DelimiterPair::Quote => "\"",
+            DelimiterPair::Square => "]",
         }
     }
 
     fn width(&self) -> isize {
         match self {
-            LabelStyle::None => 0,
+            DelimiterPair::None => 0,
             _ => 2,
         }
     }
@@ -207,8 +207,6 @@ pub struct LinePrinter<'a, 'b> {
     pub trailing_comma: bool,
 
     // Stuff to actually print out
-    pub label: Option<LineLabel<'a>>,
-    pub label_range: &'a Option<Range<usize>>,
     pub value: LineValue<'a>,
     pub value_range: &'a Range<usize>,
 
@@ -241,7 +239,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         available_space -= space_used_for_label;
 
-        if self.label.is_some() && space_used_for_label == 0 {
+        if self.has_label() && space_used_for_label == 0 {
             self.print_truncated_indicator()?;
         } else {
             let space_used_for_value = self.fill_in_value(available_space)?;
@@ -308,8 +306,13 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     }
 
     pub fn fill_in_label(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
-        let label_style: LabelStyle;
-        let label_ref: &str;
+        if !self.has_label() {
+            return Ok(0);
+        }
+
+        let mut index_label_buffer = String::new();
+        let (label_ref, label_range, delimiter) =
+            self.get_label_range_and_delimiter(&mut index_label_buffer, &self.flatjson.1);
 
         let mut used_space = 0;
 
@@ -318,19 +321,8 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         let mut dummy_search_matches = None;
         let matches_iter;
 
-        match self.label {
-            None => return Ok(0),
-            Some(LineLabel::Key { key }) => {
-                // Quote keys in line mode or if they're not valid JS identifiers.
-                let should_be_quoted = self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key);
-                label_style = if should_be_quoted {
-                    LabelStyle::Quote
-                } else {
-                    LabelStyle::None
-                };
-
-                label_ref = key;
-
+        match self.label_type() {
+            LabelType::Key => {
                 if self.focused {
                     style = &highlighting::INVERTED_BOLD_BLUE_STYLE;
                     highlighted_style = &highlighting::BOLD_INVERTED_STYLE;
@@ -340,10 +332,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
                 }
                 matches_iter = &mut self.search_matches;
             }
-            Some(LineLabel::Index { index }) => {
-                label_style = LabelStyle::Square;
-                label_ref = index;
-
+            LabelType::Index => {
                 if self.focused {
                     style = &highlighting::BOLD_STYLE;
                 } else {
@@ -357,7 +346,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         // Remove two characters for either "" or [].
-        available_space -= label_style.width();
+        available_space -= delimiter.width();
 
         // Remove two characters for ": "
         available_space -= 2;
@@ -380,7 +369,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         let mut label_close_delimiter_range_start = None;
         let mut object_separator_range_start = None;
 
-        if let Some(range) = self.label_range {
+        if let Some(range) = label_range {
             label_open_delimiter_range_start = Some(range.start);
             label_range_start = Some(range.start + 1);
             label_close_delimiter_range_start = Some(range.end - 1);
@@ -391,7 +380,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         // Print out start of label
         highlighting::highlight_matches(
             self.terminal,
-            label_style.left(),
+            delimiter.left(),
             label_open_delimiter_range_start,
             style,
             highlighted_style,
@@ -414,7 +403,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         // Print out end of label
         highlighting::highlight_matches(
             self.terminal,
-            label_style.right(),
+            delimiter.right(),
             label_close_delimiter_range_start,
             style,
             highlighted_style,
@@ -433,10 +422,56 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             self.focused_search_match,
         )?;
 
-        used_space += label_style.width();
+        used_space += delimiter.width();
         used_space += 2;
 
         Ok(used_space)
+    }
+
+    // Check if a line has a label. A line has a label if it has
+    // a key, or if we are in data mode and we have a parent.
+    fn has_label(&self) -> bool {
+        self.row.key_range.is_some() || (self.mode == Mode::Data && self.row.parent.is_some())
+    }
+
+    // Get the type of a label, either Key or Index.
+    fn label_type(&self) -> LabelType {
+        debug_assert!(self.has_label());
+
+        if self.row.key_range.is_some() {
+            LabelType::Key
+        } else {
+            LabelType::Index
+        }
+    }
+
+    fn get_label_range_and_delimiter<'l, 'fj: 'l>(
+        &self,
+        label: &'l mut String,
+        pretty_printed: &'fj str,
+    ) -> (&'l str, Option<Range<usize>>, DelimiterPair) {
+        debug_assert!(self.has_label());
+
+        if let Some(key_range) = &self.row.key_range {
+            let key = &pretty_printed[key_range.start + 1..key_range.end - 1];
+
+            // Quote keys in line mode or if they're not valid JS identifiers.
+            let should_be_quoted = self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key);
+            let delimiter = if should_be_quoted {
+                DelimiterPair::Quote
+            } else {
+                DelimiterPair::None
+            };
+
+            (key, Some(key_range.clone()), delimiter)
+        } else {
+            let parent = self.row.parent.unwrap();
+            debug_assert!(self.flatjson[parent].is_array());
+
+            let _ = write!(label, "{}", self.row.index);
+
+            (label.as_str(), None, DelimiterPair::Square)
+        }
     }
 
     fn fill_in_value(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
@@ -537,9 +572,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         };
 
         let delimiter = if quoted {
-            LabelStyle::Quote
+            DelimiterPair::Quote
         } else {
-            LabelStyle::None
+            DelimiterPair::None
         };
 
         if quoted {
@@ -839,9 +874,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             }
 
             let delimiter = if quoted_object_key {
-                LabelStyle::Quote
+                DelimiterPair::Quote
             } else {
-                LabelStyle::None
+                DelimiterPair::None
             };
 
             self.highlight_delimited_and_truncated_str(
@@ -972,7 +1007,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     // surrounded by a delimiter.
     fn highlight_delimited_and_truncated_str(
         &mut self,
-        delimiter: LabelStyle,
+        delimiter: DelimiterPair,
         s: &str,
         truncated_view: &TruncatedStrView,
         str_range: Option<Range<usize>>,

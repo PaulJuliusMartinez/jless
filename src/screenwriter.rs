@@ -191,27 +191,6 @@ impl ScreenWriter {
 
         let focused = is_focused;
 
-        let mut label = None;
-        let index_label: String;
-        let mut label_range = &None;
-
-        // Set up key label.
-        if let Some(key_range) = &row.key_range {
-            let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
-            label = Some(lp::LineLabel::Key { key });
-            label_range = &row.key_range;
-        }
-
-        // Set up index label.
-        if let OptionIndex::Index(parent) = row.parent {
-            if viewer.mode == Mode::Data && viewer.flatjson[parent].is_array() {
-                index_label = format!("{}", row.index);
-                label = Some(lp::LineLabel::Index {
-                    index: &index_label,
-                });
-            }
-        }
-
         let value = match &row.value {
             Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
                 lp::LineValue::Container { row }
@@ -286,8 +265,6 @@ impl ScreenWriter {
             focused_because_matching_container_pair,
             trailing_comma,
 
-            label,
-            label_range,
             value,
             value_range: &row.range,
 
