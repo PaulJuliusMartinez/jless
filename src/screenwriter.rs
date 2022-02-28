@@ -44,6 +44,7 @@ impl MessageSeverity {
     }
 }
 
+const TAB_SIZE: usize = 2;
 const PATH_BASE: &str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
@@ -183,9 +184,10 @@ impl ScreenWriter {
         self.terminal.position_cursor(1, screen_index + 1)?;
         let row = &viewer.flatjson[index];
 
-        let depth = row
+        let indentation_level = row
             .depth
             .saturating_sub(self.indentation_reduction as usize);
+        let indentation = indentation_level * TAB_SIZE;
 
         let focused = is_focused;
 
@@ -275,11 +277,10 @@ impl ScreenWriter {
             terminal: &mut self.terminal,
 
             flatjson: &viewer.flatjson,
-            row: &row,
+            row,
 
-            depth,
+            indentation,
             width: self.dimensions.width as usize,
-            tab_size: 2,
 
             focused,
             focused_because_matching_container_pair,

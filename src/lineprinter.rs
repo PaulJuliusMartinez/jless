@@ -198,10 +198,8 @@ pub struct LinePrinter<'a, 'b> {
     pub flatjson: &'a FlatJson,
     pub row: &'a Row,
 
-    pub depth: usize,
+    pub indentation: usize,
     pub width: usize,
-
-    pub tab_size: usize,
 
     // Line-by-line formatting options
     pub focused: bool,
@@ -226,9 +224,16 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         self.print_focus_and_container_indicators()?;
 
-        let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
-        self.terminal
-            .position_cursor_col((1 + label_depth) as u16)?;
+        let label_depth = INDICATOR_WIDTH + self.indentation;
+
+        // I don't know if there's standard behavior for setting the column
+        // past the width of the screen, so let's avoid doing that. There
+        // will still be cases where this condition is true, but we still end
+        // up printing the truncated indicator, but that's fine.
+        if label_depth < self.width {
+            self.terminal
+                .position_cursor_col((1 + label_depth) as u16)?;
+        }
 
         let mut available_space = self.width as isize - label_depth as isize;
 
@@ -283,11 +288,11 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         };
 
         // Make sure there's enough room for the indicator
-        if self.width <= INDICATOR_WIDTH + self.depth * self.tab_size {
+        if self.width <= INDICATOR_WIDTH + self.indentation {
             return Ok(());
         }
 
-        let container_indicator_col = (1 + self.depth * self.tab_size) as u16;
+        let container_indicator_col = (1 + self.indentation) as u16;
         self.terminal.position_cursor_col(container_indicator_col)?;
 
         let indicator = match (self.focused, collapsed) {
