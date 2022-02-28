@@ -56,7 +56,10 @@ impl YamlParser {
             Yaml::String(s) => self.parse_string(s),
             Yaml::Array(arr) => self.parse_array(arr)?,
             Yaml::Hash(hash) => self.parse_hash(hash)?,
-            Yaml::Alias(i) => self.parse_alias(i),
+            // The yaml_rust source says these are not supported yet.
+            // Aliases are automatically replaced by their anchors, so
+            // it's unclear what this would be used for.
+            Yaml::Alias(_) => return Err("YAML parser returned Alias value".to_owned()),
         };
 
         Ok(index)
@@ -284,10 +287,6 @@ impl YamlParser {
         Ok(object_open_index)
     }
 
-    fn parse_alias(&mut self, n: usize) -> usize {
-        0
-    }
-
     fn pretty_print_key_item(&mut self, item: Yaml, is_key: bool) -> Result<(), String> {
         if let Yaml::String(s) = item {
             // Replace newlines.
@@ -340,7 +339,10 @@ impl YamlParser {
                     self.pretty_printed.push_str(" }");
                 }
             }
-            Yaml::Alias(i) => {}
+            // The yaml_rust source says these are not supported yet.
+            // Aliases are automatically replaced by their anchors, so
+            // it's unclear what this would be used for.
+            Yaml::Alias(_) => return Err("YAML parser returned Alias value".to_owned()),
             Yaml::String(_) => unreachable!(),
         }
 
