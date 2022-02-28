@@ -182,7 +182,6 @@ impl LabelStyle {
 #[derive(Debug)]
 pub enum LineValue<'a> {
     Container {
-        flatjson: &'a FlatJson,
         row: &'a Row,
     },
     Value {
@@ -192,9 +191,10 @@ pub enum LineValue<'a> {
     },
 }
 
-pub struct LinePrinter<'a, 'b, 'c> {
+pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
-    pub terminal: &'c mut dyn Terminal,
+    pub terminal: &'a mut dyn Terminal,
+    pub flatjson: &'a FlatJson,
 
     pub node_depth: usize,
     pub depth: usize,
@@ -219,7 +219,7 @@ pub struct LinePrinter<'a, 'b, 'c> {
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
-impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
+impl<'a, 'b> LinePrinter<'a, 'b> {
     pub fn print_line(&mut self) -> fmt::Result {
         self.terminal.reset_style()?;
 
@@ -436,8 +436,8 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     fn fill_in_value(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
         // Object values are sufficiently complicated that we'll handle them
         // in a separate function.
-        if let LineValue::Container { flatjson, row } = self.value {
-            return self.fill_in_container_value(available_space, flatjson, row);
+        if let LineValue::Container { row, .. } = self.value {
+            return self.fill_in_container_value(available_space, row);
         }
 
         let value_ref: &str;
@@ -585,7 +585,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     fn fill_in_container_value(
         &mut self,
         available_space: isize,
-        flatjson: &FlatJson,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_container());
@@ -605,7 +604,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(available_space, row),
             (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(available_space, row),
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
-                self.fill_in_container_preview(available_space, flatjson, row)
+                self.fill_in_container_preview(available_space, row)
             }
             // Impossible states
             (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
@@ -677,7 +676,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     fn fill_in_container_preview(
         &mut self,
         mut available_space: isize,
-        flatjson: &FlatJson,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         if self.trailing_comma {
@@ -686,7 +684,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         let quoted_object_keys = self.mode == Mode::Line;
         let mut used_space =
-            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?;
+            self.generate_container_preview(row, available_space, quoted_object_keys)?;
 
         if self.trailing_comma {
             used_space += 1;
@@ -707,7 +705,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
     fn generate_container_preview(
         &mut self,
-        flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
         quoted_object_keys: bool,
@@ -737,7 +734,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         let mut next_sibling = row.first_child();
         let mut is_first_child = true;
         while let OptionIndex::Index(child) = next_sibling {
-            next_sibling = flatjson[child].next_sibling;
+            next_sibling = self.flatjson[child].next_sibling;
 
             // If there are still more elements, we'll print out ", …" at the end,
             let space_needed_at_end_of_container = if next_sibling.is_some() { 3 } else { 0 };
@@ -745,8 +742,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             let is_only_child = is_first_child && next_sibling.is_nil();
 
             let used_space = self.fill_in_container_elem_preview(
-                flatjson,
-                &flatjson[child],
+                &self.flatjson[child],
                 space_available_for_elem,
                 quoted_object_keys,
                 is_only_child,
@@ -771,7 +767,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 if next_sibling.is_some() {
                     self.highlight_str(
                         ", ",
-                        Some(flatjson[child].range.end),
+                        Some(self.flatjson[child].range.end),
                         highlighting::PREVIEW_STYLES,
                     )?;
                     available_space -= 2;
@@ -802,7 +798,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     // [a, …]
     fn fill_in_container_elem_preview(
         &mut self,
-        flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
         quoted_object_keys: bool,
@@ -812,7 +807,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         if let Some(key_range) = &row.key_range {
             let key_without_quotes_range = key_range.start + 1..key_range.end - 1;
-            let key_ref = &flatjson.1[key_without_quotes_range.clone()];
+            let key_ref = &self.flatjson.1[key_without_quotes_range.clone()];
             // Need at least one character for value, and two characters for ": "
             let mut space_available_for_key = available_space - 3;
             let mut quoted_object_key = quoted_object_keys;
@@ -857,9 +852,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?
+            self.generate_container_preview(row, available_space, quoted_object_keys)?
         } else {
-            self.fill_in_value_preview(&flatjson.1, row, available_space)?
+            self.fill_in_value_preview(row, available_space)?
         };
         used_space += space_used_for_value;
 
@@ -876,7 +871,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
     fn fill_in_value_preview(
         &mut self,
-        pretty_printed_json: &str,
         row: &Row,
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
@@ -894,9 +888,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             Value::String => {
                 quoted = true;
                 let range = row.range.clone();
-                &pretty_printed_json[range.start + 1..range.end - 1]
+                &self.flatjson.1[range.start + 1..range.end - 1]
             }
-            _ => &pretty_printed_json[row.range.clone()],
+            _ => &self.flatjson.1[row.range.clone()],
         };
 
         if quoted {

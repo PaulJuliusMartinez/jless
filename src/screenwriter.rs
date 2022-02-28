@@ -212,10 +212,7 @@ impl ScreenWriter {
 
         let value = match &row.value {
             Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
-                lp::LineValue::Container {
-                    flatjson: &viewer.flatjson,
-                    row,
-                }
+                lp::LineValue::Container { row }
             }
             _ => {
                 let color = match &row.value {
@@ -276,6 +273,7 @@ impl ScreenWriter {
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
             terminal: &mut self.terminal,
+            flatjson: &viewer.flatjson,
 
             node_depth: row.depth,
             depth,
