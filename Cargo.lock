@@ -196,6 +196,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "indoc"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e7906a9fababaeacb774f72410e497a1d18de916322e33797bb2cd29baa23c9e"
+dependencies = [
+ "unindent",
+]
+
+[[package]]
 name = "isatty"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -212,6 +221,7 @@ name = "jless"
 version = "0.7.2"
 dependencies = [
  "clap",
+ "indoc",
  "isatty",
  "lazy_static",
  "libc",
@@ -223,6 +233,7 @@ dependencies = [
  "termion",
  "unicode-segmentation",
  "unicode-width",
+ "yaml-rust",
 ]
 
 [[package]]
@@ -246,6 +257,12 @@ dependencies = [
  "cc",
  "libc",
 ]
+
+[[package]]
+name = "linked-hash-map"
+version = "0.5.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7fb9b38af92608140b86b693604b9ffcc5824240a484d1ecd4795bacb2fe88f3"
 
 [[package]]
 name = "log"
@@ -559,6 +576,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f7fe0bb3479651439c9112f72b6c505038574c9fbb575ed1bf3b797fa39dd564"
 
 [[package]]
+name = "unindent"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "514672a55d7380da379785a4d70ca8386c8883ff7eaae877be4d2081cebe73d8"
+
+[[package]]
 name = "utf8-ranges"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -612,3 +635,12 @@ name = "winapi-x86_64-pc-windows-gnu"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "712e227841d057c1ee1cd2fb22fa7e5a5461ae8e48fa2ca79ec42cfc1931183f"
+
+[[package]]
+name = "yaml-rust"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
+dependencies = [
+ "linked-hash-map",
+]

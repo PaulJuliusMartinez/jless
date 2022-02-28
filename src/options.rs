@@ -1,15 +1,25 @@
 use std::path::PathBuf;
 
+use clap::ArgEnum;
 use clap::Parser;
 
 use crate::viewer::Mode;
 
-/// A pager for JSON data
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
+pub enum DataFormat {
+    Json,
+    Yaml,
+}
+
+/// A pager for JSON (or YAML) data
 #[derive(Debug, Parser)]
 #[clap(name = "jless", version)]
 pub struct Opt {
-    /// Input file. jless will read from stdin if no input
-    /// file is provided, or '-' is specified.
+    /// Input file. jless will read from stdin if no input file is
+    /// provided, or '-' is specified. If a filename is provided, jless
+    /// will check the extension to determine what the input format is,
+    /// and by default will assume JSON. Can specify input format
+    /// explicitly using --json or --yaml.
     #[clap(parse(from_os_str))]
     pub input: Option<PathBuf>,
 
@@ -27,4 +37,24 @@ pub struct Opt {
     /// (except at the start or end of a file).
     #[clap(long = "scrolloff", default_value_t = 3)]
     pub scrolloff: u16,
+
+    /// Parse input as JSON, regardless of file extension.
+    #[clap(long = "json", group = "data-format", display_order = 1000)]
+    pub json: bool,
+
+    /// Parse input as YAML, regardless of file extension.
+    #[clap(long = "yaml", group = "data-format", display_order = 1000)]
+    pub yaml: bool,
+}
+
+impl Opt {
+    pub fn data_format(&self) -> Option<DataFormat> {
+        if self.json {
+            Some(DataFormat::Json)
+        } else if self.yaml {
+            Some(DataFormat::Yaml)
+        } else {
+            None
+        }
+    }
 }

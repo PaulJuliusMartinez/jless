@@ -10,7 +10,7 @@ use termion::screen::{ToAlternateScreen, ToMainScreen};
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
-use crate::options::Opt;
+use crate::options::{DataFormat, Opt};
 use crate::screenwriter::{MessageSeverity, ScreenWriter};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
@@ -40,11 +40,12 @@ const BELL: &str = "\x07";
 impl App {
     pub fn new(
         opt: &Opt,
-        json: String,
+        data: String,
+        data_format: DataFormat,
         input_filename: String,
         stdout: Box<dyn Write>,
     ) -> Result<App, String> {
-        let flatjson = match flatjson::parse_top_level_json(json) {
+        let flatjson = match Self::parse_input(data, data_format) {
             Ok(flatjson) => flatjson,
             Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
         };
@@ -63,6 +64,13 @@ impl App {
             search_state: SearchState::empty(),
             message: None,
         })
+    }
+
+    fn parse_input(data: String, data_format: DataFormat) -> Result<flatjson::FlatJson, String> {
+        match data_format {
+            DataFormat::Json => flatjson::parse_top_level_json(data),
+            DataFormat::Yaml => flatjson::parse_top_level_yaml(data),
+        }
     }
 
     pub fn run(&mut self, input: Box<dyn Iterator<Item = io::Result<TuiEvent>>>) {
