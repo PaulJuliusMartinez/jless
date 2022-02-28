@@ -33,21 +33,23 @@ mod viewer;
 mod yamlparser;
 
 use app::App;
-use options::Opt;
+use options::{DataFormat, Opt};
 
 fn main() {
     let opt = Opt::parse();
 
-    let (json_string, input_filename) = match get_json_input(&opt) {
-        Ok(json_string) => json_string,
+    let (input_string, input_filename) = match get_input_and_filename(&opt) {
+        Ok(input_and_filename) => input_and_filename,
         Err(err) => {
             eprintln!("Unable to get input: {}", err);
             std::process::exit(1);
         }
     };
 
+    let data_format = determine_data_format(opt.data_format(), &input_filename);
+
     if !isatty::stdout_isatty() {
-        print_pretty_printed_json(json_string);
+        print_pretty_printed_input(input_string, data_format);
         std::process::exit(0);
     }
 
@@ -61,7 +63,13 @@ fn main() {
         io::stdout().into_raw_mode().unwrap(),
     )));
 
-    let mut app = match App::new(&opt, json_string, input_filename, Box::new(stdout)) {
+    let mut app = match App::new(
+        &opt,
+        input_string,
+        data_format,
+        input_filename,
+        Box::new(stdout),
+    ) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{}", err);
@@ -72,8 +80,14 @@ fn main() {
     app.run(input);
 }
 
-fn print_pretty_printed_json(json: String) {
-    let flatjson = match flatjson::parse_top_level_json(json) {
+fn print_pretty_printed_input(input: String, data_format: DataFormat) {
+    // Don't try to pretty print YAML input; just pass it through.
+    if data_format == DataFormat::Yaml {
+        print!("{}", input);
+        return;
+    }
+
+    let flatjson = match flatjson::parse_top_level_json(input) {
         Ok(flatjson) => flatjson,
         Err(err) => {
             eprintln!("Unable to parse input: {:?}", err);
@@ -110,8 +124,8 @@ fn print_pretty_printed_json(json: String) {
     }
 }
 
-fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
-    let mut json_string = String::new();
+fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {
+    let mut input_string = String::new();
     let filename;
 
     match &opt.input {
@@ -121,18 +135,30 @@ fn get_json_input(opt: &Opt) -> io::Result<(String, String)> {
                 std::process::exit(1);
             }
             filename = "STDIN".to_string();
-            io::stdin().read_to_string(&mut json_string)?;
+            io::stdin().read_to_string(&mut input_string)?;
         }
         Some(path) => {
             if *path == PathBuf::from("-") {
                 filename = "STDIN".to_string();
-                io::stdin().read_to_string(&mut json_string)?;
+                io::stdin().read_to_string(&mut input_string)?;
             } else {
-                File::open(path)?.read_to_string(&mut json_string)?;
+                File::open(path)?.read_to_string(&mut input_string)?;
                 filename = String::from(path.file_name().unwrap().to_string_lossy());
             }
         }
     }
 
-    Ok((json_string, filename))
+    Ok((input_string, filename))
+}
+
+fn determine_data_format(format: Option<DataFormat>, filename: &str) -> DataFormat {
+    format.unwrap_or_else(|| {
+        match std::path::Path::new(filename)
+            .extension()
+            .and_then(std::ffi::OsStr::to_str)
+        {
+            Some("yml") | Some("yaml") => DataFormat::Yaml,
+            _ => DataFormat::Json,
+        }
+    })
 }

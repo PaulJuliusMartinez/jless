@@ -41,10 +41,11 @@ impl App {
     pub fn new(
         opt: &Opt,
         data: String,
+        data_format: DataFormat,
         input_filename: String,
         stdout: Box<dyn Write>,
     ) -> Result<App, String> {
-        let flatjson = match Self::parse_input(data, opt.data_format(), &input_filename) {
+        let flatjson = match Self::parse_input(data, data_format) {
             Ok(flatjson) => flatjson,
             Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
         };
@@ -65,22 +66,8 @@ impl App {
         })
     }
 
-    fn parse_input(
-        data: String,
-        format: Option<DataFormat>,
-        filename: &str,
-    ) -> Result<flatjson::FlatJson, String> {
-        let format = format.unwrap_or_else(|| {
-            match std::path::Path::new(filename)
-                .extension()
-                .and_then(std::ffi::OsStr::to_str)
-            {
-                Some("yml") | Some("yaml") => DataFormat::Yaml,
-                _ => DataFormat::Json,
-            }
-        });
-
-        match format {
+    fn parse_input(data: String, data_format: DataFormat) -> Result<flatjson::FlatJson, String> {
+        match data_format {
             DataFormat::Json => flatjson::parse_top_level_json(data),
             DataFormat::Yaml => flatjson::parse_top_level_yaml(data),
         }
