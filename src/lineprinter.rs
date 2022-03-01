@@ -1720,4 +1720,32 @@ mod tests {
 
         Ok(())
     }
+
+    #[test]
+    fn test_generate_object_preview_with_non_scalar_keys() -> std::fmt::Result {
+        const YAML: &str = r#"{
+            [one]: 1,
+            [[t, w, o]]: 2,
+            [3]: 3,
+            [null]: 4,
+        }"#;
+        let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
+
+        let mut term = TextOnlyTerminal::new();
+        let mut line: LinePrinter = LinePrinter {
+            value_range: &(0..fj.1.len()),
+            ..default_line_printer(&mut term, &fj, 0)
+        };
+
+        let expected = r#"{"["one"]": 1, "[["t", "w", "o"]]": 2, "[3]": 3, "[null]": 4}"#;
+
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, true)?;
+        assert_eq!(expected, line.terminal.output());
+
+        line.terminal.clear_output();
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, false)?;
+        assert_eq!(expected, line.terminal.output());
+
+        Ok(())
+    }
 }
