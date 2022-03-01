@@ -179,16 +179,6 @@ impl DelimiterPair {
     }
 }
 
-#[derive(Debug)]
-pub enum LineValue<'a> {
-    Container,
-    Value {
-        s: &'a str,
-        quotes: bool,
-        color: Color,
-    },
-}
-
 pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
     pub terminal: &'a mut dyn Terminal,
@@ -205,13 +195,12 @@ pub struct LinePrinter<'a, 'b> {
     pub trailing_comma: bool,
 
     // Stuff to actually print out
-    pub value: LineValue<'a>,
     pub value_range: &'a Range<usize>,
 
     pub search_matches: Option<Peekable<MatchRangeIter<'b>>>,
     pub focused_search_match: &'a Range<usize>,
 
-    pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
+    pub cached_truncated_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
 impl<'a, 'b> LinePrinter<'a, 'b> {
@@ -267,21 +256,18 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     }
 
     fn print_container_indicator(&mut self) -> fmt::Result {
-        // let-else would be better here.
-        let collapsed = match &self.value {
-            LineValue::Container => {
-                debug_assert!(self.row.is_opening_of_container());
-                self.row.is_collapsed()
+        if self.row.is_primitive() {
+            // Print a focused indicator for top-level primitives.
+            if self.focused && self.row.depth == 0 {
+                self.terminal.position_cursor_col(0)?;
+                write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
             }
-            _ => {
-                // Print a focused indicator for top-level primitives.
-                if self.focused && self.row.depth == 0 {
-                    self.terminal.position_cursor_col(0)?;
-                    write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
-                }
-                return Ok(());
-            }
-        };
+            return Ok(());
+        }
+
+        debug_assert!(self.row.is_opening_of_container());
+
+        let collapsed = self.row.is_collapsed();
 
         // Make sure there's enough room for the indicator
         if self.width <= INDICATOR_WIDTH + self.indentation {
@@ -483,25 +469,18 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     fn fill_in_value(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
         // Object values are sufficiently complicated that we'll handle them
         // in a separate function.
-        if let LineValue::Container = self.value {
+        if self.row.is_container() {
             return self.fill_in_container_value(available_space, self.row);
         }
 
-        let value_ref: &str;
-        let quoted: bool;
-        let color: Color;
+        let mut value_ref = &self.flatjson.1[self.row.range.clone()];
+        let mut quoted = false;
+        let color = Self::color_for_value_type(&self.row.value);
 
-        match self.value {
-            LineValue::Value {
-                s,
-                quotes,
-                color: c,
-            } => {
-                value_ref = s;
-                quoted = quotes;
-                color = c;
-            }
-            LineValue::Container => panic!("We just eliminated the Container case above"),
+        // Strip quotes from strings.
+        if self.row.is_string() {
+            value_ref = &value_ref[1..value_ref.len() - 1];
+            quoted = true;
         }
 
         let mut used_space = 0;
@@ -514,49 +493,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             available_space -= 1;
         }
 
-        // Option<Entry<>>
-        // - if no entry, then init_start
-        // - if entry, but vacant, then init_start
-        // - if entry with value, then value and resize
-        let truncated_view = self
-            .cached_formatted_value
-            .take()
-            .map(|entry| {
-                *entry
-                    .and_modify(|tsv| {
-                        *tsv = tsv.resize(value_ref, available_space);
-                    })
-                    .or_insert_with(|| {
-                        let tsv = TruncatedStrView::init_start(value_ref, available_space);
-
-                        let mut range = self.value_range.clone();
-                        if quoted {
-                            range.start += 1;
-                            range.end -= 1;
-                        }
-
-                        // If we're showing a line for the first time, we might
-                        // need to focus on a search match.
-                        let no_overlap = self.focused_search_match.end <= range.start
-                            || range.end <= self.focused_search_match.start;
-                        if no_overlap {
-                            return tsv;
-                        }
-
-                        let value_range_start = range.start;
-                        let offset_focused_range = Range {
-                            start: self
-                                .focused_search_match
-                                .start
-                                .saturating_sub(value_range_start),
-                            end: (self.focused_search_match.end - value_range_start)
-                                .min(value_ref.len()),
-                        };
-
-                        tsv.focus(value_ref, &offset_focused_range)
-                    })
-            })
-            .unwrap_or_else(|| TruncatedStrView::init_start(value_ref, available_space));
+        let truncated_view = self.initialize_value_truncated_view_or_update_cached(available_space);
 
         let space_used_for_value = truncated_view.used_space();
         if space_used_for_value.is_none() {
@@ -608,6 +545,95 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         Ok(used_space)
+    }
+
+    // We use TruncatedStrViews to manage truncating values when they
+    // are too long for the screen, and also to handle scrolling
+    // horizontally through those long values.
+    //
+    // The scroll state needs to be persisted across renders, so the
+    // ScreenWriter keeps a HashMap of TruncatedStrViews, and passes
+    // in an Entry for the LinePrinter to modify.
+    //
+    // (Since setting up this map is a pain for testing, it's passed
+    // in as an Option.)
+    //
+    // If we are rendering a line for the first time, most of the
+    // time we will initialize the TruncatedStrView from the start of
+    // the string. BUT, if we just jumped to a search result on this
+    // line, then we want to initialize the TruncatedStrView focused
+    // on the search result.
+    //
+    // If we've already rendered a line, the available space for the
+    // line may have updated, so, we will resize the TruncatedStrView.
+    fn initialize_value_truncated_view_or_update_cached(
+        &mut self,
+        available_space: isize,
+    ) -> TruncatedStrView {
+        debug_assert!(self.row.is_primitive());
+
+        let mut value_ref = &self.flatjson.1[self.row.range.clone()];
+        let mut value_range = self.row.range.clone();
+
+        // Strip quotes from strings.
+        if self.row.is_string() {
+            value_ref = &value_ref[1..value_ref.len() - 1];
+            value_range.start += 1;
+            value_range.end -= 1;
+        }
+
+        self.cached_truncated_value
+            .take()
+            .map(|entry| {
+                *entry
+                    .and_modify(|tsv| {
+                        *tsv = tsv.resize(value_ref, available_space);
+                    })
+                    .or_insert_with(|| {
+                        let tsv = TruncatedStrView::init_start(value_ref, available_space);
+
+                        // If we're showing a line for the first time, we might
+                        // need to focus on a search match that we just jumped to.
+                        let no_overlap = self.focused_search_match.end <= value_range.start
+                            || value_range.end <= self.focused_search_match.start;
+
+                        // NOTE: If the focused search match starts at the closing
+                        // quote of a string, maybe we should use init_back so that
+                        // you can see the end of the string and it's more explicit
+                        // that the middle of the string isn't part of the search
+                        // match.
+
+                        if no_overlap {
+                            return tsv;
+                        }
+
+                        let offset_focused_range = Range {
+                            start: self
+                                .focused_search_match
+                                .start
+                                .saturating_sub(value_range.start),
+                            end: (self.focused_search_match.end - value_range.start)
+                                .min(value_ref.len()),
+                        };
+
+                        tsv.focus(value_ref, &offset_focused_range)
+                    })
+            })
+            .unwrap_or_else(|| TruncatedStrView::init_start(value_ref, available_space))
+    }
+
+    fn color_for_value_type(value: &Value) -> Color {
+        debug_assert!(value.is_primitive());
+
+        match value {
+            Value::Null => terminal::LIGHT_BLACK,
+            Value::Boolean => terminal::YELLOW,
+            Value::Number => terminal::MAGENTA,
+            Value::String => terminal::GREEN,
+            Value::EmptyObject => terminal::WHITE,
+            Value::EmptyArray => terminal::WHITE,
+            _ => unreachable!(),
+        }
     }
 
     // Print out an object value on a line. There are three main variables at
@@ -1071,7 +1097,6 @@ mod tests {
     use unicode_width::UnicodeWidthStr;
 
     use crate::flatjson::{parse_top_level_json, parse_top_level_yaml};
-    use crate::terminal;
     use crate::terminal::test::{TextOnlyTerminal, VisibleEscapesTerminal};
     use crate::terminal::{BLUE, LIGHT_BLUE};
 
@@ -1094,15 +1119,10 @@ mod tests {
             focused: false,
             focused_because_matching_container_pair: false,
             trailing_comma: false,
-            value: LineValue::Value {
-                s: "hello",
-                quotes: true,
-                color: terminal::WHITE,
-            },
             value_range: &DUMMY_RANGE,
             search_matches: None,
             focused_search_match: &DUMMY_RANGE,
-            cached_formatted_value: None,
+            cached_truncated_value: None,
         }
     }
 
@@ -1146,7 +1166,6 @@ mod tests {
 
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = LinePrinter {
-            value: LineValue::Container,
             indentation: 0,
             ..default_line_printer(&mut term, &fj, 0)
         };
@@ -1437,34 +1456,25 @@ mod tests {
 
     #[test]
     fn test_fill_value_basic() -> std::fmt::Result {
-        let fj = parse_top_level_json(r#""hello""#.to_owned()).unwrap();
+        let fj = parse_top_level_json("\"hello\"\nnull".to_owned()).unwrap();
         let mut term = VisibleEscapesTerminal::new(false, true);
         let mut line: LinePrinter = LinePrinter {
-            value: LineValue::Value {
-                s: "hello",
-                quotes: true,
-                color: terminal::WHITE,
-            },
             value_range: &(1..6),
             ..default_line_printer(&mut term, &fj, 0)
         };
 
         let used_space = line.fill_in_value(100)?;
 
-        assert_eq!("_FG(White)_\"hello\"", line.terminal.output());
+        assert_eq!("_FG(Green)_\"hello\"", line.terminal.output());
         assert_eq!(7, used_space);
 
         line.trailing_comma = true;
-        line.value = LineValue::Value {
-            s: "null",
-            quotes: false,
-            color: terminal::WHITE,
-        };
+        line.row = &line.flatjson[1];
 
         line.terminal.clear_output();
         let used_space = line.fill_in_value(100)?;
 
-        assert_eq!("_FG(White)_null_FG(Default)_,", line.terminal.output());
+        assert_eq!("_FG(LightBlack)_null_FG(Default)_,", line.terminal.output());
         assert_eq!(5, used_space);
 
         Ok(())
@@ -1472,20 +1482,14 @@ mod tests {
 
     #[test]
     fn test_fill_value_not_enough_space() -> std::fmt::Result {
-        let fj = parse_top_level_json(r#""hello""#.to_owned()).unwrap();
+        let fj = parse_top_level_json(r#"["hello", "", true]"#.to_owned()).unwrap();
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
-        let color = terminal::BLACK;
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 1);
 
         // QUOTED VALUE
 
         // Minimum space is: '"h…"', which has a length of 4.
-        line.value = LineValue::Value {
-            s: "hello",
-            quotes: true,
-            color,
-        };
-        line.value_range = &(1..6);
+        line.value_range = &line.flatjson[1].range;
 
         let used_space = line.fill_in_value(4)?;
         assert_eq!("\"h…\"", line.terminal.output());
@@ -1507,12 +1511,8 @@ mod tests {
 
         // QUOTED EMPTY STRING
 
-        line.value = LineValue::Value {
-            s: "",
-            quotes: true,
-            color,
-        };
-        line.value_range = &(1..1);
+        line.row = &line.flatjson[2];
+        line.value_range = &line.flatjson[2].range;
 
         line.terminal.clear_output();
         let used_space = line.fill_in_value(2)?;
@@ -1528,13 +1528,9 @@ mod tests {
 
         // Minimum space is: 't…,', which has a length of 3.
         line.trailing_comma = true;
-        line.value = LineValue::Value {
-            s: "true",
-            quotes: false,
-            color,
-        };
-        let value_range = 1..5;
-        line.value_range = &value_range;
+
+        line.row = &line.flatjson[3];
+        line.value_range = &line.flatjson[3].range;
 
         line.terminal.clear_output();
 

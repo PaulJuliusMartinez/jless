@@ -191,30 +191,6 @@ impl ScreenWriter {
 
         let focused = is_focused;
 
-        let value = match &row.value {
-            Value::OpenContainer { .. } | Value::CloseContainer { .. } => lp::LineValue::Container,
-            _ => {
-                let color = match &row.value {
-                    Value::Null => terminal::LIGHT_BLACK,
-                    Value::Boolean => terminal::YELLOW,
-                    Value::Number => terminal::MAGENTA,
-                    Value::String => terminal::GREEN,
-                    Value::EmptyObject => terminal::WHITE,
-                    Value::EmptyArray => terminal::WHITE,
-                    _ => terminal::WHITE,
-                };
-
-                let range = row.range.clone();
-                let (s, quotes) = if let Value::String = &row.value {
-                    (&viewer.flatjson.1[range.start + 1..range.end - 1], true)
-                } else {
-                    (&viewer.flatjson.1[range], false)
-                };
-
-                lp::LineValue::Value { s, quotes, color }
-            }
-        };
-
         let mut focused_because_matching_container_pair = false;
         if row.is_container() {
             let pair_index = row.pair_index().unwrap();
@@ -263,13 +239,12 @@ impl ScreenWriter {
             focused_because_matching_container_pair,
             trailing_comma,
 
-            value,
             value_range: &row.range,
 
             search_matches: Some(search_matches_copy),
             focused_search_match,
 
-            cached_formatted_value: Some(self.truncated_row_value_views.entry(index)),
+            cached_truncated_value: Some(self.truncated_row_value_views.entry(index)),
         };
 
         // TODO: Handle error here? Or is never an error because writes
