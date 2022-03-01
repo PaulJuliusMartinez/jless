@@ -192,9 +192,7 @@ impl ScreenWriter {
         let focused = is_focused;
 
         let value = match &row.value {
-            Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
-                lp::LineValue::Container { row }
-            }
+            Value::OpenContainer { .. } | Value::CloseContainer { .. } => lp::LineValue::Container,
             _ => {
                 let color = match &row.value {
                     Value::Null => terminal::LIGHT_BLACK,
