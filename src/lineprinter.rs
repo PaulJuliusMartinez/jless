@@ -1,5 +1,6 @@
 use std::collections::hash_map::Entry;
 use std::fmt;
+use std::fmt::Write;
 use std::iter::Peekable;
 use std::ops::Range;
 
@@ -141,39 +142,38 @@ lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
 }
 
-pub enum LineLabel<'a> {
-    Key { key: &'a str },
-    Index { index: &'a str },
+enum LabelType {
+    Key,
+    Index,
 }
 
-// TODO: Rename to "DelimiterPair"
 #[derive(Eq, PartialEq)]
-enum LabelStyle {
+enum DelimiterPair {
     None,
     Quote,
     Square,
 }
 
-impl LabelStyle {
+impl DelimiterPair {
     fn left(&self) -> &'static str {
         match self {
-            LabelStyle::None => "",
-            LabelStyle::Quote => "\"",
-            LabelStyle::Square => "[",
+            DelimiterPair::None => "",
+            DelimiterPair::Quote => "\"",
+            DelimiterPair::Square => "[",
         }
     }
 
     fn right(&self) -> &'static str {
         match self {
-            LabelStyle::None => "",
-            LabelStyle::Quote => "\"",
-            LabelStyle::Square => "]",
+            DelimiterPair::None => "",
+            DelimiterPair::Quote => "\"",
+            DelimiterPair::Square => "]",
         }
     }
 
     fn width(&self) -> isize {
         match self {
-            LabelStyle::None => 0,
+            DelimiterPair::None => 0,
             _ => 2,
         }
     }
@@ -181,10 +181,7 @@ impl LabelStyle {
 
 #[derive(Debug)]
 pub enum LineValue<'a> {
-    Container {
-        flatjson: &'a FlatJson,
-        row: &'a Row,
-    },
+    Container,
     Value {
         s: &'a str,
         quotes: bool,
@@ -192,15 +189,15 @@ pub enum LineValue<'a> {
     },
 }
 
-pub struct LinePrinter<'a, 'b, 'c> {
+pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
-    pub terminal: &'c mut dyn Terminal,
+    pub terminal: &'a mut dyn Terminal,
 
-    pub node_depth: usize,
-    pub depth: usize,
+    pub flatjson: &'a FlatJson,
+    pub row: &'a Row,
+
+    pub indentation: usize,
     pub width: usize,
-
-    pub tab_size: usize,
 
     // Line-by-line formatting options
     pub focused: bool,
@@ -208,8 +205,6 @@ pub struct LinePrinter<'a, 'b, 'c> {
     pub trailing_comma: bool,
 
     // Stuff to actually print out
-    pub label: Option<LineLabel<'a>>,
-    pub label_range: &'a Option<Range<usize>>,
     pub value: LineValue<'a>,
     pub value_range: &'a Range<usize>,
 
@@ -219,15 +214,22 @@ pub struct LinePrinter<'a, 'b, 'c> {
     pub cached_formatted_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
-impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
+impl<'a, 'b> LinePrinter<'a, 'b> {
     pub fn print_line(&mut self) -> fmt::Result {
         self.terminal.reset_style()?;
 
         self.print_focus_and_container_indicators()?;
 
-        let label_depth = INDICATOR_WIDTH + self.depth * self.tab_size;
-        self.terminal
-            .position_cursor_col((1 + label_depth) as u16)?;
+        let label_depth = INDICATOR_WIDTH + self.indentation;
+
+        // I don't know if there's standard behavior for setting the column
+        // past the width of the screen, so let's avoid doing that. There
+        // will still be cases where this condition is true, but we still end
+        // up printing the truncated indicator, but that's fine.
+        if label_depth < self.width {
+            self.terminal
+                .position_cursor_col((1 + label_depth) as u16)?;
+        }
 
         let mut available_space = self.width as isize - label_depth as isize;
 
@@ -235,7 +237,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         available_space -= space_used_for_label;
 
-        if self.label.is_some() && space_used_for_label == 0 {
+        if self.has_label() && space_used_for_label == 0 {
             self.print_truncated_indicator()?;
         } else {
             let space_used_for_value = self.fill_in_value(available_space)?;
@@ -267,13 +269,13 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     fn print_container_indicator(&mut self) -> fmt::Result {
         // let-else would be better here.
         let collapsed = match &self.value {
-            LineValue::Container { row, .. } => {
-                debug_assert!(row.is_opening_of_container());
-                row.is_collapsed()
+            LineValue::Container => {
+                debug_assert!(self.row.is_opening_of_container());
+                self.row.is_collapsed()
             }
             _ => {
                 // Print a focused indicator for top-level primitives.
-                if self.focused && self.node_depth == 0 {
+                if self.focused && self.row.depth == 0 {
                     self.terminal.position_cursor_col(0)?;
                     write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
                 }
@@ -282,11 +284,11 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         };
 
         // Make sure there's enough room for the indicator
-        if self.width <= INDICATOR_WIDTH + self.depth * self.tab_size {
+        if self.width <= INDICATOR_WIDTH + self.indentation {
             return Ok(());
         }
 
-        let container_indicator_col = (1 + self.depth * self.tab_size) as u16;
+        let container_indicator_col = (1 + self.indentation) as u16;
         self.terminal.position_cursor_col(container_indicator_col)?;
 
         let indicator = match (self.focused, collapsed) {
@@ -302,56 +304,26 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     }
 
     pub fn fill_in_label(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
-        let label_style: LabelStyle;
-        let label_ref: &str;
-
-        let mut used_space = 0;
-
-        let style: &Style;
-        let highlighted_style: &Style;
-        let mut dummy_search_matches = None;
-        let matches_iter;
-
-        match self.label {
-            None => return Ok(0),
-            Some(LineLabel::Key { key }) => {
-                // Quote keys in line mode or if they're not valid JS identifiers.
-                let should_be_quoted = self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key);
-                label_style = if should_be_quoted {
-                    LabelStyle::Quote
-                } else {
-                    LabelStyle::None
-                };
-
-                label_ref = key;
-
-                if self.focused {
-                    style = &highlighting::INVERTED_BOLD_BLUE_STYLE;
-                    highlighted_style = &highlighting::BOLD_INVERTED_STYLE;
-                } else {
-                    style = &highlighting::BLUE_STYLE;
-                    highlighted_style = &highlighting::SEARCH_MATCH_HIGHLIGHTED;
-                }
-                matches_iter = &mut self.search_matches;
-            }
-            Some(LineLabel::Index { index }) => {
-                label_style = LabelStyle::Square;
-                label_ref = index;
-
-                if self.focused {
-                    style = &highlighting::BOLD_STYLE;
-                } else {
-                    style = &highlighting::DIMMED_STYLE;
-                }
-
-                // No match highlighting for index labels.
-                matches_iter = &mut dummy_search_matches;
-                highlighted_style = &highlighting::DEFAULT_STYLE;
-            }
+        if !self.has_label() {
+            return Ok(0);
         }
 
+        let mut index_label_buffer = String::new();
+        let (label_ref, label_range, delimiter) =
+            self.get_label_range_and_delimiter(&mut index_label_buffer, &self.flatjson.1);
+
+        let mut used_space = 0;
+        let mut dummy_search_matches = None;
+
+        let (style, highlighted_style) = self.get_label_styles();
+        let matches_iter = if self.row.key_range.is_some() {
+            &mut self.search_matches
+        } else {
+            &mut dummy_search_matches
+        };
+
         // Remove two characters for either "" or [].
-        available_space -= label_style.width();
+        available_space -= delimiter.width();
 
         // Remove two characters for ": "
         available_space -= 2;
@@ -374,7 +346,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         let mut label_close_delimiter_range_start = None;
         let mut object_separator_range_start = None;
 
-        if let Some(range) = self.label_range {
+        if let Some(range) = label_range {
             label_open_delimiter_range_start = Some(range.start);
             label_range_start = Some(range.start + 1);
             label_close_delimiter_range_start = Some(range.end - 1);
@@ -382,10 +354,11 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let mut matches = matches_iter.as_mut();
+
         // Print out start of label
         highlighting::highlight_matches(
             self.terminal,
-            label_style.left(),
+            delimiter.left(),
             label_open_delimiter_range_start,
             style,
             highlighted_style,
@@ -408,7 +381,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         // Print out end of label
         highlighting::highlight_matches(
             self.terminal,
-            label_style.right(),
+            delimiter.right(),
             label_close_delimiter_range_start,
             style,
             highlighted_style,
@@ -427,17 +400,91 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             self.focused_search_match,
         )?;
 
-        used_space += label_style.width();
+        used_space += delimiter.width();
         used_space += 2;
 
         Ok(used_space)
     }
 
+    // Check if a line has a label. A line has a label if it has
+    // a key, or if we are in data mode and we have a parent.
+    fn has_label(&self) -> bool {
+        self.row.key_range.is_some() || (self.mode == Mode::Data && self.row.parent.is_some())
+    }
+
+    // Get the type of a label, either Key or Index.
+    fn label_type(&self) -> LabelType {
+        debug_assert!(self.has_label());
+
+        if self.row.key_range.is_some() {
+            LabelType::Key
+        } else {
+            LabelType::Index
+        }
+    }
+
+    fn get_label_range_and_delimiter<'l, 'fj: 'l>(
+        &self,
+        label: &'l mut String,
+        pretty_printed: &'fj str,
+    ) -> (&'l str, Option<Range<usize>>, DelimiterPair) {
+        debug_assert!(self.has_label());
+
+        if let Some(key_range) = &self.row.key_range {
+            let key = &pretty_printed[key_range.start + 1..key_range.end - 1];
+
+            // Quote keys in line mode or if they're not valid JS identifiers.
+            let should_be_quoted = self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key);
+            let delimiter = if should_be_quoted {
+                DelimiterPair::Quote
+            } else {
+                DelimiterPair::None
+            };
+
+            (key, Some(key_range.clone()), delimiter)
+        } else {
+            let parent = self.row.parent.unwrap();
+            debug_assert!(self.flatjson[parent].is_array());
+
+            write!(label, "{}", self.row.index).unwrap();
+
+            (label.as_str(), None, DelimiterPair::Square)
+        }
+    }
+
+    fn get_label_styles(&self) -> (&'static Style, &'static Style) {
+        match self.label_type() {
+            LabelType::Key => {
+                if self.focused {
+                    (
+                        &highlighting::INVERTED_BOLD_BLUE_STYLE,
+                        &highlighting::BOLD_INVERTED_STYLE,
+                    )
+                } else {
+                    (
+                        &highlighting::BLUE_STYLE,
+                        &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                    )
+                }
+            }
+            LabelType::Index => {
+                let style = if self.focused {
+                    &highlighting::BOLD_STYLE
+                } else {
+                    &highlighting::DIMMED_STYLE
+                };
+
+                // No match highlighting for index labels.
+                (style, &highlighting::DEFAULT_STYLE)
+            }
+        }
+    }
+
     fn fill_in_value(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
         // Object values are sufficiently complicated that we'll handle them
         // in a separate function.
-        if let LineValue::Container { flatjson, row } = self.value {
-            return self.fill_in_container_value(available_space, flatjson, row);
+        if let LineValue::Container = self.value {
+            return self.fill_in_container_value(available_space, self.row);
         }
 
         let value_ref: &str;
@@ -454,7 +501,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 quoted = quotes;
                 color = c;
             }
-            LineValue::Container { .. } => panic!("We just eliminated the Container case above"),
+            LineValue::Container => panic!("We just eliminated the Container case above"),
         }
 
         let mut used_space = 0;
@@ -531,9 +578,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         };
 
         let delimiter = if quoted {
-            LabelStyle::Quote
+            DelimiterPair::Quote
         } else {
-            LabelStyle::None
+            DelimiterPair::None
         };
 
         if quoted {
@@ -585,7 +632,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     fn fill_in_container_value(
         &mut self,
         available_space: isize,
-        flatjson: &FlatJson,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_container());
@@ -605,7 +651,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(available_space, row),
             (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(available_space, row),
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
-                self.fill_in_container_preview(available_space, flatjson, row)
+                self.fill_in_container_preview(available_space, row)
             }
             // Impossible states
             (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
@@ -677,7 +723,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     fn fill_in_container_preview(
         &mut self,
         mut available_space: isize,
-        flatjson: &FlatJson,
         row: &Row,
     ) -> Result<isize, fmt::Error> {
         if self.trailing_comma {
@@ -686,7 +731,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         let quoted_object_keys = self.mode == Mode::Line;
         let mut used_space =
-            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?;
+            self.generate_container_preview(row, available_space, quoted_object_keys)?;
 
         if self.trailing_comma {
             used_space += 1;
@@ -707,7 +752,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
     fn generate_container_preview(
         &mut self,
-        flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
         quoted_object_keys: bool,
@@ -737,7 +781,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         let mut next_sibling = row.first_child();
         let mut is_first_child = true;
         while let OptionIndex::Index(child) = next_sibling {
-            next_sibling = flatjson[child].next_sibling;
+            next_sibling = self.flatjson[child].next_sibling;
 
             // If there are still more elements, we'll print out ", …" at the end,
             let space_needed_at_end_of_container = if next_sibling.is_some() { 3 } else { 0 };
@@ -745,8 +789,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             let is_only_child = is_first_child && next_sibling.is_nil();
 
             let used_space = self.fill_in_container_elem_preview(
-                flatjson,
-                &flatjson[child],
+                &self.flatjson[child],
                 space_available_for_elem,
                 quoted_object_keys,
                 is_only_child,
@@ -771,7 +814,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
                 if next_sibling.is_some() {
                     self.highlight_str(
                         ", ",
-                        Some(flatjson[child].range.end),
+                        Some(self.flatjson[child].range.end),
                         highlighting::PREVIEW_STYLES,
                     )?;
                     available_space -= 2;
@@ -802,7 +845,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     // [a, …]
     fn fill_in_container_elem_preview(
         &mut self,
-        flatjson: &FlatJson,
         row: &Row,
         mut available_space: isize,
         quoted_object_keys: bool,
@@ -812,7 +854,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
         if let Some(key_range) = &row.key_range {
             let key_without_quotes_range = key_range.start + 1..key_range.end - 1;
-            let key_ref = &flatjson.1[key_without_quotes_range.clone()];
+            let key_ref = &self.flatjson.1[key_without_quotes_range.clone()];
             // Need at least one character for value, and two characters for ": "
             let mut space_available_for_key = available_space - 3;
             let mut quoted_object_key = quoted_object_keys;
@@ -838,9 +880,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             }
 
             let delimiter = if quoted_object_key {
-                LabelStyle::Quote
+                DelimiterPair::Quote
             } else {
-                LabelStyle::None
+                DelimiterPair::None
             };
 
             self.highlight_delimited_and_truncated_str(
@@ -857,9 +899,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            self.generate_container_preview(flatjson, row, available_space, quoted_object_keys)?
+            self.generate_container_preview(row, available_space, quoted_object_keys)?
         } else {
-            self.fill_in_value_preview(&flatjson.1, row, available_space)?
+            self.fill_in_value_preview(row, available_space)?
         };
         used_space += space_used_for_value;
 
@@ -876,7 +918,6 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 
     fn fill_in_value_preview(
         &mut self,
-        pretty_printed_json: &str,
         row: &Row,
         mut available_space: isize,
     ) -> Result<isize, fmt::Error> {
@@ -894,9 +935,9 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
             Value::String => {
                 quoted = true;
                 let range = row.range.clone();
-                &pretty_printed_json[range.start + 1..range.end - 1]
+                &self.flatjson.1[range.start + 1..range.end - 1]
             }
-            _ => &pretty_printed_json[row.range.clone()],
+            _ => &self.flatjson.1[row.range.clone()],
         };
 
         if quoted {
@@ -972,7 +1013,7 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
     // surrounded by a delimiter.
     fn highlight_delimited_and_truncated_str(
         &mut self,
-        delimiter: LabelStyle,
+        delimiter: DelimiterPair,
         s: &str,
         truncated_view: &TruncatedStrView,
         str_range: Option<Range<usize>>,
@@ -1029,42 +1070,30 @@ impl<'a, 'b, 'c> LinePrinter<'a, 'b, 'c> {
 mod tests {
     use unicode_width::UnicodeWidthStr;
 
-    use crate::flatjson::parse_top_level_json;
+    use crate::flatjson::{parse_top_level_json, parse_top_level_yaml};
     use crate::terminal;
     use crate::terminal::test::{TextOnlyTerminal, VisibleEscapesTerminal};
+    use crate::terminal::{BLUE, LIGHT_BLUE};
 
     use super::*;
 
-    const OBJECT: &str = r#"{
-        "1": 1,
-        "2": [
-            3,
-            "4"
-        ],
-        "6": {
-            "7": null,
-            "8": true,
-            "9": 9
-        },
-        "11": 11
-    }"#;
-
-    const DUMMY_OPTION_RANGE: Option<Range<usize>> = None;
     const DUMMY_RANGE: Range<usize> = 0..0;
 
-    fn default_line_printer(terminal: &mut dyn Terminal) -> LinePrinter {
+    fn default_line_printer<'a>(
+        terminal: &'a mut dyn Terminal,
+        flatjson: &'a FlatJson,
+        index: usize,
+    ) -> LinePrinter<'a, 'a> {
         LinePrinter {
             mode: Mode::Data,
             terminal,
-            node_depth: 0,
-            depth: 0,
+            flatjson,
+            row: &flatjson[index],
+            indentation: 0,
             width: 100,
-            tab_size: 2,
             focused: false,
             focused_because_matching_container_pair: false,
             trailing_comma: false,
-            label: None,
-            label_range: &DUMMY_OPTION_RANGE,
             value: LineValue::Value {
                 s: "hello",
                 quotes: true,
@@ -1079,140 +1108,153 @@ mod tests {
 
     #[test]
     fn test_line_mode_focus_indicators() -> std::fmt::Result {
+        const JSON: &str = r#"{ "1": 1 }"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+
+        // Line mode either focused or not.
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = LinePrinter {
             mode: Mode::Line,
-            depth: 1,
-            value: LineValue::Value {
-                s: "null",
-                quotes: false,
-                color: terminal::WHITE,
-            },
-            ..default_line_printer(&mut term)
+            indentation: 10,
+            ..default_line_printer(&mut term, &fj, 1)
         };
 
-        line.print_line()?;
-
-        assert_eq!(format!("_C(5)_null"), line.terminal.output());
+        // Not focused; no indicator.
+        line.print_focus_and_container_indicators()?;
+        assert_eq!("", line.terminal.output());
+        line.terminal.clear_output();
 
         line.focused = true;
-        line.depth = 3;
-        line.tab_size = 1;
 
-        line.terminal.clear_output();
-        line.print_line()?;
-
-        assert_eq!(
-            format!("_C(1)_{}_C(6)_null", FOCUSED_LINE),
-            line.terminal.output()
-        );
+        line.print_focus_and_container_indicators()?;
+        assert_eq!(format!("_C(1)_{}", FOCUSED_LINE), line.terminal.output());
 
         Ok(())
     }
 
     #[test]
     fn test_data_mode_focus_indicators() -> std::fmt::Result {
-        let mut fj = parse_top_level_json(OBJECT.to_owned()).unwrap();
-        let value_range = 0..fj.1.len();
+        const JSON: &str = r#"{
+            "1": 1,
+        }
+        3
+        {
+            "5": { "6": 6 }
+        }"#;
+        let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        fj.collapse(5);
+
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = LinePrinter {
-            value: LineValue::Container {
-                flatjson: &fj,
-                row: &fj[0],
-            },
-            value_range: &value_range,
-            ..default_line_printer(&mut term)
+            value: LineValue::Container,
+            indentation: 0,
+            ..default_line_printer(&mut term, &fj, 0)
         };
 
-        line.depth = 1;
-        line.print_line()?;
-
-        let expected_prefix = format!("_C(3)_{}_C(5)_{{", EXPANDED_CONTAINER);
-        assert_starts_with(line.terminal.output(), &expected_prefix);
+        line.print_focus_and_container_indicators()?;
+        assert_eq!(
+            format!("_C(1)_{}", EXPANDED_CONTAINER),
+            line.terminal.output()
+        );
+        line.terminal.clear_output();
 
         line.focused = true;
 
+        line.print_focus_and_container_indicators()?;
+        assert_eq!(
+            format!("_C(1)_{}", FOCUSED_EXPANDED_CONTAINER),
+            line.terminal.output()
+        );
         line.terminal.clear_output();
-        line.print_line()?;
 
-        let expected_prefix = format!("_C(3)_{}_C(5)_{{", FOCUSED_EXPANDED_CONTAINER);
-        assert_starts_with(line.terminal.output(), &expected_prefix);
+        line.row = &line.flatjson[5];
+        line.indentation = 2;
 
-        let term = line.terminal;
-        fj.collapse(0);
-        // Need to create a new LinePrinter so I can modify fj on the line above.
-        line = LinePrinter {
-            depth: 2,
-            tab_size: 4,
-            value: LineValue::Container {
-                flatjson: &fj,
-                row: &fj[0],
-            },
-            value_range: &value_range,
-            ..default_line_printer(term)
-        };
-
+        line.print_focus_and_container_indicators()?;
+        assert_eq!(
+            format!("_C(3)_{}", FOCUSED_COLLAPSED_CONTAINER),
+            line.terminal.output()
+        );
         line.terminal.clear_output();
-        line.print_line()?;
 
-        let expected_prefix = format!("_C(9)_{}_C(11)_{{", COLLAPSED_CONTAINER);
-        assert_starts_with(line.terminal.output(), &expected_prefix);
+        line.focused = false;
 
-        line.focused = true;
-
-        line.terminal.clear_output();
-        line.print_line()?;
-
-        let expected_prefix = format!("_C(9)_{}_C(11)_{{", FOCUSED_COLLAPSED_CONTAINER);
-        assert_starts_with(line.terminal.output(), &expected_prefix);
+        line.print_focus_and_container_indicators()?;
+        assert_eq!(
+            format!("_C(3)_{}", COLLAPSED_CONTAINER),
+            line.terminal.output()
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_fill_key_label_basic() -> std::fmt::Result {
+        const JSON: &str = r#"{
+            "hello": 1,
+            "french fry": 2,
+            "": 3,
+        }"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+
         let mut term = VisibleEscapesTerminal::new(false, true);
         let mut line: LinePrinter = LinePrinter {
             mode: Mode::Line,
-            label: Some(LineLabel::Key { key: "hello" }),
-            ..default_line_printer(&mut term)
+            ..default_line_printer(&mut term, &fj, 1)
         };
 
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"hello\"_FG(Default)_: ", terminal::LIGHT_BLUE),
+            format!("_FG({})_\"hello\"_FG(Default)_: ", LIGHT_BLUE),
             line.terminal.output()
         );
         assert_eq!(9, used_space);
 
-        line.focused = true;
         line.mode = Mode::Data;
-        line.label = Some(LineLabel::Key { key: "hello" });
 
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!(
-                "_BG({})__INV__B_hello_BG(Default)__!INV__!B_: ",
-                terminal::BLUE,
-            ),
+            format!("_FG({})_hello_FG(Default)_: ", LIGHT_BLUE),
+            line.terminal.output()
+        );
+        assert_eq!(7, used_space);
+
+        line.focused = true;
+
+        line.terminal.clear_output();
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(
+            format!("_BG({})__INV__B_hello_BG(Default)__!INV__!B_: ", BLUE),
             line.terminal.output(),
         );
         assert_eq!(7, used_space);
 
-        // Non JS identifiers (including empty-string) get quoted.
-        line.label = Some(LineLabel::Key { key: "" });
+        line.focused = false;
+
+        // Non JS identifiers get quoted.
+        line.row = &line.flatjson[2];
 
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!(
-                "_BG({})__INV__B_\"\"_BG(Default)__!INV__!B_: ",
-                terminal::BLUE,
-            ),
+            format!("_FG({})_\"french fry\"_FG(Default)_: ", LIGHT_BLUE),
+            line.terminal.output(),
+        );
+        assert_eq!(14, used_space);
+
+        // Empty strings aren't valid JS identifiers either
+        line.row = &line.flatjson[3];
+
+        line.terminal.clear_output();
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(
+            format!("_FG({})_\"\"_FG(Default)_: ", LIGHT_BLUE),
             line.terminal.output(),
         );
         assert_eq!(4, used_space);
@@ -1220,12 +1262,74 @@ mod tests {
         Ok(())
     }
 
+    // Currently we incorrectly print quotes around all of these.
+    #[test]
+    fn test_fill_key_non_scalar_keys() -> std::fmt::Result {
+        const YAML: &str = r#"{
+            [one]: 1,
+            [[t, w, o]]: 2,
+            [3]: 3,
+            [null]: 4,
+        }"#;
+        let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
+
+        let mut term = VisibleEscapesTerminal::new(false, false);
+        let mut line: LinePrinter = LinePrinter {
+            mode: Mode::Line,
+            ..default_line_printer(&mut term, &fj, 1)
+        };
+
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(r#""["one"]": "#, line.terminal.output());
+        assert_eq!(11, used_space);
+
+        line.mode = Mode::Data;
+
+        line.terminal.clear_output();
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(r#""["one"]": "#, line.terminal.output());
+        assert_eq!(11, used_space);
+
+        line.row = &line.flatjson[2];
+
+        line.terminal.clear_output();
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(r#""[["t", "w", "o"]]": "#, line.terminal.output());
+        assert_eq!(21, used_space);
+
+        line.row = &line.flatjson[3];
+
+        line.terminal.clear_output();
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(r#""[3]": "#, line.terminal.output());
+        assert_eq!(7, used_space);
+
+        line.row = &line.flatjson[4];
+
+        line.terminal.clear_output();
+        let used_space = line.fill_in_label(100)?;
+
+        assert_eq!(r#""[null]": "#, line.terminal.output());
+        assert_eq!(10, used_space);
+
+        Ok(())
+    }
+
     #[test]
     fn test_fill_index_label_basic() -> std::fmt::Result {
+        const JSON: &str = r#"[
+            8,
+        ]"#;
+        let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        fj[1].index = 12345;
+
         let mut term = VisibleEscapesTerminal::new(false, true);
         let mut line: LinePrinter = LinePrinter {
-            label: Some(LineLabel::Index { index: "12345" }),
-            ..default_line_printer(&mut term)
+            ..default_line_printer(&mut term, &fj, 1)
         };
 
         let used_space = line.fill_in_label(100)?;
@@ -1244,10 +1348,18 @@ mod tests {
 
     #[test]
     fn test_fill_label_not_enough_space() -> std::fmt::Result {
+        const JSON: &str = r#"{
+            "hello": 1,
+            "2": [
+                3,
+            ],
+        }"#;
+        let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        fj[3].index = 12345;
+
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = default_line_printer(&mut term);
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 1);
         line.mode = Mode::Line;
-        line.label = Some(LineLabel::Key { key: "hello" });
 
         // QUOTED STRING KEY
 
@@ -1275,7 +1387,6 @@ mod tests {
 
         // Minimum space is: "h…: ", which has a length of 4, plus extra space for value char.
         line.mode = Mode::Data;
-        line.label = Some(LineLabel::Key { key: "hello" });
 
         line.terminal.clear_output();
 
@@ -1299,8 +1410,7 @@ mod tests {
 
         // ARRAY INDEX
 
-        // Minimum space is: "[…5]: ", which has a length of 6, plus extra space for value char.
-        line.label = Some(LineLabel::Index { index: "12345" });
+        line.row = &line.flatjson[3];
 
         line.terminal.clear_output();
 
@@ -1310,7 +1420,7 @@ mod tests {
 
         line.terminal.clear_output();
 
-        // Not enough room, returns 0.
+        // Not enough room, elides whole index.
         let used_space = line.fill_in_label(6)?;
         assert_eq!("[…]: ", line.terminal.output());
         assert_eq!(5, used_space);
@@ -1327,16 +1437,16 @@ mod tests {
 
     #[test]
     fn test_fill_value_basic() -> std::fmt::Result {
+        let fj = parse_top_level_json(r#""hello""#.to_owned()).unwrap();
         let mut term = VisibleEscapesTerminal::new(false, true);
-        let value_range = 0..5;
         let mut line: LinePrinter = LinePrinter {
             value: LineValue::Value {
                 s: "hello",
                 quotes: true,
                 color: terminal::WHITE,
             },
-            value_range: &value_range,
-            ..default_line_printer(&mut term)
+            value_range: &(1..6),
+            ..default_line_printer(&mut term, &fj, 0)
         };
 
         let used_space = line.fill_in_value(100)?;
@@ -1362,8 +1472,9 @@ mod tests {
 
     #[test]
     fn test_fill_value_not_enough_space() -> std::fmt::Result {
+        let fj = parse_top_level_json(r#""hello""#.to_owned()).unwrap();
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = default_line_printer(&mut term);
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
         let color = terminal::BLACK;
 
         // QUOTED VALUE
@@ -1374,8 +1485,7 @@ mod tests {
             quotes: true,
             color,
         };
-        let value_range = 0..5;
-        line.value_range = &value_range;
+        line.value_range = &(1..6);
 
         let used_space = line.fill_in_value(4)?;
         assert_eq!("\"h…\"", line.terminal.output());
@@ -1383,14 +1493,14 @@ mod tests {
 
         line.terminal.clear_output();
 
-        // Not enough room, returns 0.
+        // Not enough room; fully elides string.
         let used_space = line.fill_in_value(3)?;
         assert_eq!("\"…\"", line.terminal.output());
         assert_eq!(3, used_space);
 
         line.terminal.clear_output();
 
-        // Not enough room, returns 0.
+        // Not enough room, returns empty string.
         let used_space = line.fill_in_value(2)?;
         assert_eq!("", line.terminal.output());
         assert_eq!(0, used_space);
@@ -1402,8 +1512,7 @@ mod tests {
             quotes: true,
             color,
         };
-        let value_range = 1..1;
-        line.value_range = &value_range;
+        line.value_range = &(1..1);
 
         line.terminal.clear_output();
         let used_space = line.fill_in_value(2)?;
@@ -1424,7 +1533,7 @@ mod tests {
             quotes: false,
             color,
         };
-        let value_range = 0..4;
+        let value_range = 1..5;
         line.value_range = &value_range;
 
         line.terminal.clear_output();
@@ -1451,7 +1560,7 @@ mod tests {
 
         line.terminal.clear_output();
 
-        // Don't print just an ellipsis, print '>' instead.
+        // Don't print just an ellipsis, we'll print '>' instead.
         let used_space = line.fill_in_value(1)?;
         assert_eq!("", line.terminal.output());
         assert_eq!(0, used_space);
@@ -1471,7 +1580,7 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
-            ..default_line_printer(&mut term)
+            ..default_line_printer(&mut term, &fj, 0)
         };
 
         for (available_space, used_space, quoted_object_keys, expected) in vec![
@@ -1489,8 +1598,11 @@ mod tests {
         ]
         .into_iter()
         {
-            let used =
-                line.generate_container_preview(&fj, &fj[0], available_space, quoted_object_keys)?;
+            let used = line.generate_container_preview(
+                &line.flatjson[0],
+                available_space,
+                quoted_object_keys,
+            )?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
@@ -1516,7 +1628,7 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
-            ..default_line_printer(&mut term)
+            ..default_line_printer(&mut term, &fj, 0)
         };
 
         for (available_space, used_space, expected) in vec![
@@ -1538,8 +1650,11 @@ mod tests {
         .into_iter()
         {
             let quoted_object_keys = false;
-            let used =
-                line.generate_container_preview(&fj, &fj[0], available_space, quoted_object_keys)?;
+            let used = line.generate_container_preview(
+                &line.flatjson[0],
+                available_space,
+                quoted_object_keys,
+            )?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
@@ -1565,10 +1680,10 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
-            ..default_line_printer(&mut term)
+            ..default_line_printer(&mut term, &fj, 0)
         };
 
-        let used = line.generate_container_preview(&fj, &fj[0], 34, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 34, false)?;
         assert_eq!(
             r#"{a: [1, {…}, null, "hello", true]}"#,
             line.terminal.output()
@@ -1576,7 +1691,7 @@ mod tests {
         assert_eq!(34, used);
 
         line.terminal.clear_output();
-        let used = line.generate_container_preview(&fj, &fj[0], 33, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 33, false)?;
         assert_eq!(
             r#"{a: [1, {…}, null, "hello", tr…]}"#,
             line.terminal.output()
@@ -1591,28 +1706,46 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = LinePrinter {
             value_range: &(0..json.len()),
-            ..default_line_printer(&mut term)
+            ..default_line_printer(&mut term, &fj, 0)
         };
 
-        let used = line.generate_container_preview(&fj, &fj[0], 29, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 29, false)?;
         assert_eq!(r#"[{a: 1, d: {…}, "b c": null}]"#, line.terminal.output());
         assert_eq!(29, used);
 
         line.terminal.clear_output();
-        let used = line.generate_container_preview(&fj, &fj[0], 28, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 28, false)?;
         assert_eq!(r#"[{a: 1, d: {…}, "b c": nu…}]"#, line.terminal.output());
         assert_eq!(28, used);
 
         Ok(())
     }
 
-    #[track_caller]
-    fn assert_starts_with(s: &str, prefix: &str) {
-        assert!(
-            s.starts_with(prefix),
-            "Expected {} to start with {}",
-            s,
-            prefix,
-        );
+    #[test]
+    fn test_generate_object_preview_with_non_scalar_keys() -> std::fmt::Result {
+        const YAML: &str = r#"{
+            [one]: 1,
+            [[t, w, o]]: 2,
+            [3]: 3,
+            [null]: 4,
+        }"#;
+        let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
+
+        let mut term = TextOnlyTerminal::new();
+        let mut line: LinePrinter = LinePrinter {
+            value_range: &(0..fj.1.len()),
+            ..default_line_printer(&mut term, &fj, 0)
+        };
+
+        let expected = r#"{"["one"]": 1, "[["t", "w", "o"]]": 2, "[3]": 3, "[null]": 4}"#;
+
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, true)?;
+        assert_eq!(expected, line.terminal.output());
+
+        line.terminal.clear_output();
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, false)?;
+        assert_eq!(expected, line.terminal.output());
+
+        Ok(())
     }
 }

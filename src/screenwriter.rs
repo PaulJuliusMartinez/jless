@@ -44,6 +44,7 @@ impl MessageSeverity {
     }
 }
 
+const TAB_SIZE: usize = 2;
 const PATH_BASE: &str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
@@ -183,40 +184,15 @@ impl ScreenWriter {
         self.terminal.position_cursor(1, screen_index + 1)?;
         let row = &viewer.flatjson[index];
 
-        let depth = row
+        let indentation_level = row
             .depth
             .saturating_sub(self.indentation_reduction as usize);
+        let indentation = indentation_level * TAB_SIZE;
 
         let focused = is_focused;
 
-        let mut label = None;
-        let index_label: String;
-        let mut label_range = &None;
-
-        // Set up key label.
-        if let Some(key_range) = &row.key_range {
-            let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
-            label = Some(lp::LineLabel::Key { key });
-            label_range = &row.key_range;
-        }
-
-        // Set up index label.
-        if let OptionIndex::Index(parent) = row.parent {
-            if viewer.mode == Mode::Data && viewer.flatjson[parent].is_array() {
-                index_label = format!("{}", row.index);
-                label = Some(lp::LineLabel::Index {
-                    index: &index_label,
-                });
-            }
-        }
-
         let value = match &row.value {
-            Value::OpenContainer { .. } | Value::CloseContainer { .. } => {
-                lp::LineValue::Container {
-                    flatjson: &viewer.flatjson,
-                    row,
-                }
-            }
+            Value::OpenContainer { .. } | Value::CloseContainer { .. } => lp::LineValue::Container,
             _ => {
                 let color = match &row.value {
                     Value::Null => terminal::LIGHT_BLACK,
@@ -277,17 +253,16 @@ impl ScreenWriter {
             mode: viewer.mode,
             terminal: &mut self.terminal,
 
-            node_depth: row.depth,
-            depth,
+            flatjson: &viewer.flatjson,
+            row,
+
+            indentation,
             width: self.dimensions.width as usize,
-            tab_size: 2,
 
             focused,
             focused_because_matching_container_pair,
             trailing_comma,
 
-            label,
-            label_range,
             value,
             value_range: &row.range,
 
