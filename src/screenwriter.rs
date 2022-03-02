@@ -232,14 +232,12 @@ impl ScreenWriter {
             flatjson: &viewer.flatjson,
             row,
 
-            indentation,
             width: self.dimensions.width as usize,
+            indentation,
 
             focused,
             focused_because_matching_container_pair,
             trailing_comma,
-
-            value_range: &row.range,
 
             search_matches: Some(search_matches_copy),
             focused_search_match,

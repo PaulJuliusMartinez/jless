@@ -183,23 +183,25 @@ pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
     pub terminal: &'a mut dyn Terminal,
 
+    // The entire FlatJson data structure and the specific line
+    // we're printing out.
     pub flatjson: &'a FlatJson,
     pub row: &'a Row,
 
-    pub indentation: usize,
+    // Width of the terminal and how much we should indent the line.
     pub width: usize,
+    pub indentation: usize,
 
     // Line-by-line formatting options
     pub focused: bool,
     pub focused_because_matching_container_pair: bool,
     pub trailing_comma: bool,
 
-    // Stuff to actually print out
-    pub value_range: &'a Range<usize>,
-
+    // For highlighting
     pub search_matches: Option<Peekable<MatchRangeIter<'b>>>,
     pub focused_search_match: &'a Range<usize>,
 
+    // For remembering horizontal scroll positions of long lines.
     pub cached_truncated_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
 
@@ -529,7 +531,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             delimiter,
             value_ref,
             &truncated_view,
-            Some(self.value_range.clone()),
+            Some(self.row.range.clone()),
             (&style, &highlighting::SEARCH_MATCH_HIGHLIGHTED),
         )?;
 
@@ -537,7 +539,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             used_space += 1;
             self.highlight_str(
                 ",",
-                Some(self.value_range.end),
+                Some(self.row.range.end),
                 (
                     &highlighting::DEFAULT_STYLE,
                     &highlighting::SEARCH_MATCH_HIGHLIGHTED,
@@ -700,7 +702,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
             self.highlight_str(
                 row.value.container_type().unwrap().open_str(),
-                Some(self.value_range.start),
+                Some(self.row.range.start),
                 (style, &highlighting::SEARCH_MATCH_HIGHLIGHTED),
             )?;
 
@@ -726,14 +728,14 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
             self.highlight_str(
                 row.value.container_type().unwrap().close_str(),
-                Some(self.value_range.start),
+                Some(self.row.range.start),
                 (style, &highlighting::SEARCH_MATCH_HIGHLIGHTED),
             )?;
 
             if self.trailing_comma {
                 self.highlight_str(
                     ",",
-                    Some(self.value_range.end),
+                    Some(self.row.range.end),
                     (
                         &highlighting::DEFAULT_STYLE,
                         &highlighting::SEARCH_MATCH_HIGHLIGHTED,
@@ -765,7 +767,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             if self.trailing_comma {
                 self.highlight_str(
                     ",",
-                    Some(self.value_range.end),
+                    Some(self.row.range.end),
                     (
                         &highlighting::DEFAULT_STYLE,
                         &highlighting::SEARCH_MATCH_HIGHLIGHTED,
@@ -799,7 +801,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         self.highlight_str(
             container_type.open_str(),
-            Some(self.value_range.start),
+            Some(self.row.range.start),
             highlighting::PREVIEW_STYLES,
         )?;
 
@@ -857,7 +859,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         self.highlight_str(
             container_type.close_str(),
-            Some(self.value_range.end - 1),
+            Some(self.row.range.end - 1),
             highlighting::PREVIEW_STYLES,
         )?;
         num_printed += 1;
@@ -1121,7 +1123,6 @@ mod tests {
             focused: false,
             focused_because_matching_container_pair: false,
             trailing_comma: false,
-            value_range: &DUMMY_RANGE,
             search_matches: None,
             focused_search_match: &DUMMY_RANGE,
             cached_truncated_value: None,
@@ -1460,10 +1461,7 @@ mod tests {
     fn test_fill_value_basic() -> std::fmt::Result {
         let fj = parse_top_level_json("\"hello\"\nnull".to_owned()).unwrap();
         let mut term = VisibleEscapesTerminal::new(false, true);
-        let mut line: LinePrinter = LinePrinter {
-            value_range: &(1..6),
-            ..default_line_printer(&mut term, &fj, 0)
-        };
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         let used_space = line.fill_in_value(100)?;
 
@@ -1491,7 +1489,6 @@ mod tests {
         // QUOTED VALUE
 
         // Minimum space is: '"h…"', which has a length of 4.
-        line.value_range = &line.flatjson[1].range;
 
         let used_space = line.fill_in_value(4)?;
         assert_eq!("\"h…\"", line.terminal.output());
@@ -1514,7 +1511,6 @@ mod tests {
         // QUOTED EMPTY STRING
 
         line.row = &line.flatjson[2];
-        line.value_range = &line.flatjson[2].range;
 
         line.terminal.clear_output();
         let used_space = line.fill_in_value(2)?;
@@ -1532,7 +1528,6 @@ mod tests {
         line.trailing_comma = true;
 
         line.row = &line.flatjson[3];
-        line.value_range = &line.flatjson[3].range;
 
         line.terminal.clear_output();
 
@@ -1576,10 +1571,7 @@ mod tests {
         let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = LinePrinter {
-            value_range: &(0..json.len()),
-            ..default_line_printer(&mut term, &fj, 0)
-        };
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         for (available_space, used_space, always_quote_string_object_keys, expected) in vec![
             (50, 31, true, r#"{"a": 1, "d": {…}, "b c": null}"#),
@@ -1624,10 +1616,7 @@ mod tests {
         let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = LinePrinter {
-            value_range: &(0..json.len()),
-            ..default_line_printer(&mut term, &fj, 0)
-        };
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         for (available_space, used_space, expected) in vec![
             (50, 29, r#"[1, {…}, null, "hello", true]"#),
@@ -1676,10 +1665,7 @@ mod tests {
         let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = LinePrinter {
-            value_range: &(0..json.len()),
-            ..default_line_printer(&mut term, &fj, 0)
-        };
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         let used = line.generate_container_preview(&line.flatjson[0], 34, false)?;
         assert_eq!(
@@ -1702,10 +1688,7 @@ mod tests {
         let fj = parse_top_level_json(json.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = LinePrinter {
-            value_range: &(0..json.len()),
-            ..default_line_printer(&mut term, &fj, 0)
-        };
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         let used = line.generate_container_preview(&line.flatjson[0], 29, false)?;
         assert_eq!(r#"[{a: 1, d: {…}, "b c": null}]"#, line.terminal.output());
@@ -1730,10 +1713,7 @@ mod tests {
         let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
 
         let mut term = TextOnlyTerminal::new();
-        let mut line: LinePrinter = LinePrinter {
-            value_range: &(0..fj.1.len()),
-            ..default_line_printer(&mut term, &fj, 0)
-        };
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         let expected = r#"{[true]: 1, [["t", "w", "o"]]: 2, [3]: 3, [null]: 4}"#;
 
