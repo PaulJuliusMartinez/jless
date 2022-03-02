@@ -417,17 +417,18 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         debug_assert!(self.has_label());
 
         if let Some(key_range) = &self.row.key_range {
-            let key = &pretty_printed[key_range.start + 1..key_range.end - 1];
+            let key_without_delimiter = &pretty_printed[key_range.start + 1..key_range.end - 1];
+            let key_open_delimiter = &pretty_printed[key_range.start..key_range.start + 1];
 
-            // Quote keys in line mode or if they're not valid JS identifiers.
-            let should_be_quoted = self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key);
-            let delimiter = if should_be_quoted {
-                DelimiterPair::Quote
-            } else {
-                DelimiterPair::None
-            };
+            let mut delimiter = DelimiterPair::None;
 
-            (key, Some(key_range.clone()), delimiter)
+            if key_open_delimiter == "[" {
+                delimiter = DelimiterPair::Square;
+            } else if self.mode == Mode::Line || !JS_IDENTIFIER.is_match(key_without_delimiter) {
+                delimiter = DelimiterPair::Quote;
+            }
+
+            (key_without_delimiter, Some(key_range.clone()), delimiter)
         } else {
             let parent = self.row.parent.unwrap();
             debug_assert!(self.flatjson[parent].is_array());
@@ -524,7 +525,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             used_space += 2;
         }
 
-        self.highlight_delimited_and_truncated_str(
+        self.highlight_delimited_and_truncated_item(
             delimiter,
             value_ref,
             &truncated_view,
@@ -755,9 +756,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             available_space -= 1;
         }
 
-        let quoted_object_keys = self.mode == Mode::Line;
+        let always_quote_string_object_keys = self.mode == Mode::Line;
         let mut used_space =
-            self.generate_container_preview(row, available_space, quoted_object_keys)?;
+            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?;
 
         if self.trailing_comma {
             used_space += 1;
@@ -780,7 +781,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         &mut self,
         row: &Row,
         mut available_space: isize,
-        quoted_object_keys: bool,
+        always_quote_string_object_keys: bool,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
@@ -817,7 +818,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             let used_space = self.fill_in_container_elem_preview(
                 &self.flatjson[child],
                 space_available_for_elem,
-                quoted_object_keys,
+                always_quote_string_object_keys,
                 is_only_child,
             )?;
 
@@ -873,22 +874,28 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         &mut self,
         row: &Row,
         mut available_space: isize,
-        quoted_object_keys: bool,
+        always_quote_string_object_keys: bool,
         is_only_child: bool,
     ) -> Result<isize, fmt::Error> {
         let mut used_space = 0;
 
         if let Some(key_range) = &row.key_range {
-            let key_without_quotes_range = key_range.start + 1..key_range.end - 1;
-            let key_ref = &self.flatjson.1[key_without_quotes_range.clone()];
+            let key_without_delimiter_range = key_range.start + 1..key_range.end - 1;
+            let key_ref = &self.flatjson.1[key_without_delimiter_range];
+
+            let key_open_delimiter = &self.flatjson.1[key_range.start..key_range.start + 1];
+            let mut delimiter = DelimiterPair::None;
+
+            if key_open_delimiter == "[" {
+                delimiter = DelimiterPair::Square;
+            } else if always_quote_string_object_keys || !JS_IDENTIFIER.is_match(key_ref) {
+                delimiter = DelimiterPair::Quote;
+            }
+
             // Need at least one character for value, and two characters for ": "
             let mut space_available_for_key = available_space - 3;
-            let mut quoted_object_key = quoted_object_keys;
 
-            if quoted_object_keys || !JS_IDENTIFIER.is_match(key_ref) {
-                space_available_for_key -= 2;
-                quoted_object_key = true;
-            }
+            space_available_for_key -= delimiter.width();
 
             let truncated_view = TruncatedStrView::init_start(key_ref, space_available_for_key);
             let space_used_for_label = truncated_view.used_space();
@@ -900,22 +907,14 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             used_space += space_used_for_label;
             available_space -= space_used_for_label;
 
-            if quoted_object_key {
-                used_space += 2;
-                available_space -= 2;
-            }
+            used_space += delimiter.width();
+            available_space -= delimiter.width();
 
-            let delimiter = if quoted_object_key {
-                DelimiterPair::Quote
-            } else {
-                DelimiterPair::None
-            };
-
-            self.highlight_delimited_and_truncated_str(
+            self.highlight_delimited_and_truncated_item(
                 delimiter,
                 key_ref,
                 &truncated_view,
-                Some(key_without_quotes_range),
+                Some(key_range.clone()),
                 highlighting::PREVIEW_STYLES,
             )?;
 
@@ -925,7 +924,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            self.generate_container_preview(row, available_space, quoted_object_keys)?
+            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?
         } else {
             self.fill_in_value_preview(row, available_space)?
         };
@@ -1037,7 +1036,10 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
     // A helper to print out a TruncatedStrView that may be
     // surrounded by a delimiter.
-    fn highlight_delimited_and_truncated_str(
+    //
+    // The passed in str, s, should not include the delimiter.
+    // If passed in, str_range *should* include the delimiter.
+    fn highlight_delimited_and_truncated_item(
         &mut self,
         delimiter: DelimiterPair,
         s: &str,
@@ -1286,9 +1288,9 @@ mod tests {
     fn test_fill_key_non_scalar_keys() -> std::fmt::Result {
         const YAML: &str = r#"{
             [one]: 1,
-            [[t, w, o]]: 2,
-            [3]: 3,
-            [null]: 4,
+            [t, w, o]: 2,
+            3: 3,
+            null: 4,
         }"#;
         let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
 
@@ -1300,7 +1302,7 @@ mod tests {
 
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!(r#""["one"]": "#, line.terminal.output());
+        assert_eq!(r#"[["one"]]: "#, line.terminal.output());
         assert_eq!(11, used_space);
 
         line.mode = Mode::Data;
@@ -1308,7 +1310,7 @@ mod tests {
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!(r#""["one"]": "#, line.terminal.output());
+        assert_eq!(r#"[["one"]]: "#, line.terminal.output());
         assert_eq!(11, used_space);
 
         line.row = &line.flatjson[2];
@@ -1316,24 +1318,24 @@ mod tests {
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!(r#""[["t", "w", "o"]]": "#, line.terminal.output());
-        assert_eq!(21, used_space);
+        assert_eq!(r#"[["t", "w", "o"]]: "#, line.terminal.output());
+        assert_eq!(19, used_space);
 
         line.row = &line.flatjson[3];
 
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!(r#""[3]": "#, line.terminal.output());
-        assert_eq!(7, used_space);
+        assert_eq!(r#"[3]: "#, line.terminal.output());
+        assert_eq!(5, used_space);
 
         line.row = &line.flatjson[4];
 
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!(r#""[null]": "#, line.terminal.output());
-        assert_eq!(10, used_space);
+        assert_eq!(r#"[null]: "#, line.terminal.output());
+        assert_eq!(8, used_space);
 
         Ok(())
     }
@@ -1579,7 +1581,7 @@ mod tests {
             ..default_line_printer(&mut term, &fj, 0)
         };
 
-        for (available_space, used_space, quoted_object_keys, expected) in vec![
+        for (available_space, used_space, always_quote_string_object_keys, expected) in vec![
             (50, 31, true, r#"{"a": 1, "d": {…}, "b c": null}"#),
             (50, 27, false, r#"{a: 1, d: {…}, "b c": null}"#),
             (26, 26, false, r#"{a: 1, d: {…}, "b c": nu…}"#),
@@ -1597,7 +1599,7 @@ mod tests {
             let used = line.generate_container_preview(
                 &line.flatjson[0],
                 available_space,
-                quoted_object_keys,
+                always_quote_string_object_keys,
             )?;
             assert_eq!(
                 expected,
@@ -1645,11 +1647,11 @@ mod tests {
         ]
         .into_iter()
         {
-            let quoted_object_keys = false;
+            let always_quote_string_object_keys = false;
             let used = line.generate_container_preview(
                 &line.flatjson[0],
                 available_space,
-                quoted_object_keys,
+                always_quote_string_object_keys,
             )?;
             assert_eq!(
                 expected,
@@ -1720,10 +1722,10 @@ mod tests {
     #[test]
     fn test_generate_object_preview_with_non_scalar_keys() -> std::fmt::Result {
         const YAML: &str = r#"{
-            [one]: 1,
-            [[t, w, o]]: 2,
-            [3]: 3,
-            [null]: 4,
+            true: 1,
+            [t, w, o]: 2,
+            3: 3,
+            null: 4,
         }"#;
         let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
 
@@ -1733,7 +1735,7 @@ mod tests {
             ..default_line_printer(&mut term, &fj, 0)
         };
 
-        let expected = r#"{"["one"]": 1, "[["t", "w", "o"]]": 2, "[3]": 3, "[null]": 4}"#;
+        let expected = r#"{[true]: 1, [["t", "w", "o"]]: 2, [3]: 3, [null]: 4}"#;
 
         let _ = line.generate_container_preview(&line.flatjson[0], 100, true)?;
         assert_eq!(expected, line.terminal.output());
