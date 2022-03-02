@@ -3,8 +3,7 @@ use std::path::PathBuf;
 use clap::ArgEnum;
 use clap::Parser;
 
-use crate::viewer::Mode;
-use crate::viewer::Preview;
+use crate::viewer::{Mode, Preview};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
 pub enum DataFormat {

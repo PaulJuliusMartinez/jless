@@ -12,8 +12,7 @@ use crate::search::MatchRangeIter;
 use crate::terminal;
 use crate::terminal::{Color, Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
-use crate::viewer::Mode;
-use crate::viewer::Preview;
+use crate::viewer::{Mode, Preview};
 
 // # Printing out individual lines
 //
@@ -765,8 +764,11 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         if self.preview == Preview::Full {
             let always_quote_string_object_keys = self.mode == Mode::Line;
 
-            used_space =
-                self.generate_container_preview(row, available_space, always_quote_string_object_keys)?;
+            used_space = self.generate_container_preview(
+                row,
+                available_space,
+                always_quote_string_object_keys,
+            )?;
 
             if self.trailing_comma {
                 used_space += 1;
@@ -888,7 +890,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         Ok(num_printed)
     }
 
-    // similar to generate_container_preview, except it only prints the count
+    // Similar to generate_container_preview, except it only prints the count
     // of the number of children:
     // - number of key-val pairs in a hash, ie "{ 3 }"
     // - number of items in an array, ie "[ 2 ]"
