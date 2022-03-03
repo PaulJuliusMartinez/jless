@@ -446,9 +446,13 @@ impl ScreenWriter {
         }
 
         if let Some(key_range) = &row.key_range {
+            let key_open_delimiter = &viewer.flatjson.1[key_range.start..key_range.start + 1];
             let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
 
-            if JS_IDENTIFIER.is_match(key) {
+            // For non-string keys in YAML.
+            if key_open_delimiter == "[" {
+                write!(buf, "[{}]", key).unwrap();
+            } else if JS_IDENTIFIER.is_match(key) {
                 write!(buf, ".{}", key).unwrap();
             } else {
                 write!(buf, "[\"{}\"]", key).unwrap();
