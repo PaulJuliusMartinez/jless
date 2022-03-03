@@ -14,122 +14,69 @@ use crate::terminal::{Color, Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
 use crate::viewer::Mode;
 
-// # Printing out individual lines
+// This module is responsible for printing single lines of JSON to
+// the screen, complete with syntax highlighting and highlighting
+// of search matches.
 //
-// 1. Compute depth
-//   - Need to consider indentation_reduction
+// A single line is one of the following:
+// - The start of a non-empty object or array
+// - The end of a non-empty object or array
+// - A key/value pair of an object
+// - An element of an array
+// - Or a top-level primitive
 //
-// [LINE MODE ONLY]
-// 1.5. Print focus mode indicator
+// Objects and containers can be collapsed, and at certain times
+// we show previews next to containers.
 //
-// 2. Position cursor after indentation
+// The viewer can be in one of two modes: Line mode, or Data mode.
+// In Line mode, the goal is that the text on the screen is mostly
+// valid JSON. In Data mode, we try to present a "cleaner" version
+// of the data, by for example, not showing quotes around object keys
+// or trailing commas.
 //
-// [DATA MODE ONLY]
-// 2.5 Print expanded/collapsed icon for containers
+// Here's the main set of differences:
+//                                  Line Mode                 Data Mode
+// Quotes around object keys:         Yes         Only when not a valid JS identifier
+// Trailing commas:                   Yes                       No
+// Object and Array previews: Only when collapsed               Always
+// Array Indexes:                     No                        Yes
+// Open delimiters:                   Yes                       No
+// Line for closing delimiters:       Yes                       No
 //
-// 3. Print Object key, if it exists
+// In addition to the above behavior that depends on the current
+// viewer mode, when rendering a line we also apply syntax
+// highlighting and highlight search results. The currently focused
+// search result is also displayed slightly differently.
 //
-// [DATA MODE ONLY]
-// 3.5 Print array indices
-//
-// 4. Print actual object
-//   - Need to print previews of collapsed arrays/objects
-//
-// [LINE MODE ONLY]
-// 4.5 Print trailing comma
+// Great care is taken to highlight every character that is actually
+// part of a match, including quotes around keys and string values,
+// and even other syntax (colons, commas, and spaces). It is
+// difficult to keep track of everything as the text displayed on
+// the screen doesn't exactly match the source JSON. Beware of
+// off-by-one errors.
 //
 //
+// Naturally, there may be cases where an entire line does not fit
+// on the screen without wrapping. Rather than implement line
+// wrapping (which seems difficult), we truncate values and show
+// ellipses to indicate truncated content. When printing out multiple
+// values, such as the key and value of an Object entry, the index
+// and element of an array, or the many container elements in an
+// object preview, we fill in the available space from left to right
+// while keeping track of what still needs to be displayed so we
+// can show appropriate truncation indicators.
 //
-// Truncate long value first:
+// Here are some examples:
+//
 //     key: "long text her…" |
+//     medium_length_key: t… |
 //
-// Truncate long key so we can still show some of value
+// If something is totally off the screen we just show a '>':
 //
-//     really_rea…: "long …" |
-//
-// Should always show trailing '{' after long keys of objects
-//
-//     really_long_key_h…: { |
-//
-// If something is just totally off the screen, show >
-//
-//                   a: [    |
-//                     [38]:>|
-//                       d: >|
-//                         X:|
+//     really_long_key_h…: > |
+//                   [10…]: >|
+//                     "d": >|
 //                          >|
-//                          >|
-//                     […]: >|    Use ellipsis in array index?
-//                   abcd…: >|
-//
-//
-// Required characters:
-// '"' before and after key (0 or 2)
-// "[…]" Array index (>= 3)
-// ": " after key (== 2)
-// '{' / '[' opening brace (1)
-// ',' in line mode (1)
-//
-//
-// […]          :       "hello"
-// abc…         :        123        ,
-// "de…"                  {         ,
-// KEY/INDEX  <chars>  OBJECT   <chars>
-//
-// Don't abbreviate true/false/null ?
-//
-// v [1]: >
-// v a…: >
-//
-//                  abc: tr… |
-//                  a…: true |
-//
-// First truncate value down to 5 + ellipsis characters
-// - Then truncate key down to 3 + ellipsis characters
-//   - Or index down to just ellipsis
-// Then truncate value down to 1 + ellipsis
-// Then pop sections off, and slap " >" on it once it fits
-//
-//
-//
-//
-// Sections:
-//
-// Key { quoted: bool, key: &str }
-// Index { index: &str }
-//
-// KVColon
-//
-// OpenBraceValue(ch)
-// CloseBraceValue(ch)
-// Null
-// True,
-// False,
-// Number,
-// StringValue,
-//
-// TrailingComma
-//
-// Line {
-//   label: Option<Key { quoted: bool, key: &str } | Index { index: usize }>
-//   value:
-//     ContainerChar(ch) |
-//     Value {
-//       v: &str,
-//       ellipsis: bool,
-//       quotes: bool
-//     }
-//     Preview {} // Build these up starting at ...
-//   trailing_comma: bool
-// }
-//
-// truncate(value, min_length: 5)
-// truncate(label, min_length: 3)
-// truncate(value, min_length: 1)
-//
-// print label if available_space
-// print KVColon if available_space
-// print " >"
 
 const FOCUSED_LINE: &str = "▶ ";
 const FOCUSED_COLLAPSED_CONTAINER: &str = "▶ ";
