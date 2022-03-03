@@ -18,6 +18,8 @@ Bug Fixes:
   status bar to be highlighted and copied.
 - [Issue #61]: Display error message for unrecognized CSI escape
   sequences and other IO errors instead of panicking.
+- [Issue #62]: Fix broken window resizing / SIGWINCH detection caused
+  by clashing signal handler registered by rustyline.
 
 
 v0.7.2 (2022-02-20)

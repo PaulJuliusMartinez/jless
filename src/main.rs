@@ -53,12 +53,12 @@ fn main() {
         std::process::exit(0);
     }
 
-    // Create our input *before* constructing the App. When we get the input,
-    // we use freopen to remap /dev/tty to STDIN so that rustyline works when
+    // We use freopen to remap /dev/tty to STDIN so that rustyline works when
     // JSON input is provided via STDIN. rustyline gets initialized when we
-    // create the App, so by putting this before, we make sure rustyline gets
-    // the /dev/tty input.
-    let input = Box::new(input::get_input());
+    // create the App, so by putting this before creating the app, we make
+    // sure rustyline gets the /dev/tty input.
+    input::remap_dev_tty_to_stdin();
+
     let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
         io::stdout().into_raw_mode().unwrap(),
     )));
@@ -77,7 +77,7 @@ fn main() {
         }
     };
 
-    app.run(input);
+    app.run(Box::new(input::get_input()));
 }
 
 fn print_pretty_printed_input(input: String, data_format: DataFormat) {
