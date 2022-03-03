@@ -289,11 +289,20 @@ impl App {
                     self.input_buffer.clear();
 
                     match me {
-                        Press(Left, _, h) => Some(Action::Click(h)),
+                        Press(Left, _, h) => {
+                            // Ignore clicks on status bar or below.
+                            if h > self.screen_writer.dimensions.without_status_bar().height {
+                                continue;
+                            } else {
+                                Some(Action::Click(h))
+                            }
+                        }
                         Press(WheelUp, _, _) => Some(Action::MoveUp(3)),
                         Press(WheelDown, _, _) => Some(Action::MoveDown(3)),
-                        /* Ignore other mouse events. */
-                        _ => None,
+                        // Ignore all other mouse events and don't redraw the screen.
+                        _ => {
+                            continue;
+                        }
                     }
                 }
                 WinChEvent => {

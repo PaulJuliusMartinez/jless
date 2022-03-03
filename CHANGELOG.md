@@ -12,6 +12,11 @@ Improvements:
   data modes; fix a crash when focused on a closing delimiter and
   switching to data mode.
 
+Bug Fixes:
+- Ignore clicks on the status bar or below rather than focusing on
+  hidden lines, and don't re-render the screen, allowing the path in the
+  status bar to be highlighted and copied.
+
 v0.7.2 (2022-02-20)
 ==================
 
