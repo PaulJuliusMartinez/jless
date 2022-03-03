@@ -77,15 +77,15 @@ impl App {
         let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
         self.viewer.dimensions = dimensions.without_status_bar();
         self.screen_writer.dimensions = dimensions;
-        self.screen_writer.print(
-            &self.viewer,
-            &self.input_buffer,
-            &self.input_filename,
-            &self.search_state,
-            &self.message,
-        );
+        self.draw_screen();
 
         for event in input {
+            if let Err(io_error) = event {
+                self.message = Some((format!("Error: {}", io_error), MessageSeverity::Error));
+                self.draw_status_bar();
+                continue;
+            }
+
             // When "actively" searching, we want to show highlighted search terms.
             // We consider someone "actively" searching immediately after the start
             // of a search, and while they navigate between matches using n/N.
@@ -103,6 +103,7 @@ impl App {
             let previous_collapsed_state_of_focused_row =
                 self.viewer.flatjson[focused_row_before].is_collapsed();
 
+            // Error case checked above.
             let event = event.unwrap();
             let action = match event {
                 // These inputs quit.
@@ -312,8 +313,11 @@ impl App {
                         dimensions.without_status_bar(),
                     ))
                 }
-                _ => {
-                    eprint!("{}\r", BELL);
+                TuiEvent::Unknown(bytes) => {
+                    self.message = Some((
+                        format!("Unknown byte sequence: {:?}", bytes),
+                        MessageSeverity::Error,
+                    ));
                     None
                 }
             };
@@ -337,17 +341,29 @@ impl App {
                 }
             }
 
-            self.screen_writer
-                .print_viewer(&self.viewer, &self.search_state);
-            self.screen_writer.print_status_bar(
-                &self.viewer,
-                &self.input_buffer,
-                &self.input_filename,
-                &self.search_state,
-                &self.message,
-            );
+            self.draw_screen();
             self.message = None;
         }
+    }
+
+    fn draw_screen(&mut self) {
+        self.screen_writer.print(
+            &self.viewer,
+            &self.input_buffer,
+            &self.input_filename,
+            &self.search_state,
+            &self.message,
+        );
+    }
+
+    fn draw_status_bar(&mut self) {
+        self.screen_writer.print_status_bar(
+            &self.viewer,
+            &self.input_buffer,
+            &self.input_filename,
+            &self.search_state,
+            &self.message,
+        );
     }
 
     fn buffer_input(&mut self, ch: u8) {

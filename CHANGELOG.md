@@ -16,6 +16,9 @@ Bug Fixes:
 - Ignore clicks on the status bar or below rather than focusing on
   hidden lines, and don't re-render the screen, allowing the path in the
   status bar to be highlighted and copied.
+- [Issue #61]: Display error message for unrecognized CSI escape
+  sequences and other IO errors instead of panicking.
+
 
 v0.7.2 (2022-02-20)
 ==================

@@ -190,7 +190,7 @@ impl TuiInput {
             Some(Ok(byte)) => match parse_event(byte, &mut self.buffered_input) {
                 Ok(Event::Key(k)) => Some(Ok(TuiEvent::KeyEvent(k))),
                 Ok(Event::Mouse(m)) => Some(Ok(TuiEvent::MouseEvent(m))),
-                Ok(Event::Unsupported(_)) => Some(Ok(TuiEvent::Unknown)),
+                Ok(Event::Unsupported(bytes)) => Some(Ok(TuiEvent::Unknown(bytes))),
                 Err(err) => Some(Err(err)),
             },
             Some(Err(err)) => Some(Err(err)),
@@ -246,5 +246,5 @@ pub enum TuiEvent {
     WinChEvent,
     KeyEvent(Key),
     MouseEvent(MouseEvent),
-    Unknown,
+    Unknown(Vec<u8>),
 }
