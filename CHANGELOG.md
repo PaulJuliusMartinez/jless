@@ -20,6 +20,8 @@ Bug Fixes:
   sequences and other IO errors instead of panicking.
 - [Issue #62]: Fix broken window resizing / SIGWINCH detection caused
   by clashing signal handler registered by rustyline.
+- [PR #54]: Fix panic when using Ctrl-C or Ctrl-D to cancel entering
+  search input.
 
 
 v0.7.2 (2022-02-20)
