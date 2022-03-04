@@ -6,6 +6,8 @@ New features:
   the screen's height, or by a specified number of lines.
 - Support displaying YAML files with autodetection via file extension,
   or explicit `--yaml` or `--json` flags.
+- Implement `ctrl-b` and `ctrl-f` commands for scrolling up and down by
+  the height of the screen. (Aliases for `PageUp` and `PageDown`)
 
 Improvements:
 - Keep focused in same place on screen when toggling between line and

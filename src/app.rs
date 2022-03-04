@@ -152,11 +152,11 @@ impl App {
                             let maybe_distance = self.maybe_parse_input_buffer_as_number();
                             Some(Action::JumpUp(maybe_distance))
                         }
-                        Key::PageUp => {
+                        Key::Ctrl('b') | Key::PageUp => {
                             let count = self.parse_input_buffer_as_number();
                             Some(Action::PageUp(count))
                         }
-                        Key::PageDown => {
+                        Key::Ctrl('f') | Key::PageDown => {
                             let count = self.parse_input_buffer_as_number();
                             Some(Action::PageDown(count))
                         }

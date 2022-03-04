@@ -37,8 +37,8 @@
   w         *  Move forward   until the next change in depth 1 or [4mN[0m times.
   b         *  Move backwards until the next change in depth 1 or [4mN[0m times.
 
-  PageDown  *  Move down by one window (or [4mN[0m windows).
-  PageUp    *  Move up   by one window (or [4mN[0m windows).
+  PageDown  ^f  *  Move down by one window (or [4mN[0m windows).
+  PageUp    ^b  *  Move up   by one window (or [4mN[0m windows).
 
   0  ^         Move to the first sibling of the focused node's parent.
   $            Move to the last  sibling of the focused node's parent.
