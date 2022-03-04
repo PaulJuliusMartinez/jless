@@ -431,6 +431,7 @@ impl App {
 
         let search_term = self.readline(prompt_str, "search input")?;
 
+        // In vim, /<CR> or ?<CR> is a longcut for repeating the previous search.
         if search_term.is_empty() {
             // This will actually set the direction of a search going forward.
             self.search_state.direction = direction;
