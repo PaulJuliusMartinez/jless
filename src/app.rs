@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Write;
 
+use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use termion::event::Key;
 use termion::event::MouseButton::{Left, WheelDown, WheelUp};
@@ -81,7 +82,7 @@ impl App {
 
         for event in input {
             if let Err(io_error) = event {
-                self.message = Some((format!("Error: {}", io_error), MessageSeverity::Error));
+                self.set_error_message(format!("Error: {}", io_error));
                 self.draw_status_bar();
                 continue;
             }
@@ -261,14 +262,14 @@ impl App {
                             None
                         }
                         Key::Char(':') => {
-                            if let Ok(command) = self.screen_writer.get_command(":") {
+                            if let Some(command) = self.readline(":", "command") {
                                 match Self::parse_command(&command) {
                                     Command::Quit => break,
                                     Command::Help => self.show_help(),
                                     Command::Unknown => {
-                                        self.message = Some((
-                                            format!("Unknown command: {}", command),
-                                            MessageSeverity::Info,
+                                        self.set_warning_message(format!(
+                                            "Unknown command: {}",
+                                            command
                                         ));
                                     }
                                 }
@@ -314,10 +315,7 @@ impl App {
                     ))
                 }
                 TuiEvent::Unknown(bytes) => {
-                    self.message = Some((
-                        format!("Unknown byte sequence: {:?}", bytes),
-                        MessageSeverity::Error,
-                    ));
+                    self.set_error_message(format!("Unknown byte sequence: {:?}", bytes));
                     None
                 }
             };
@@ -366,6 +364,33 @@ impl App {
         );
     }
 
+    fn set_error_message(&mut self, s: String) {
+        self.message = Some((s, MessageSeverity::Error));
+    }
+
+    fn set_warning_message(&mut self, s: String) {
+        self.message = Some((s, MessageSeverity::Warn));
+    }
+
+    fn set_info_message(&mut self, s: String) {
+        self.message = Some((s, MessageSeverity::Info));
+    }
+
+    // Get user input via a readline prompt. May fail to return input if
+    // the user deliberately cancels the prompt via Ctrl-C or Ctrl-D, or
+    // if an actual error occurs, in which case an error message is set.
+    fn readline(&mut self, prompt: &str, purpose: &str) -> Option<String> {
+        match self.screen_writer.get_command(prompt) {
+            Ok(s) => Some(s),
+            // User hit Ctrl-C or Ctrl-D to cancel prompt
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => None,
+            Err(err) => {
+                self.set_error_message(format!("Error getting {}: {}", purpose, err));
+                None
+            }
+        }
+    }
+
     fn buffer_input(&mut self, ch: u8) {
         // Don't buffer leading 0s.
         if self.input_buffer.is_empty() && ch == b'0' {
@@ -410,28 +435,24 @@ impl App {
             SearchDirection::Reverse => "?",
         };
 
-        if let Ok(search_term) = self.screen_writer.get_command(prompt_str) {
-            if search_term.is_empty() {
-                // This will actually set the direction of a search going forward.
-                self.search_state.direction = direction;
-                self.jump_to_search_match(JumpDirection::Next, jumps)
-            } else {
-                if self.initialize_search(direction, search_term) {
-                    if !self.search_state.any_matches() {
-                        self.message = Some((
-                            self.search_state.no_matches_message(),
-                            MessageSeverity::Warn,
-                        ));
-                        None
-                    } else {
-                        self.jump_to_search_match(JumpDirection::Next, jumps)
-                    }
-                } else {
-                    None
-                }
-            }
+        let search_term = self.readline(prompt_str, "search input")?;
+
+        // In vim, /<CR> or ?<CR> is a longcut for repeating the previous search.
+        if search_term.is_empty() {
+            // This will actually set the direction of a search going forward.
+            self.search_state.direction = direction;
+            self.jump_to_search_match(JumpDirection::Next, jumps)
         } else {
-            None
+            if self.initialize_search(direction, search_term) {
+                if !self.search_state.any_matches() {
+                    self.set_warning_message(self.search_state.no_matches_message());
+                    None
+                } else {
+                    self.jump_to_search_match(JumpDirection::Next, jumps)
+                }
+            } else {
+                None
+            }
         }
     }
 
@@ -442,7 +463,7 @@ impl App {
                 true
             }
             Err(err_message) => {
-                self.message = Some((err_message, MessageSeverity::Error));
+                self.set_error_message(err_message);
                 false
             }
         }
@@ -457,10 +478,10 @@ impl App {
             self.jump_to_search_match(JumpDirection::Next, jumps)
         } else {
             let message = match direction {
-                SearchDirection::Forward => "Must be focused on Object key to use '*'".to_string(),
-                SearchDirection::Reverse => "Must be focused on Object key to use '#'".to_string(),
+                SearchDirection::Forward => "Must be focused on Object key to use '*'",
+                SearchDirection::Reverse => "Must be focused on Object key to use '#'",
             };
-            self.message = Some((message, MessageSeverity::Warn));
+            self.set_warning_message(message.to_string());
             None
         }
     }
@@ -481,13 +502,10 @@ impl App {
         jumps: usize,
     ) -> Option<Action> {
         if !self.search_state.ever_searched {
-            self.message = Some(("Type / to search".to_string(), MessageSeverity::Info));
+            self.set_info_message("Type / to search".to_string());
             return None;
         } else if !self.search_state.any_matches() {
-            self.message = Some((
-                self.search_state.no_matches_message(),
-                MessageSeverity::Warn,
-            ));
+            self.set_warning_message(self.search_state.no_matches_message());
             return None;
         }
 
@@ -525,10 +543,7 @@ impl App {
                 let _ = child.wait();
             }
             Err(err) => {
-                self.message = Some((
-                    format!("Error piping help documentation to less: {}", err),
-                    MessageSeverity::Error,
-                ));
+                self.set_error_message(format!("Error piping help documentation to less: {}", err));
             }
         }
 
