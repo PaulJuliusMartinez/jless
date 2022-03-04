@@ -1,6 +1,7 @@
 use std::io;
 use std::io::Write;
 
+use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use termion::event::Key;
 use termion::event::MouseButton::{Left, WheelDown, WheelUp};
@@ -261,7 +262,7 @@ impl App {
                             None
                         }
                         Key::Char(':') => {
-                            if let Ok(command) = self.screen_writer.get_command(":") {
+                            if let Some(command) = self.readline(":", "command") {
                                 match Self::parse_command(&command) {
                                     Command::Quit => break,
                                     Command::Help => self.show_help(),
@@ -366,6 +367,24 @@ impl App {
         );
     }
 
+    // Get user input via a readline prompt. May fail to return input if
+    // the user deliberately cancels the prompt via Ctrl-C or Ctrl-D, or
+    // if an actual error occurs, in which case an error message is set.
+    fn readline(&mut self, prompt: &str, purpose: &str) -> Option<String> {
+        match self.screen_writer.get_command(prompt) {
+            Ok(s) => Some(s),
+            // User hit Ctrl-C or Ctrl-D to cancel prompt
+            Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => None,
+            Err(err) => {
+                self.message = Some((
+                    format!("Error getting {}: {}", purpose, err),
+                    MessageSeverity::Error,
+                ));
+                None
+            }
+        }
+    }
+
     fn buffer_input(&mut self, ch: u8) {
         // Don't buffer leading 0s.
         if self.input_buffer.is_empty() && ch == b'0' {
@@ -409,7 +428,8 @@ impl App {
             SearchDirection::Forward => "/",
             SearchDirection::Reverse => "?",
         };
-        let search_term = self.screen_writer.get_command(prompt_str).unwrap();
+
+        let search_term = self.readline(prompt_str, "search input")?;
 
         // In vim, /<CR> or ?<CR> is a longcut for repeating the previous search.
         if search_term.is_empty() {
