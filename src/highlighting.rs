@@ -188,7 +188,7 @@ pub fn highlight_matches<'a>(
         let mut match_is_focused_match = false;
 
         // Get rid of matches before the string.
-        while let Some(range) = matches_iter.as_mut().map(|i| i.peek()).flatten() {
+        while let Some(range) = matches_iter.as_mut().and_then(|i| i.peek()) {
             if start_index < range.end {
                 if *range == focused_search_match {
                     match_is_focused_match = true;

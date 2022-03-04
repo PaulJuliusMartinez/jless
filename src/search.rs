@@ -123,7 +123,7 @@ impl SearchState {
         let regex = RegexBuilder::new(&inverted)
             .case_insensitive(!case_sensitive)
             .build()
-            .map_err(|e| format!("{}", e).replace("\n", " "))?;
+            .map_err(|e| format!("{}", e).replace('\n', " "))?;
 
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 

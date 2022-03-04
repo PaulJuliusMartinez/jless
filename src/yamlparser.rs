@@ -95,7 +95,7 @@ impl YamlParser {
         let row_index = self.create_row(Value::String);
 
         // Escape newlines.
-        let s = s.replace("\n", "\\n");
+        let s = s.replace('\n', "\\n");
 
         self.pretty_printed.push('"');
         self.pretty_printed.push_str(&s);
@@ -290,7 +290,7 @@ impl YamlParser {
     fn pretty_print_key_item(&mut self, item: Yaml, is_key: bool) -> Result<(), String> {
         if let Yaml::String(s) = item {
             // Replace newlines.
-            let s = s.replace("\n", "\\n");
+            let s = s.replace('\n', "\\n");
             self.pretty_printed.push('"');
             self.pretty_printed.push_str(&s);
             self.pretty_printed.push('"');
