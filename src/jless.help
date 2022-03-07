@@ -7,6 +7,9 @@
        repeatedly perform a command the given number of times. A key
        preceded by a caret indicates the Ctrl key; thus ^E is ctrl-E.
 
+       Commands requiring multiple key-presses may be cancelled with the
+       Escape key.
+
   q  ^c            Exit jless.
 
   F1 :help         Show this help screen.

@@ -114,6 +114,10 @@ impl App {
                     self.show_help();
                     None
                 }
+                KeyEvent(Key::Esc) => {
+                    self.input_buffer.clear();
+                    None
+                }
                 // These inputs may be buffered.
                 KeyEvent(Key::Char(ch @ '0'..='9')) => {
                     if ch == '0' && self.input_buffer.is_empty() {
