@@ -20,10 +20,26 @@ use crate::viewer::{Action, JsonViewer};
 pub struct App {
     viewer: JsonViewer,
     screen_writer: ScreenWriter,
+    input_state: InputState,
     input_buffer: Vec<u8>,
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+}
+
+// State to determine how to process the next event input.
+//
+// The default state accepts most commands, and also buffers
+// number inputs to provide a count for movement commands.
+//
+// Other commands require a combination of (non-numeric) key
+// presses. When one of these commands is partially inputted,
+// pressing a key not part of the combination will cancel
+// the combination command, and no action will be performed.
+#[derive(PartialEq)]
+enum InputState {
+    Default,
+    PendingZCommand,
 }
 
 enum Command {
@@ -60,6 +76,7 @@ impl App {
         Ok(App {
             viewer,
             screen_writer,
+            input_state: InputState::Default,
             input_buffer: vec![],
             input_filename,
             search_state: SearchState::empty(),
@@ -106,7 +123,22 @@ impl App {
 
             // Error case checked above.
             let event = event.unwrap();
+
             let action = match event {
+                // Handle special input states:
+                event if self.input_state == InputState::PendingZCommand => {
+                    let z_action = match event {
+                        KeyEvent(Key::Char('t')) => Some(Action::MoveFocusedLineToTop),
+                        KeyEvent(Key::Char('z')) => Some(Action::MoveFocusedLineToCenter),
+                        KeyEvent(Key::Char('b')) => Some(Action::MoveFocusedLineToBottom),
+                        _ => None,
+                    };
+
+                    self.input_state = InputState::Default;
+                    self.input_buffer.clear();
+
+                    z_action
+                }
                 // These inputs quit.
                 KeyEvent(Key::Ctrl('c') | Key::Char('q')) => break,
                 // Show the help page
@@ -127,7 +159,12 @@ impl App {
                         None
                     }
                 }
-                KeyEvent(Key::Char('z')) => self.handle_z_input(),
+                KeyEvent(Key::Char('z')) => {
+                    self.input_state = InputState::PendingZCommand;
+                    self.input_buffer.clear();
+                    self.buffer_input(b'z');
+                    None
+                }
                 // These inputs always clear the input_buffer (but may use its current contents).
                 KeyEvent(key) => {
                     let action = match key {
@@ -222,23 +259,9 @@ impl App {
                             jumped_to_search_match = action.is_some();
                             action
                         }
-                        // These may interpret the input buffer some other way
-                        Key::Char('t') => {
-                            if self.input_buffer == "z".as_bytes() {
-                                Some(Action::MoveFocusedLineToTop)
-                            } else {
-                                None
-                            }
-                        }
-                        Key::Char('b') => {
-                            if self.input_buffer == "z".as_bytes() {
-                                Some(Action::MoveFocusedLineToBottom)
-                            } else {
-                                Some(Action::MoveUpUntilDepthChange)
-                            }
-                        }
                         // These ignore the input buffer
                         Key::Char('w') => Some(Action::MoveDownUntilDepthChange),
+                        Key::Char('b') => Some(Action::MoveUpUntilDepthChange),
                         Key::Left | Key::Char('h') => Some(Action::MoveLeft),
                         Key::Right | Key::Char('l') => Some(Action::MoveRight),
                         Key::Char('H') => Some(Action::FocusParent),
@@ -406,17 +429,6 @@ impl App {
             self.input_buffer.pop();
         }
         self.input_buffer.push(ch);
-    }
-
-    fn handle_z_input(&mut self) -> Option<Action> {
-        if self.input_buffer == "z".as_bytes() {
-            self.input_buffer.clear();
-            Some(Action::MoveFocusedLineToCenter)
-        } else {
-            self.input_buffer.clear();
-            self.buffer_input(b'z');
-            None
-        }
     }
 
     fn maybe_parse_input_buffer_as_number(&mut self) -> Option<usize> {
