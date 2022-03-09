@@ -7,8 +7,8 @@ description = "A command-line JSON viewer"
 keywords = ["cli", "json"]
 categories = ["command-line-utilities"]
 repository = "https://github.com/PaulJuliusMartinez/jless"
-homepage = "https://github.com/PaulJuliusMartinez/jless"
-documentation = "https://github.com/PaulJuliusMartinez/jless/blob/master/src/jless.help"
+homepage = "https://jless.io"
+documentation = "https://jless.io/user-guide.html"
 edition = "2018"
 rust-version = "1.54"
 
