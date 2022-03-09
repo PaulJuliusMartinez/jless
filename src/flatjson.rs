@@ -266,6 +266,40 @@ impl FlatJson {
 
         res.map_err(|e| e.to_string())
     }
+
+    pub fn pretty_printed(&self) -> Result<String, std::fmt::Error> {
+        let mut buf = String::new();
+
+        for row in self.0.iter() {
+            for _ in 0..row.depth {
+                write!(buf, "  ")?;
+            }
+            if let Some(ref key_range) = row.key_range {
+                write!(buf, "{}: ", &self.1[key_range.clone()])?;
+            }
+            let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
+            if let Some(container_type) = row.value.container_type() {
+                if row.value.is_opening_of_container() {
+                    write!(buf, "{}", container_type.open_str())?;
+                    // Don't print trailing commas after { or [.
+                    trailing_comma = false;
+                } else {
+                    write!(buf, "{}", container_type.close_str())?;
+                    // Check container opening to see if we have a next sibling.
+                    trailing_comma = row.parent.is_some()
+                        && self[row.pair_index().unwrap()].next_sibling.is_some();
+                }
+            } else {
+                write!(buf, "{}", &self.1[row.range.clone()])?;
+            }
+            if trailing_comma {
+                write!(buf, ",")?;
+            }
+            writeln!(buf)?;
+        }
+
+        Ok(buf)
+    }
 }
 
 impl std::ops::Index<usize> for FlatJson {
@@ -925,5 +959,33 @@ mod tests {
                 dot_top_level.as_str()
             )
         );
+    }
+
+    #[test]
+    fn test_pretty_print() {
+        const JSON: &str = r#"{"a":1,"b":[2,{},[],false],"c":null}
+            [ "d"   , [1,{      "e" :   7 }]   ]"#;
+        const PRETTY: &str = r#"{
+  "a": 1,
+  "b": [
+    2,
+    {},
+    [],
+    false
+  ],
+  "c": null
+}
+[
+  "d",
+  [
+    1,
+    {
+      "e": 7
+    }
+  ]
+]
+"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        assert_eq!(PRETTY, fj.pretty_printed().unwrap());
     }
 }

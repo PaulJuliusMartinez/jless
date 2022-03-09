@@ -95,33 +95,7 @@ fn print_pretty_printed_input(input: String, data_format: DataFormat) {
         }
     };
 
-    for row in flatjson.0.iter() {
-        for _ in 0..row.depth {
-            print!("  ");
-        }
-        if let Some(ref key_range) = row.key_range {
-            print!("{}: ", &flatjson.1[key_range.clone()]);
-        }
-        let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
-        if let Some(container_type) = row.value.container_type() {
-            if row.value.is_opening_of_container() {
-                print!("{}", container_type.open_str());
-                // Don't print trailing commas after { or [.
-                trailing_comma = false;
-            } else {
-                print!("{}", container_type.close_str());
-                // Check container opening to see if we have a next sibling.
-                trailing_comma = row.parent.is_some()
-                    && flatjson.0[row.pair_index().unwrap()].next_sibling.is_some();
-            }
-        } else {
-            print!("{}", &flatjson.1[row.range.clone()]);
-        }
-        if trailing_comma {
-            print!(",");
-        }
-        println!();
-    }
+    print!("{}", flatjson.pretty_printed().unwrap());
 }
 
 fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {
