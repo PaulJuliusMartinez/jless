@@ -8,9 +8,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::MAX_BUFFER_SIZE;
-use crate::flatjson::{Index, OptionIndex, Row, Value};
+use crate::flatjson::{Index, OptionIndex, PathType, Row, Value};
 use crate::lineprinter as lp;
-use crate::lineprinter::JS_IDENTIFIER;
 use crate::search::{MatchRangeIter, SearchState};
 use crate::terminal;
 use crate::terminal::{AnsiTerminal, Terminal};
@@ -293,7 +292,10 @@ impl ScreenWriter {
         }
         self.terminal.write_char('\r')?;
 
-        let path_to_node = ScreenWriter::get_path_to_focused_node(viewer);
+        let path_to_node = viewer
+            .flatjson
+            .build_path_to_node(PathType::DotWithTopLevelIndex, viewer.focused_row)
+            .unwrap();
         self.print_path_to_node_and_file_name(
             &path_to_node,
             input_filename,
@@ -422,48 +424,6 @@ impl ScreenWriter {
         }
 
         Ok(())
-    }
-
-    fn get_path_to_focused_node(viewer: &JsonViewer) -> String {
-        let mut buf = String::new();
-        ScreenWriter::build_path_to_focused_node(viewer, &mut buf, viewer.focused_row);
-        buf
-    }
-
-    fn build_path_to_focused_node(viewer: &JsonViewer, buf: &mut String, index: Index) {
-        let row = &viewer.flatjson[index];
-
-        if row.is_closing_of_container() {
-            return ScreenWriter::build_path_to_focused_node(
-                viewer,
-                buf,
-                row.pair_index().unwrap(),
-            );
-        }
-
-        if let OptionIndex::Index(parent_index) = row.parent {
-            ScreenWriter::build_path_to_focused_node(viewer, buf, parent_index);
-        }
-
-        if let Some(key_range) = &row.key_range {
-            let key_open_delimiter = &viewer.flatjson.1[key_range.start..key_range.start + 1];
-            let key = &viewer.flatjson.1[key_range.start + 1..key_range.end - 1];
-
-            // For non-string keys in YAML.
-            if key_open_delimiter == "[" {
-                write!(buf, "[{}]", key).unwrap();
-            } else if JS_IDENTIFIER.is_match(key) {
-                write!(buf, ".{}", key).unwrap();
-            } else {
-                write!(buf, "[\"{}\"]", key).unwrap();
-            }
-        } else {
-            if index == 0 && row.next_sibling.is_nil() {
-                // Don't print out an array index if there is only one top level item.
-            } else {
-                write!(buf, "[{}]", row.index).unwrap();
-            }
-        }
     }
 
     pub fn decrease_indentation_level(&mut self, max_depth: u16) {

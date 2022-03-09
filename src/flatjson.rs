@@ -1,7 +1,8 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Write};
 use std::ops::Range;
 
 use crate::jsonparser;
+use crate::lineprinter;
 use crate::yamlparser;
 
 pub type Index = usize;
@@ -39,6 +40,15 @@ impl From<usize> for OptionIndex {
             OptionIndex::Index(i)
         }
     }
+}
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum PathType {
+    Dot,
+    Bracket,
+    Query,
+    // Just used for the status bar.
+    DotWithTopLevelIndex,
 }
 
 #[derive(Debug)]
@@ -164,6 +174,97 @@ impl FlatJson {
             index = parent;
         }
         visible_ancestor
+    }
+
+    pub fn build_path_to_node(&self, path_type: PathType, index: Index) -> Result<String, String> {
+        let mut buf = String::new();
+
+        // Some special handling for top-level elements.
+        if self[index].parent.is_nil() {
+            match path_type {
+                PathType::Dot | PathType::Bracket => {
+                    return Err("Cannot build path to top-level element".to_string());
+                }
+                PathType::Query => {
+                    return Ok(".".to_string());
+                }
+                PathType::DotWithTopLevelIndex => { /* Handled in impl */ }
+            }
+        }
+
+        self.build_path_to_node_impl(path_type, index, &mut buf)?;
+        Ok(buf)
+    }
+
+    fn build_path_to_node_impl(
+        &self,
+        path_type: PathType,
+        index: Index,
+        buf: &mut String,
+    ) -> Result<(), String> {
+        let row = &self[index];
+
+        if row.is_closing_of_container() {
+            return self.build_path_to_node_impl(path_type, row.pair_index().unwrap(), buf);
+        }
+
+        if let OptionIndex::Index(parent_index) = row.parent {
+            self.build_path_to_node_impl(path_type, parent_index, buf)?;
+        }
+
+        let res = if let Some(key_range) = &row.key_range {
+            let key_open_delimiter = &self.1[key_range.start..key_range.start + 1];
+            let key = &self.1[key_range.start + 1..key_range.end - 1];
+
+            // For non-string keys in YAML.
+            if key_open_delimiter == "[" {
+                if path_type == PathType::Query {
+                    return Err(
+                        "Path to node contains non-string keys not supported in JSON".to_string(),
+                    );
+                }
+
+                write!(buf, "[{}]", key)
+            } else {
+                if path_type != PathType::Bracket && lineprinter::JS_IDENTIFIER.is_match(key) {
+                    write!(buf, ".{}", key)
+                } else {
+                    if path_type == PathType::Query && row.depth == 1 {
+                        // Handle square brackets as the first part of the path.
+                        write!(buf, ".[\"{}\"]", key)
+                    } else {
+                        write!(buf, "[\"{}\"]", key)
+                    }
+                }
+            }
+        } else {
+            if row.parent.is_nil() {
+                // We only print the top level index for this PathType,
+                // but we don't print it out if there's only a single
+                // top-level element.
+                if path_type == PathType::DotWithTopLevelIndex
+                    && (index != 0 || row.next_sibling.is_some())
+                {
+                    write!(buf, "[{}]", row.index)
+                } else {
+                    Ok(())
+                }
+            } else {
+                match path_type {
+                    PathType::Query => {
+                        if row.depth == 1 {
+                            // Handle square brackets as the first part of the path.
+                            write!(buf, ".[]")
+                        } else {
+                            write!(buf, "[]")
+                        }
+                    }
+                    _ => write!(buf, "[{}]", row.index),
+                }
+            }
+        };
+
+        res.map_err(|e| e.to_string())
     }
 }
 
@@ -671,5 +772,158 @@ mod tests {
 
     fn assert_prev_visited_items(fj: &FlatJson, start_index: Index, expected: &Vec<usize>) {
         assert_row_iter("prev_item", fj, start_index, expected, FlatJson::prev_item);
+    }
+
+    #[test]
+    fn test_root_object_build_path_to_node() {
+        use PathType::*;
+
+        const ROOT_OBJECT: &str = r#"{
+            "non js key": 1,
+            "plain_key": [
+                {},
+                {
+                    "nested": 5,
+                },
+            ],
+        }"#;
+
+        let fj = parse_top_level_json(ROOT_OBJECT.to_owned()).unwrap();
+
+        assert!(fj.build_path_to_node(Dot, 0).is_err());
+        assert!(fj.build_path_to_node(Bracket, 0).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 0).unwrap());
+        assert_eq!("", fj.build_path_to_node(DotWithTopLevelIndex, 0).unwrap());
+
+        let path = r#"["non js key"]"#;
+        let paths = (path, path, r#".["non js key"]"#, path);
+        assert_paths_to_node(&fj, 1, paths);
+
+        let nested_paths = (
+            ".plain_key[1].nested",
+            r#"["plain_key"][1]["nested"]"#,
+            ".plain_key[].nested",
+            ".plain_key[1].nested",
+        );
+        assert_paths_to_node(&fj, 5, nested_paths);
+    }
+
+    #[test]
+    fn test_root_array_build_path_to_node() {
+        use PathType::*;
+
+        const ROOT_ARRAY: &str = r#"[
+            1,
+            {
+                "nested": {
+                    "more nested": 4,
+                },
+            },
+        ]"#;
+
+        let fj = parse_top_level_json(ROOT_ARRAY.to_owned()).unwrap();
+
+        assert!(fj.build_path_to_node(Dot, 0).is_err());
+        assert!(fj.build_path_to_node(Bracket, 0).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 0).unwrap());
+        assert_eq!("", fj.build_path_to_node(DotWithTopLevelIndex, 0).unwrap());
+
+        let paths = ("[0]", "[0]", ".[]", "[0]");
+        assert_paths_to_node(&fj, 1, paths);
+
+        let nested_paths = (
+            r#"[1].nested["more nested"]"#,
+            r#"[1]["nested"]["more nested"]"#,
+            r#".[].nested["more nested"]"#,
+            r#"[1].nested["more nested"]"#,
+        );
+        assert_paths_to_node(&fj, 4, nested_paths);
+    }
+
+    #[test]
+    fn test_multi_top_level_build_path_to_node() {
+        use PathType::*;
+
+        const MULTI_TOP_LEVEL: &str = r#"[
+            {
+                "nested": [
+                    3,
+                ],
+            },
+        ]
+        {
+            "plain_key": [
+                {
+                    "nested": 10,
+                },
+            ],
+        }"#;
+
+        let fj = parse_top_level_json(MULTI_TOP_LEVEL.to_owned()).unwrap();
+
+        assert!(fj.build_path_to_node(Dot, 0).is_err());
+        assert!(fj.build_path_to_node(Bracket, 0).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 0).unwrap());
+        assert_eq!(
+            "[0]",
+            fj.build_path_to_node(DotWithTopLevelIndex, 0).unwrap()
+        );
+
+        assert!(fj.build_path_to_node(Dot, 7).is_err());
+        assert!(fj.build_path_to_node(Bracket, 7).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 7).unwrap());
+        assert_eq!(
+            "[1]",
+            fj.build_path_to_node(DotWithTopLevelIndex, 7).unwrap()
+        );
+
+        let paths = (
+            "[0].nested[0]",
+            r#"[0]["nested"][0]"#,
+            ".[].nested[]",
+            "[0][0].nested[0]",
+        );
+        assert_paths_to_node(&fj, 3, paths);
+
+        let paths = (
+            ".plain_key[0].nested",
+            r#"["plain_key"][0]["nested"]"#,
+            ".plain_key[].nested",
+            "[1].plain_key[0].nested",
+        );
+        assert_paths_to_node(&fj, 10, paths);
+    }
+
+    #[test]
+    fn test_build_path_to_node_yaml_non_string_key() {
+        use PathType::*;
+
+        const YAML: &str = r#"{
+            [1, 1]: 1,
+        }"#;
+        let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
+        assert_eq!("[[1, 1]]", fj.build_path_to_node(Dot, 1).unwrap());
+        assert_eq!("[[1, 1]]", fj.build_path_to_node(Bracket, 1).unwrap());
+        assert!(fj.build_path_to_node(Query, 1).is_err());
+    }
+
+    #[track_caller]
+    fn assert_paths_to_node(fj: &FlatJson, index: Index, paths: (&str, &str, &str, &str)) {
+        use PathType::*;
+
+        let dot = fj.build_path_to_node(Dot, index).unwrap();
+        let bracket = fj.build_path_to_node(Bracket, index).unwrap();
+        let query = fj.build_path_to_node(Query, index).unwrap();
+        let dot_top_level = fj.build_path_to_node(DotWithTopLevelIndex, index).unwrap();
+
+        assert_eq!(
+            paths,
+            (
+                dot.as_str(),
+                bracket.as_str(),
+                query.as_str(),
+                dot_top_level.as_str()
+            )
+        );
     }
 }
