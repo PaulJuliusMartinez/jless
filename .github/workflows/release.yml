@@ -2,8 +2,8 @@ name: release
 on:
   push:
     # Enable testing on branches
-    # branches:
-    #   - test-release
+    branches:
+      - apt-install-clipboard
     tags:
       - "v[0-9]+.[0-9]+.[0-9]+"
 jobs:
@@ -25,6 +25,9 @@ jobs:
           override: true
           target: ${{ matrix.platform.target }}
           components: clippy, rustfmt
+      - name: Install clipboard dependencies
+        if: ${{ matrix.platform.os == "ubuntu-latest" }}
+        run: sudo apt install -y libxcb-shape0-dev libxcb-xfixes0-dev
       - name: Build
         uses: actions-rs/cargo@v1
         with:
