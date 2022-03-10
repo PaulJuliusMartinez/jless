@@ -20,6 +20,9 @@ jobs:
           override: true
           target: ${{ matrix.platform.target }}
           components: clippy, rustfmt
+      - name: Install clipboard dependencies
+        if: ${{ matrix.platform.os == 'ubuntu-latest' }}
+        run: sudo apt install -y libxcb-shape0-dev libxcb-xfixes0-dev
       - name: Test
         uses: actions-rs/cargo@v1
         with:
