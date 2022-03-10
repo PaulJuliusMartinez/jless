@@ -300,6 +300,60 @@ impl FlatJson {
 
         Ok(buf)
     }
+
+    // A lot of the code here is almost identical to pretty_printed, but
+    // there are some subtle enough differences, and the code isn't that
+    // complicated, that I don't think it's worth it to try to have them
+    // share an implementation.
+    pub fn pretty_printed_value(&self, value_index: Index) -> Result<String, std::fmt::Error> {
+        if self[value_index].is_primitive() {
+            return Ok(self.1[self[value_index].range.clone()].to_string());
+        }
+
+        let mut buf = String::new();
+
+        let container_type = self[value_index].value.container_type().unwrap();
+        let depth_offset = self[value_index].depth;
+        let pair_index = self[value_index].pair_index().unwrap();
+
+        let start_index = value_index.min(pair_index);
+        let end_index = value_index.max(pair_index);
+
+        writeln!(buf, "{}", container_type.open_str())?;
+
+        for index in start_index + 1..end_index {
+            let row = &self[index];
+            for _ in 0..(row.depth - depth_offset) {
+                write!(buf, "  ")?;
+            }
+            if let Some(ref key_range) = row.key_range {
+                write!(buf, "{}: ", &self.1[key_range.clone()])?;
+            }
+            let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
+            if let Some(container_type) = row.value.container_type() {
+                if row.value.is_opening_of_container() {
+                    write!(buf, "{}", container_type.open_str())?;
+                    // Don't print trailing commas after { or [.
+                    trailing_comma = false;
+                } else {
+                    write!(buf, "{}", container_type.close_str())?;
+                    // Check container opening to see if we have a next sibling.
+                    trailing_comma = row.parent.is_some()
+                        && self[row.pair_index().unwrap()].next_sibling.is_some();
+                }
+            } else {
+                write!(buf, "{}", &self.1[row.range.clone()])?;
+            }
+            if trailing_comma {
+                write!(buf, ",")?;
+            }
+            writeln!(buf)?;
+        }
+
+        writeln!(buf, "{}", container_type.close_str())?;
+
+        Ok(buf)
+    }
 }
 
 impl std::ops::Index<usize> for FlatJson {
@@ -987,5 +1041,38 @@ mod tests {
 "#;
         let fj = parse_top_level_json(JSON.to_owned()).unwrap();
         assert_eq!(PRETTY, fj.pretty_printed().unwrap());
+    }
+
+    #[test]
+    fn test_pretty_printed_value() {
+        const JSON: &str = r#"[[{"3":3,"4":[5, 6, {"8": false}]}]]"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        const PRETTY_INNER_OBJ: &str = r#"{
+  "3": 3,
+  "4": [
+    5,
+    6,
+    {
+      "8": false
+    }
+  ]
+}
+"#;
+        assert_eq!(PRETTY_INNER_OBJ, fj.pretty_printed_value(2).unwrap());
+        assert_eq!("3", fj.pretty_printed_value(3).unwrap());
+
+        const PRETTY_ARRAY: &str = r#"[
+  5,
+  6,
+  {
+    "8": false
+  }
+]
+"#;
+        assert_eq!(PRETTY_ARRAY, fj.pretty_printed_value(4).unwrap());
+        assert_eq!("6", fj.pretty_printed_value(6).unwrap());
+
+        const PRETTY_NESTED_OBJ: &str = "{\n  \"8\": false\n}\n";
+        assert_eq!(PRETTY_NESTED_OBJ, fj.pretty_printed_value(7).unwrap());
     }
 }

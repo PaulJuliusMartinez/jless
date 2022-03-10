@@ -8,6 +8,8 @@ New features:
   or explicit `--yaml` or `--json` flags.
 - Implement `ctrl-b` and `ctrl-f` commands for scrolling up and down by
   the height of the screen. (Aliases for `PageUp` and `PageDown`)
+- Support copy values (with `yy` or `yv`), object keys (with `yk`), and
+  paths to the currently focused node (with `yp`, `yb` or `yq`).
 
 Improvements:
 - Keep focused line in same place on screen when toggling between line

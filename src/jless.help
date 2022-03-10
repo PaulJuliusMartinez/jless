@@ -77,6 +77,31 @@
   <            Decrease the indentation of every line by one (or [4mN[0m) tabs.
   >            Increase the indentation of every line by one (or [4mN[0m) tabs.
 
+                                    [1mCOPYING[0m
+
+      You can copy various parts of the JSON file to your clipboard using
+      any one of a set of commands starting with 'y'.
+
+  yy    Copy the currently focused value to the clipboard, pretty printed.
+          When focused on the key/value pair of an object, this will [4mnot[0m
+          include the key.
+  yv    Copy the currently focused value to the clipboard, like yy, but
+          "nicely" printed on one line with spaces instead of pretty
+          printed.
+
+  yk    Copy the object key on the currently focused line. When in data mode
+          this will not include quotes around the key if the key is a valid
+          JavaScript identifier.
+
+  yp    Copy the path from the top level JSON root to the currently focused
+          value. Object keys will be accessed using ".key" unless they are not
+          valid JavaScript identifiers.
+  yb    Same as yp, but use square brackets for all object key accesses. Useful
+          if copying the path for use in an environment that doesn't support
+          the ".key" syntax, e.g. Python.
+  yq    Copy a path that can be used by jq to filter the input JSON and return
+          the currently focused value.
+
                                      [1mSEARCH[0m
 
       jless supports full-text search over the input JSON.
@@ -91,8 +116,8 @@
 
   n         *  Move in the search direction to the next match (or forward
                  [4mN[0m matches).
-  N         *  Move in the opposite of the search direction to the previous match
-                 (or previous [4mN[0m matches).
+  N         *  Move in the opposite of the search direction to the previous
+                 match (or previous [4mN[0m matches).
 
       Searching uses "smart case" by default. If the input pattern doesn't
       contain any capital letters, a case insensitive search will be
@@ -126,7 +151,7 @@
                                   [1mSEARCH INPUT[0m
 
       The search is *not* performed over the original input, but over a
-      single-line pretty formatted version of the input JSON. Consider the
+      single-line "nicely" formatted version of the input JSON. Consider the
       following two ways to format an equivalent JSON blob:
 
         {"a":1,"b":true,"c":[null,{},[],"hello"]}
@@ -173,5 +198,3 @@
 
       In line mode you can press '%' when focused on an open or close
       delimiter of an object or array to jump to its matching pair.
-
-

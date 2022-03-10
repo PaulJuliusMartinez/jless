@@ -1,6 +1,8 @@
+use std::error::Error;
 use std::io;
 use std::io::Write;
 
+use clipboard::{ClipboardContext, ClipboardProvider};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use termion::event::Key;
@@ -11,11 +13,12 @@ use termion::screen::{ToAlternateScreen, ToMainScreen};
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
+use crate::lineprinter::JS_IDENTIFIER;
 use crate::options::{DataFormat, Opt};
 use crate::screenwriter::{MessageSeverity, ScreenWriter};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
-use crate::viewer::{Action, JsonViewer};
+use crate::viewer::{Action, JsonViewer, Mode};
 
 pub struct App {
     viewer: JsonViewer,
@@ -25,6 +28,7 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+    clipboard_context: Result<ClipboardContext, Box<dyn Error>>,
 }
 
 // State to determine how to process the next event input.
@@ -39,7 +43,18 @@ pub struct App {
 #[derive(PartialEq)]
 enum InputState {
     Default,
+    PendingYCommand,
     PendingZCommand,
+}
+
+// Various things that can be copied
+enum CopyTarget {
+    PrettyPrintedValue,
+    OneLineValue,
+    Key,
+    DotPath,
+    BracketPath,
+    QueryPath,
 }
 
 enum Command {
@@ -81,6 +96,7 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
+            clipboard_context: ClipboardProvider::new(),
         })
     }
 
@@ -126,6 +142,28 @@ impl App {
 
             let action = match event {
                 // Handle special input states:
+                // y commands:
+                event if self.input_state == InputState::PendingYCommand => {
+                    let copy_target = match event {
+                        KeyEvent(Key::Char('y')) => Some(CopyTarget::PrettyPrintedValue),
+                        KeyEvent(Key::Char('v')) => Some(CopyTarget::OneLineValue),
+                        KeyEvent(Key::Char('k')) => Some(CopyTarget::Key),
+                        KeyEvent(Key::Char('p')) => Some(CopyTarget::DotPath),
+                        KeyEvent(Key::Char('b')) => Some(CopyTarget::BracketPath),
+                        KeyEvent(Key::Char('q')) => Some(CopyTarget::QueryPath),
+                        _ => None,
+                    };
+
+                    if let Some(copy_target) = copy_target {
+                        self.copy_content(copy_target);
+                    }
+
+                    self.input_state = InputState::Default;
+                    self.input_buffer.clear();
+
+                    None
+                }
+                // z commands:
                 event if self.input_state == InputState::PendingZCommand => {
                     let z_action = match event {
                         KeyEvent(Key::Char('t')) => Some(Action::MoveFocusedLineToTop),
@@ -158,6 +196,21 @@ impl App {
                         self.buffer_input(ch as u8);
                         None
                     }
+                }
+                KeyEvent(Key::Char('y')) => {
+                    match &self.clipboard_context {
+                        Ok(_) => {
+                            self.input_state = InputState::PendingYCommand;
+                            self.input_buffer.clear();
+                            self.buffer_input(b'y');
+                        }
+                        Err(err) => {
+                            let msg = format!("Unable to access clipboard: {}", err);
+                            self.set_error_message(msg);
+                        }
+                    }
+
+                    None
                 }
                 KeyEvent(Key::Char('z')) => {
                     self.input_state = InputState::PendingZCommand;
@@ -564,5 +617,76 @@ impl App {
         }
 
         let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
+    }
+
+    fn copy_content(&mut self, copy_target: CopyTarget) {
+        // Checked when the user first hits 'y'.
+        let clipboard = self.clipboard_context.as_mut().unwrap();
+
+        let json = &self.viewer.flatjson.1;
+        let focused_row_index = self.viewer.focused_row;
+        let focused_row = &self.viewer.flatjson[focused_row_index];
+
+        let (content_desc, content) = match copy_target {
+            CopyTarget::PrettyPrintedValue if focused_row.is_container() => (
+                "pretty-printed value",
+                self.viewer
+                    .flatjson
+                    .pretty_printed_value(focused_row_index)
+                    .unwrap(),
+            ),
+            CopyTarget::PrettyPrintedValue | CopyTarget::OneLineValue => {
+                let range = focused_row.range.clone();
+                ("value", json[range].to_string())
+            }
+            CopyTarget::Key => {
+                if let Some(key_range) = &focused_row.key_range {
+                    let quoteless_range = (key_range.start + 1)..(key_range.end - 1);
+
+                    // Don't copy quotes in Data mode.
+                    let copied_key = if self.viewer.mode == Mode::Data
+                        && JS_IDENTIFIER.is_match(&json[quoteless_range.clone()])
+                    {
+                        json[quoteless_range].to_string()
+                    } else {
+                        json[key_range.clone()].to_string()
+                    };
+
+                    ("key", copied_key)
+                } else {
+                    self.set_warning_message("No object key to copy".to_string());
+                    return;
+                }
+            }
+            ct @ (CopyTarget::DotPath | CopyTarget::BracketPath | CopyTarget::QueryPath) => {
+                let (content_desc, path_type) = match ct {
+                    CopyTarget::DotPath => ("path", flatjson::PathType::Dot),
+                    CopyTarget::BracketPath => ("bracketed path", flatjson::PathType::Bracket),
+                    CopyTarget::QueryPath => ("query path", flatjson::PathType::Query),
+                    _ => unreachable!(),
+                };
+
+                match self
+                    .viewer
+                    .flatjson
+                    .build_path_to_node(path_type, focused_row_index)
+                {
+                    Ok(path) => (content_desc, path),
+                    Err(err) => {
+                        self.set_error_message(err);
+                        return;
+                    }
+                }
+            }
+        };
+
+        if let Err(err) = clipboard.set_contents(content) {
+            self.set_error_message(format!(
+                "Unable to copy {} to clipboard: {}",
+                content_desc, err
+            ));
+        } else {
+            self.set_info_message(format!("Copied {} to clipboard", content_desc));
+        }
     }
 }
