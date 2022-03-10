@@ -34,28 +34,35 @@ class UserGuidePage < BasePage
     jq_link = a(href: "https://stedolan.github.io/jq/") {'jq'}
 
     h2(id: 'usage') {'Usage'} +
-      p('JLess can read files directly, or read JSON data from standard input:') +
+      p('jless can read files directly, or read JSON data from standard input:') +
       code_block([
         'curl https://api.github.com/repos/PaulJuliusMartinez/jless/commits -o commits.json',
         'jless commits.json',
         'cat commits.json | jless',
       ]) +
-      p(<<~P)
-        JLess can handle newline-delimited JSON, so feel free to pipe in the
+      p(<<~P) +
+        jless can handle newline-delimited JSON, so feel free to pipe in the
         output from #{jq_link} or some dense log files.
       P
+      p(<<~P) +
+        jless can also handle YAML data, either automatically by detecting
+        the file extension, or by explicitly passing the #{code('--yaml')} flag.
+        If you frequently view YAML data, we suggest the following alias:
+      P
+      code_block(['alias yless="jless --yaml"'])
   end
 
   def self.render_commands
     h2(id: 'commands') {'Commands'} +
       p(<<~P) +
-        JLess has a large suite of vim-inspired commands. Commands prefixed by
+        jless has a large suite of vim-inspired commands. Commands prefixed by
         <i>count</i> may be preceded by a number #{N}, which will
         perform a command a given number of times.
       P
       render_util_commands +
       render_movement_commands +
       render_scrolling_commands +
+      render_copying_commands +
       render_search_commands +
       render_search_input_explanation +
       render_modes
@@ -63,7 +70,7 @@ class UserGuidePage < BasePage
 
   def self.render_util_commands
     ul do
-      command(%w[q Ctrl-C :quit :exit], "Exit JLess; don't worry, it's not as hard as exiting vim.") +
+      command(%w[q Ctrl-C :quit :exit], "Exit jless; don't worry, it's not as hard as exiting vim.") +
         command(%w[:help F1], 'Show the help page.')
     end
   end
@@ -86,8 +93,8 @@ class UserGuidePage < BasePage
       count_command(%w[K], "Move to the focused node's previous sibling 1 or #{N} times.") +
       count_command(%w[w], "Move forward until the next change in depth 1 or #{N} times.") +
       count_command(%w[b], "Move backwards until the next change in depth 1 or #{N} times.") +
-      count_command(%w[PageDown], "Move down by one window's height or #{N} windows' heights.") +
-      count_command(%w[PageUp], "Move up by one window's height or #{N} windows' heights.") +
+      count_command(%w[Ctrl-f PageDown], "Move down by one window's height or #{N} windows' heights.") +
+      count_command(%w[Ctrl-b PageUp], "Move up by one window's height or #{N} windows' heights.") +
       command(%w[0 ^], "Move to the first sibling of the focused node's parent.") +
       command(%w[$], "Move to the last sibling of the focused node's parent.") +
       command(%w[g Home], 'Focus the first line in the input') +
@@ -123,6 +130,39 @@ class UserGuidePage < BasePage
     end
   end
 
+  def self.render_copying_commands
+    copy_commands = ul do
+      yy = command(['yy'], 'Copy the value of the currently focused node, pretty printed')
+      yv = command(['yv'], 'Copy the value of the currently focused node in a "nicely" printed one-line format')
+      yk = command(['yk'], 'Copy the key of the current key/value pair')
+      yp = command(['yp'], <<~CMD)
+        Copy the path from the root JSON element to the currently focused
+        node, e.g., #{code('.foo[3].bar')}
+      CMD
+      yb = command(['yb'], <<~CMD)
+        Like #{code('yp')}, but always uses the bracket form for object keys,
+        e.g., #{code('["foo"][3]["bar"]')}, which is useful if the environment
+        where you'll paste the path doesn't support the #{code('.key')} format,
+        like in Python
+      CMD
+
+      jq_link = code {a(href: 'https://stedolan.github.io/jq/') {'jq'}}
+      yq = command(['yq'], <<~CMD)
+        Copy a #{jq_link} style path that will select the currently focused
+        node, e.g., #{code('.foo[].bar')}
+      CMD
+
+      [yy, yv, yk, yp, yb, yq].join("\n")
+    end
+
+    h3(id: 'copying') {'Copying'} +
+      p(<<~P) +
+        You can copy various parts of the JSON file to your clipboard using
+        one of the following commands:
+      P
+      copy_commands
+  end
+
   def self.render_search_commands
     search_commands = ul do
       count_command(['/pattern'], <<~CMD) +
@@ -149,7 +189,7 @@ class UserGuidePage < BasePage
     end
 
     h3(id: 'search') {'Search'} +
-      p('JLess supports full-text search over the input JSON.') +
+      p('jless supports full-text search over the input JSON.') +
       search_commands +
       p(<<~P) +
         Searching uses "smart case" by default. If the input pattern doesn't
@@ -213,7 +253,7 @@ class UserGuidePage < BasePage
         PRETTY
       ], prefix: nil) +
       p(<<~P) +
-        JLess will create an internal representation formatted as follows:
+        jless will create an internal representation formatted as follows:
       P
       code_block(['{ "a": 1, "b": true, "c": [null, {}, [], "hello"] }'], prefix: nil) +
       p(<<~P) +
@@ -236,7 +276,7 @@ class UserGuidePage < BasePage
   def self.render_modes
     h3(id: 'data-mode-vs-line-mode') {"Data Mode vs. Line Mode"} +
       p(<<~P) +
-        JLess starts in "data" mode, which displays the JSON data in a more
+        jless starts in "data" mode, which displays the JSON data in a more
         streamlined fashion: no closing delimiters for objects or arrays, no
         trailing commas, no quotes around object keys that are valid
         identifiers in JavaScript. It also shows single-line previews of

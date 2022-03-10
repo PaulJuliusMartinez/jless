@@ -66,7 +66,7 @@ class HomePage < BasePage
 
   def self.render_contents
     intro = p(<<~P)
-      JLess is a command-line JSON viewer designed for reading, exploring,
+      jless is a command-line JSON viewer designed for reading, exploring,
       and searching through JSON data.
     P
     gif = img(id: 'jless-recording', src: GIF_PATH)
@@ -74,7 +74,7 @@ class HomePage < BasePage
     installation = render_installation
     user_guide = p(<<~P)
       Check out the #{a(href: './user-guide.html') {'user guide'}} to learn
-      about the full functionality of JLess.
+      about the full functionality of jless.
     P
 
     intro + gif + features + installation + user_guide
@@ -84,7 +84,7 @@ class HomePage < BasePage
     features = [
       {
         copy: <<~COPY,
-          JLess will pretty print your JSON and apply syntax highlighting.
+          jless will pretty print your JSON and apply syntax highlighting.
           Use it when exploring external APIs, or debugging request payloads.
         COPY
         img: './assets/logo/mascot-indentation.svg',
@@ -92,14 +92,14 @@ class HomePage < BasePage
       {
         copy: <<~COPY,
           Expand and collapse Objects and Arrays to grasp the high- and low-level
-          structure of a JSON document. JLess has a large suite of vim-inspired
+          structure of a JSON document. jless has a large suite of vim-inspired
           commands that make exploring data a breeze.
         COPY
         img: './assets/logo/mascot-rocks-collapsing.svg',
       },
       {
         copy: <<~COPY,
-          JLess supports full text regular-expression based search. Quickly find
+          jless supports full text regular-expression based search. Quickly find
           the data you're looking for in long String values, or jump between
           values for the same Object key.
         COPY
@@ -123,7 +123,7 @@ class HomePage < BasePage
 
   def self.render_installation
     intro = h2 {"Installation"} + p(<<~P)
-      JLess currently supports macOS and Linux and can be installed using
+      jless currently supports macOS and Linux and can be installed using
       various package managers.
     P
 

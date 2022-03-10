@@ -34,6 +34,7 @@ class ReleasesPage < BasePage
 
   def self.render_contents
     releases = [
+      v0_8_0_release,
       v0_7_2_release,
       v0_7_1_release,
       v0_7_0_release,
@@ -82,6 +83,120 @@ class ReleasesPage < BasePage
   end
 
   # Individual Releases
+
+  def self.v0_8_0_release
+    release_boilerplate('v0.8.0', BINARIES) do
+      p1 = p(<<~P)
+        This release ships with two major new features: basic YAML support
+        and copying to clipboard!
+      P
+
+      p2 = p(<<~P)
+        #{code('jless')} will now check the file extension of the input file,
+        and automatically parse #{code('.yml')} and #{code('.yaml')} files as
+        YAML and use the same viewer as for JSON data. Alternatively passing in
+        the #{code('--yaml')} flag will force #{code('jless')} to parse the
+        input as YAML and can be used when reading in YAML data from stdin.
+        YAML aliases are automatically expanded, but their corresponding anchors
+        are not visible, nor are comments. YAML supports non-string keys, and
+        even non-scalar keys in mappings (e.g., the key of map can be an array
+        with multiple elements). Non-string keys are shown with square brackets,
+        e.g., #{code('[true]: "value"')}, instead of quotes. Non-scalar keys are
+        handled on the screen and displayed properly, but you cannot expand and
+        collapse their individual elements.
+      P
+
+      p3 = p(<<~P)
+        While navigating data, jless also now supports copying various items to
+        your system clipboard.
+      P
+
+      copy_commands = ul do
+        yy = li(<<~LI)
+          #{code('yy')} will copy the value of the currently focused node,
+          pretty printed
+        LI
+        yv = li(<<~LI)
+          #{code('yv')} will copy the value of the currently focused node in a
+          "nicely" printed one-line format
+        LI
+        yk = li("#{code('yk')} will copy the key of the current key/value pair")
+        yp = li(<<~LI)
+          #{code('yp')} will copy the path from the root JSON element to the
+          currently focused node, e.g., #{code('.foo[3].bar')}
+        LI
+        yb = li(<<~LI)
+          #{code('yb')} functions like #{code('yp')}, but always uses the
+          bracket form for object keys, e.g., #{code('["foo"][3]["bar"]')},
+          which is useful if the environment where you'll paste the path doesn't
+          support the #{code('.key')} format, like in Python
+        LI
+
+        jq_link = code {a(href: 'https://stedolan.github.io/jq/') {'jq'}}
+        yq = li(<<~LI)
+          #{code('yq')} will copy a #{jq_link} style path that will select the
+          currently focused node, e.g., #{code('.foo[].bar')}
+        LI
+
+        [yy, yv, yk, yp, yb, yq].join("\n")
+      end
+
+      new_features = section('Other new features', [
+        <<~ITEM,
+          Implement #{code('ctrl-u')} and #{code('ctrl-d')} commands to jump up
+          and down by half the screen's height, or by a specified number of lines.
+        ITEM
+        <<~ITEM,
+          Implement #{code('ctrl-b')} and #{code('ctrl-f')} commands for
+          scrolling up and down by the height of the screen. (Aliases for
+          #{code('PageUp')} and #{code('PageDown')})
+        ITEM
+      ])
+
+      improvements = section('Improvements', [
+        <<~ITEM,
+          Keep focused line in same place on screen when toggling between line
+          and data modes; fix a crash when focused on a closing delimiter and
+          switching to data mode.
+        ITEM
+        <<~ITEM,
+          Pressing Escape will clear the input buffer and stop highlighting
+          search matches.
+        ITEM
+      ])
+
+      bug_fixes = section('Bug fixes', [
+        <<~ITEM,
+          Ignore clicks on the status bar or below rather than focusing on
+          hidden lines, and don't re-render the screen, allowing the path in
+          the status bar to be highlighted and copied.
+        ITEM
+        <<~ITEM,
+          [#{issue(61)}]: Display error message for unrecognized CSI escape
+          sequences and other IO errors instead of panicking.
+        ITEM
+        <<~ITEM,
+          [#{issue(62)}]: Fix broken window resizing / SIGWINCH detection
+          caused by clashing signal handler registered by rustyline.
+        ITEM
+        <<~ITEM,
+          [#{pr(54)}]: Fix panic when using #{code('ctrl-c')} or
+          #{code('ctrl-d')} to cancel entering search input.
+        ITEM
+      ])
+
+      cve_2022_24713 = a(href: "https://blog.rust-lang.org/2022/03/08/cve-2022-24713.html") do
+        'CVE-2022-24713'
+      end
+      other_notes = section('Other notes', [
+        <<~ITEM,
+          Upgraded regex crate to 1.5.5 due to #{cve_2022_24713}.
+        ITEM
+      ])
+
+      [p1, p2, p3, copy_commands, new_features, improvements, bug_fixes, other_notes].join("\n")
+    end
+  end
 
   def self.v0_7_2_release
     release_boilerplate('v0.7.2', BINARIES) do
