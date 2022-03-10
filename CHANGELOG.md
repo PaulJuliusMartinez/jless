@@ -28,6 +28,14 @@ Bug Fixes:
 - [PR #54]: Fix panic when using Ctrl-C or Ctrl-D to cancel entering
   search input.
 
+Other Notes:
+- Upgraded regex crate to 1.5.5 due to CVE-2022-24713. jless accepts
+  and compiles untrusted input as regexes, but you'd only DDOS yourself,
+  so it's not terribly concerning.
+
+  https://blog.rust-lang.org/2022/03/08/cve-2022-24713.html
+
+
 
 v0.7.2 (2022-02-20)
 ==================
