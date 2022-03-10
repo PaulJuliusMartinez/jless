@@ -1,5 +1,5 @@
-latest
-======
+v0.8.0 (2022-03-10)
+===================
 
 New features:
 - Implement `ctrl-u` and `ctrl-d` commands to jump up and down by half
@@ -37,7 +37,6 @@ Other Notes:
   https://blog.rust-lang.org/2022/03/08/cve-2022-24713.html
 
 
-
 v0.7.2 (2022-02-20)
 ==================
 
@@ -67,6 +66,7 @@ Internal code cleanup:
 - Address a lot of issues reported by clippy
 - Remove chunks of unused code, including serde dependency
 - Fix typos in help page
+
 
 v0.7.0 (2022-02-06)
 ==================
