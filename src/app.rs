@@ -141,6 +141,15 @@ impl App {
             let event = event.unwrap();
 
             let action = match event {
+                // Put this first so the current input state doesn't get reset
+                // when resizing the window.
+                WinChEvent => {
+                    let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
+                    self.screen_writer.dimensions = dimensions;
+                    Some(Action::ResizeViewerDimensions(
+                        dimensions.without_status_bar(),
+                    ))
+                }
                 // Handle special input states:
                 // y commands:
                 event if self.input_state == InputState::PendingYCommand => {
@@ -386,13 +395,6 @@ impl App {
                             continue;
                         }
                     }
-                }
-                WinChEvent => {
-                    let dimensions = TTYDimensions::from_size(termion::terminal_size().unwrap());
-                    self.screen_writer.dimensions = dimensions;
-                    Some(Action::ResizeViewerDimensions(
-                        dimensions.without_status_bar(),
-                    ))
                 }
                 TuiEvent::Unknown(bytes) => {
                     self.set_error_message(format!("Unknown byte sequence: {:?}", bytes));
