@@ -15,7 +15,8 @@ Improvements:
 - Keep focused line in same place on screen when toggling between line
   and data modes; fix a crash when focused on a closing delimiter and
   switching to data mode.
-- Pressing Escape will clear the input buffer
+- Pressing Escape will clear the input buffer and stop highlighting
+  search matches.
 
 Bug Fixes:
 - Ignore clicks on the status bar or below rather than focusing on

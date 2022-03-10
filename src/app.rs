@@ -195,6 +195,7 @@ impl App {
                 }
                 KeyEvent(Key::Esc) => {
                     self.input_buffer.clear();
+                    self.search_state.set_no_longer_actively_searching();
                     None
                 }
                 // These inputs may be buffered.
