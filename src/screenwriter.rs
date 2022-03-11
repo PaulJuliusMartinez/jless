@@ -226,6 +226,7 @@ impl ScreenWriter {
 
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
+            preview: viewer.get_preview(),
             terminal: &mut self.terminal,
 
             flatjson: &viewer.flatjson,

@@ -12,7 +12,7 @@ use crate::search::MatchRangeIter;
 use crate::terminal;
 use crate::terminal::{Color, Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
-use crate::viewer::Mode;
+use crate::viewer::{Mode, Preview};
 
 // This module is responsible for printing single lines of JSON to
 // the screen, complete with syntax highlighting and highlighting
@@ -128,6 +128,7 @@ impl DelimiterPair {
 
 pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
+    pub preview: Preview,
     pub terminal: &'a mut dyn Terminal,
 
     // The entire FlatJson data structure and the specific line
@@ -705,22 +706,42 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             available_space -= 1;
         }
 
-        let always_quote_string_object_keys = self.mode == Mode::Line;
-        let mut used_space =
-            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?;
+        let mut used_space;
 
-        if self.trailing_comma {
-            used_space += 1;
+        if self.preview == Preview::Full {
+            let always_quote_string_object_keys = self.mode == Mode::Line;
+
+            used_space = self.generate_container_preview(
+                row,
+                available_space,
+                always_quote_string_object_keys,
+            )?;
+
             if self.trailing_comma {
-                self.highlight_str(
-                    ",",
-                    Some(self.row.range.end),
-                    (
-                        &highlighting::DEFAULT_STYLE,
-                        &highlighting::SEARCH_MATCH_HIGHLIGHTED,
-                    ),
-                )?;
+                used_space += 1;
+                if self.trailing_comma {
+                    self.highlight_str(
+                        ",",
+                        Some(self.row.range.end),
+                        (
+                            &highlighting::DEFAULT_STYLE,
+                            &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                        ),
+                    )?;
+                }
             }
+        } else if self.preview == Preview::None {
+            self.highlight_str(
+                " ",
+                Some(self.row.range.end),
+                (
+                    &highlighting::DEFAULT_STYLE,
+                    &highlighting::SEARCH_MATCH_HIGHLIGHTED,
+                ),
+            )?;
+            used_space = 1;
+        } else {
+            used_space = self.generate_container_count(row, available_space)?;
         }
 
         Ok(used_space)
@@ -814,6 +835,55 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         self.search_matches = original_search_matches;
 
         Ok(num_printed)
+    }
+
+    // Similar to generate_container_preview, except it only prints the count
+    // of the number of children:
+    // - number of key-val pairs in a hash, ie "{ 3 }"
+    // - number of items in an array, ie "[ 2 ]"
+    fn generate_container_count(
+        &mut self,
+        row: &Row,
+        available_space: isize,
+    ) -> Result<isize, fmt::Error> {
+        debug_assert!(row.is_opening_of_container());
+
+        // Minimum amount of space required == 3: […]
+        if available_space < 3 {
+            return Ok(0);
+        }
+
+        let mut next_sibling = row.first_child();
+        let mut count: usize = 0;
+        while let OptionIndex::Index(child) = next_sibling {
+            next_sibling = self.flatjson[child].next_sibling;
+            count += 1;
+        }
+
+        let container_type = row.value.container_type().unwrap();
+        let mut count_str = format!(
+            "{} {} item{} {}",
+            container_type.open_str(),
+            count,
+            if count == 1 { "" } else { "s" },
+            container_type.close_str()
+        );
+
+        if count_str.len() as isize > available_space {
+            count_str = format!(
+                "{}…{}",
+                container_type.open_str(),
+                container_type.close_str()
+            );
+        }
+
+        self.highlight_str(
+            &count_str,
+            Some(self.row.range.start),
+            highlighting::PREVIEW_STYLES,
+        )?;
+        let len = count_str.chars().count() as isize;
+        Ok(len)
     }
 
     // {a…: …, …}
@@ -1062,6 +1132,7 @@ mod tests {
     ) -> LinePrinter<'a, 'a> {
         LinePrinter {
             mode: Mode::Data,
+            preview: Preview::Full,
             terminal,
             flatjson,
             row: &flatjson[index],
@@ -1540,6 +1611,81 @@ mod tests {
                 available_space,
                 always_quote_string_object_keys,
             )?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(line.terminal.output()),
+            );
+            assert_eq!(used_space, used);
+
+            line.terminal.clear_output();
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_countainer_count() -> std::fmt::Result {
+        let json_arr = r#"[1,2,3]       "#;
+        let json_obj = r#"{"a":1, "b":2}"#;
+        let json_one = r#"{"c":3}"#;
+        //               012345678901234 (14 chars)
+        let fj_arr = parse_top_level_json(json_arr.to_owned()).unwrap();
+        let fj_obj = parse_top_level_json(json_obj.to_owned()).unwrap();
+        let fj_one = parse_top_level_json(json_one.to_owned()).unwrap();
+
+        let mut term = TextOnlyTerminal::new();
+        let mut line: LinePrinter = LinePrinter {
+            preview: Preview::Count,
+            ..default_line_printer(&mut term, &fj_arr, 0)
+        };
+
+        for (available_space, used_space, expected) in
+            vec![(14, 11, r#"[ 3 items ]"#), (4, 3, r#"[…]"#), (2, 0, r#""#)].into_iter()
+        {
+            let used = line.generate_container_count(&fj_arr[0], available_space)?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(line.terminal.output()),
+            );
+            assert_eq!(used_space, used);
+
+            line.terminal.clear_output();
+        }
+
+        line = LinePrinter {
+            preview: Preview::Count,
+            ..default_line_printer(&mut term, &fj_obj, 0)
+        };
+
+        for (available_space, used_space, expected) in
+            vec![(14, 11, r#"{ 2 items }"#), (4, 3, r#"{…}"#), (2, 0, r#""#)].into_iter()
+        {
+            let used = line.generate_container_count(&fj_obj[0], available_space)?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected preview with {} available columns (used up {} columns)",
+                available_space,
+                UnicodeWidthStr::width(line.terminal.output()),
+            );
+            assert_eq!(used_space, used);
+
+            line.terminal.clear_output();
+        }
+
+        line = LinePrinter {
+            preview: Preview::Count,
+            ..default_line_printer(&mut term, &fj_one, 0)
+        };
+
+        for (available_space, used_space, expected) in vec![(14, 10, r#"{ 1 item }"#)].into_iter() {
+            let used = line.generate_container_count(&fj_one[0], available_space)?;
             assert_eq!(
                 expected,
                 line.terminal.output(),
