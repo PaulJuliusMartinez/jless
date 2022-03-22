@@ -500,4 +500,14 @@ mod tests {
         assert_eq!(rows[7].range, 46..51); // false
         assert_eq!(rows[8].range, 51..52); // ]
     }
+
+    #[test]
+    fn test_parsing_json_with_comments() {
+        let json = r#"// This is a JSON with comments file
+{
+    "a": 1 // This is a comment
+}"#.to_owned();
+        let json_object = parse(json);
+        assert!(json_object.is_ok());
+    }
 }
