@@ -128,6 +128,10 @@ impl<'a> JsonParser<'a> {
                     panic!("Should have just consumed whitespace");
                 }
 
+                JsonToken::Comment => {
+                    panic!("Should have just consumed comment");
+                }
+
                 JsonToken::Error => {
                     return Err("Parse error".to_string());
                 }
