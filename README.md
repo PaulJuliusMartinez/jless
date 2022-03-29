@@ -29,9 +29,9 @@ You can install `jless` using various package managers:
 
 | Operating System / Package Manager | Command |
 | ---------------------------------- | ------- |
-| macOS - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
+| macOS/Linux - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
 | macOS - [MacPorts](https://ports.macports.org/port/jless/) | `sudo port install jless` |
-| Linux - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
+| macOS/Linux - [Nix](https://search.nixos.org/packages?channel=unstable&show=jless&from=0&size=50&sort=relevance&type=packages&query=jless) | `nix-env -iA nixpkgs.jless`      |
 | [Arch Linux](https://archlinux.org/packages/community/x86_64/jless/)     | `pacman -U jless`         |
 | [Void Linux](https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless) | `sudo xbps-install jless` |
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
