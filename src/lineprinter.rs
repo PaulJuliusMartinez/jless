@@ -629,8 +629,8 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
                 self.fill_in_container_preview(available_space, row)
             }
+            (LINE, CLOSE, COLLAPSED) => self.fill_in_container_close_char(available_space, row),
             // Impossible states
-            (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
             (DATA, CLOSE, _) => panic!("Can't focus closing of container in Data mode"),
         }
     }
