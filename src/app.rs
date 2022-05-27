@@ -77,10 +77,14 @@ impl App {
         input_filename: String,
         stdout: Box<dyn Write>,
     ) -> Result<App, String> {
-        let flatjson = match Self::parse_input(data, data_format) {
+        let mut flatjson = match Self::parse_input(data, data_format) {
             Ok(flatjson) => flatjson,
             Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
         };
+
+        if opt.collapsed {
+            flatjson.0.iter_mut().skip(1).for_each(|r| r.collapse())
+        }
 
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
         viewer.scrolloff_setting = opt.scrolloff;

@@ -413,7 +413,7 @@ impl Row {
     fn expand(&mut self) {
         self.value.expand()
     }
-    fn collapse(&mut self) {
+    pub fn collapse(&mut self) {
         self.value.collapse()
     }
     fn toggle_collapsed(&mut self) {

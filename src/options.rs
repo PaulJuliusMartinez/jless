@@ -38,6 +38,10 @@ pub struct Opt {
     #[clap(long = "scrolloff", default_value_t = 3)]
     pub scrolloff: u16,
 
+    /// Collapse all except root.
+    #[clap(long = "collapsed", display_order = 1000)]
+    pub collapsed: bool,
+
     /// Parse input as JSON, regardless of file extension.
     #[clap(long = "json", group = "data-format", display_order = 1000)]
     pub json: bool,
