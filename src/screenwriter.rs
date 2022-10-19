@@ -371,7 +371,7 @@ impl ScreenWriter {
             TruncatedStrView::init_start(filename, space_available_for_filename);
 
         if truncated_filename.any_contents_visible() {
-            let filename_width = truncated_filename.used_space().unwrap() as isize;
+            let filename_width = truncated_filename.used_space().unwrap();
             space_available_for_base -= filename_width - SPACE_BETWEEN_PATH_AND_FILENAME;
         }
 
@@ -409,7 +409,7 @@ impl ScreenWriter {
         }
 
         if truncated_filename.any_contents_visible() {
-            let filename_width = truncated_filename.used_space().unwrap() as isize;
+            let filename_width = truncated_filename.used_space().unwrap();
 
             self.terminal
                 .position_cursor(self.dimensions.width - (filename_width as u16) + 1, row)?;
