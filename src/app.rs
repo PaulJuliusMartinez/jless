@@ -2,7 +2,12 @@ use std::error::Error;
 use std::io;
 use std::io::Write;
 
-use clipboard::{ClipboardContext, ClipboardProvider};
+use clipboard::{
+    nop_clipboard::NopClipboardContext,
+    wayland_clipboard::WaylandClipboardContext,
+    x11_clipboard::{Clipboard, X11ClipboardContext},
+    ClipboardProvider,
+};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use termion::event::Key;
@@ -10,6 +15,7 @@ use termion::event::MouseButton::{Left, WheelDown, WheelUp};
 use termion::event::MouseEvent::Press;
 use termion::screen::{ToAlternateScreen, ToMainScreen};
 
+use crate::clipboard::ObjectSafeClipboardProvider;
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
@@ -28,7 +34,7 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
-    clipboard_context: Result<ClipboardContext, Box<dyn Error>>,
+    clipboard_context: Result<Box<dyn ObjectSafeClipboardProvider>, Box<dyn Error>>,
 }
 
 // State to determine how to process the next event input.
@@ -88,6 +94,17 @@ impl App {
         let screen_writer =
             ScreenWriter::init(stdout, Editor::<()>::new(), TTYDimensions::default());
 
+        let clipboard_context: Result<Box<dyn ObjectSafeClipboardProvider>, _> =
+            match std::env::var("XDG_SESSION_TYPE").as_deref() {
+                Ok("wayland") => WaylandClipboardContext::new()
+                    .map(|x| Box::new(x) as Box<dyn ObjectSafeClipboardProvider>),
+                Ok("x11") => X11ClipboardContext::new().map(|x: X11ClipboardContext<Clipboard>| {
+                    Box::new(x) as Box<dyn ObjectSafeClipboardProvider>
+                }),
+                _ => NopClipboardContext::new()
+                    .map(|x| Box::new(x) as Box<dyn ObjectSafeClipboardProvider>),
+            };
+
         Ok(App {
             viewer,
             screen_writer,
@@ -96,7 +113,7 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
-            clipboard_context: ClipboardProvider::new(),
+            clipboard_context,
         })
     }
 
