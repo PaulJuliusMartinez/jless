@@ -570,7 +570,7 @@ impl<'a> RangeAdjuster<'a> {
         let mut more_on_left = true;
         let mut more_on_right = true;
 
-        // Need to try to expand even even when used_space == available_space
+        // Need to try to expand even when used_space == available_space
         // to possible consume ellipses.
         while self.used_space <= self.available_space {
             let mut added_to_left = false;
