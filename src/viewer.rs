@@ -587,7 +587,7 @@ impl JsonViewer {
         }
     }
 
-    // If the user provided a count to a jump command, sets that as the the new
+    // If the user provided a count to a jump command, sets that as the new
     // jump distance. Otherwise, use the stored jump distance, or if none has
     // been set yet, use the default of half a window size.
     fn determine_jump_distance(&mut self, distance: Option<usize>) -> usize {
@@ -730,7 +730,7 @@ impl JsonViewer {
         // row and the top or bottom of the screen.
         let max_padding = self.dimensions.height - scrolloff - 1;
 
-        // Normally as the user moves down the the file we'll keep the focused line
+        // Normally as the user moves down the file we'll keep the focused line
         // scrolloff lines from the bottom of the screen.
         //
         // But if the user jumps well past the end of the screen, rather than leaving
