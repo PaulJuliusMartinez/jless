@@ -277,7 +277,7 @@ impl SearchState {
                         });
 
                         // If NONE of the matches start after the end of the focused row,
-                        // parition_point returns the length of the array, but then we
+                        // partition_point returns the length of the array, but then we
                         // want to jump back to the start in that case.
                         let next_match_index = if next_match == self.matches.len() {
                             0
