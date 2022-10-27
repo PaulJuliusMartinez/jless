@@ -682,7 +682,7 @@ impl JsonViewer {
         let index_of_focused_row = self.index_of_focused_row_on_screen();
 
         // If we're transitioning from line mode to focused mode, and we're focused on
-        // the closing of a container, we need to move the focuse.
+        // the closing of a container, we need to move the focus.
         if self.mode == Mode::Line && self.flatjson[self.focused_row].is_closing_of_container() {
             // We'll move focus to the next item, unless we're at the end of
             // the file and have to move focus backwards.
