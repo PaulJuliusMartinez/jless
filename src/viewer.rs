@@ -1,9 +1,9 @@
-use clap::ArgEnum;
+use clap::ValueEnum;
 
 use crate::flatjson::{FlatJson, Index, OptionIndex};
 use crate::types::TTYDimensions;
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ValueEnum)]
 pub enum Mode {
     Line,
     Data,
