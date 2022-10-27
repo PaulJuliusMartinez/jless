@@ -50,7 +50,7 @@ pub struct TruncatedStrView {
 /// character.
 ///
 /// Since showing a replacement character is less than ideal, when
-/// we are showing other chracters, we will opt for not using the
+/// we are showing other characters, we will opt for not using the
 /// entire available space, rather than including the replacment
 /// character.
 ///
