@@ -305,6 +305,7 @@ impl FlatJson {
     // there are some subtle enough differences, and the code isn't that
     // complicated, that I don't think it's worth it to try to have them
     // share an implementation.
+    #[cfg(feature = "clipboard")]
     pub fn pretty_printed_value(&self, value_index: Index) -> Result<String, std::fmt::Error> {
         if self[value_index].is_primitive() {
             return Ok(self.1[self[value_index].range.clone()].to_string());

@@ -1,7 +1,9 @@
+#[cfg(feature = "clipboard")]
 use std::error::Error;
 use std::io;
 use std::io::Write;
 
+#[cfg(feature = "clipboard")]
 use clipboard::{ClipboardContext, ClipboardProvider};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -13,12 +15,15 @@ use termion::screen::{ToAlternateScreen, ToMainScreen};
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
+#[cfg(feature = "clipboard")]
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::options::{DataFormat, Opt};
 use crate::screenwriter::{MessageSeverity, ScreenWriter};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::types::TTYDimensions;
-use crate::viewer::{Action, JsonViewer, Mode};
+use crate::viewer::{Action, JsonViewer};
+#[cfg(feature = "clipboard")]
+use crate::viewer::Mode;
 
 pub struct App {
     viewer: JsonViewer,
@@ -28,6 +33,7 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+    #[cfg(feature = "clipboard")]
     clipboard_context: Result<ClipboardContext, Box<dyn Error>>,
 }
 
@@ -43,11 +49,13 @@ pub struct App {
 #[derive(PartialEq)]
 enum InputState {
     Default,
+    #[cfg(feature = "clipboard")]
     PendingYCommand,
     PendingZCommand,
 }
 
 // Various things that can be copied
+#[cfg(feature = "clipboard")]
 enum CopyTarget {
     PrettyPrintedValue,
     OneLineValue,
@@ -96,6 +104,7 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
+            #[cfg(feature = "clipboard")]
             clipboard_context: ClipboardProvider::new(),
         })
     }
@@ -152,6 +161,7 @@ impl App {
                 }
                 // Handle special input states:
                 // y commands:
+                #[cfg(feature = "clipboard")]
                 event if self.input_state == InputState::PendingYCommand => {
                     let copy_target = match event {
                         KeyEvent(Key::Char('y')) => Some(CopyTarget::PrettyPrintedValue),
@@ -207,6 +217,7 @@ impl App {
                         None
                     }
                 }
+                #[cfg(feature = "clipboard")]
                 KeyEvent(Key::Char('y')) => {
                     match &self.clipboard_context {
                         Ok(_) => {
@@ -622,6 +633,7 @@ impl App {
         let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
     }
 
+    #[cfg(feature = "clipboard")]
     fn copy_content(&mut self, copy_target: CopyTarget) {
         // Checked when the user first hits 'y'.
         let clipboard = self.clipboard_context.as_mut().unwrap();
