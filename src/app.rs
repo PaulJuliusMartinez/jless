@@ -1,7 +1,9 @@
+#[cfg(feature = "clipboard")]
 use std::error::Error;
 use std::io;
 use std::io::Write;
 
+#[cfg(feature = "clipboard")]
 use clipboard::{ClipboardContext, ClipboardProvider};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
@@ -30,6 +32,7 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
+    #[cfg(feature = "clipboard")]
     clipboard_context: Result<ClipboardContext, Box<dyn Error>>,
 }
 
@@ -124,6 +127,7 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
+            #[cfg(feature = "clipboard")]
             clipboard_context: ClipboardProvider::new(),
         })
     }
@@ -220,6 +224,7 @@ impl App {
                     None
                 }
                 // y commands:
+                #[cfg(feature = "clipboard")]
                 event if self.input_state == InputState::PendingYCommand => {
                     let content_target = match event {
                         KeyEvent(Key::Char('y')) => Some(ContentTarget::PrettyPrintedValue),
@@ -282,6 +287,7 @@ impl App {
                     self.buffer_input(b'p');
                     None
                 }
+                #[cfg(feature = "clipboard")]
                 KeyEvent(Key::Char('y')) => {
                     match &self.clipboard_context {
                         Ok(_) => {
@@ -811,6 +817,7 @@ impl App {
         Ok(data)
     }
 
+    #[cfg(feature = "clipboard")]
     fn copy_content(&mut self, content_target: ContentTarget) {
         match self.get_content_target_data(content_target) {
             Ok(content) => {
