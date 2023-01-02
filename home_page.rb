@@ -6,7 +6,7 @@ class HomePage < BasePage
     { os: 'macOS', tool: 'HomeBrew', command: 'brew install jless', link: 'https://formulae.brew.sh/formula/jless' },
     { os: 'macOS', tool: 'MacPorts', command: 'sudo port install jless', link: 'https://ports.macports.org/port/jless/' },
     { os: 'Linux', tool: 'HomeBrew', command: 'brew install jless', link: 'https://formulae.brew.sh/formula/jless' },
-    { os: 'Arch Linux', command: 'pacman -U jless', link: 'https://archlinux.org/packages/community/x86_64/jless/' },
+    { os: 'Arch Linux', command: 'pacman -S jless', link: 'https://archlinux.org/packages/community/x86_64/jless/' },
     { os: 'Void Linux', command: 'sudo xbps-install jless', link: 'https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless' },
     { os: 'NetBSD', command: 'pkgin install jless', link: 'https://pkgsrc.se/textproc/jless/' },
     { os: 'FreeBSD', command: 'pkg install jless', link: 'https://freshports.org/textproc/jless/' },
