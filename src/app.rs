@@ -389,8 +389,8 @@ impl App {
                                 Some(Action::Click(h))
                             }
                         }
-                        Press(WheelUp, _, _) => Some(Action::MoveUp(3)),
-                        Press(WheelDown, _, _) => Some(Action::MoveDown(3)),
+                        Press(WheelUp, _, _) => Some(Action::ScrollUp(3)),
+                        Press(WheelDown, _, _) => Some(Action::ScrollDown(3)),
                         // Ignore all other mouse events and don't redraw the screen.
                         _ => {
                             continue;
