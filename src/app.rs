@@ -1,10 +1,6 @@
-#[cfg(feature = "clipboard")]
-use std::error::Error;
 use std::io;
 use std::io::Write;
 
-#[cfg(feature = "clipboard")]
-use clipboard::{ClipboardContext, ClipboardProvider};
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 use termion::event::Key;
@@ -13,6 +9,7 @@ use termion::event::MouseEvent::Press;
 use termion::raw::RawTerminal;
 use termion::screen::{ToAlternateScreen, ToMainScreen};
 
+use crate::clip::{ClipProvider, ClipError};
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
@@ -32,8 +29,7 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
-    #[cfg(feature = "clipboard")]
-    clipboard_context: Result<ClipboardContext, Box<dyn Error>>,
+    clipboard_provider: Result<ClipProvider, ClipError>,
 }
 
 // State to determine how to process the next event input.
@@ -107,6 +103,7 @@ impl App {
         data_format: DataFormat,
         input_filename: String,
         stdout: RawTerminal<Box<dyn Write>>,
+        clipboard_provider: Result<ClipProvider, ClipError>,
     ) -> Result<App, String> {
         let flatjson = match Self::parse_input(data, data_format) {
             Ok(flatjson) => flatjson,
@@ -127,8 +124,7 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
-            #[cfg(feature = "clipboard")]
-            clipboard_context: ClipboardProvider::new(),
+            clipboard_provider,
         })
     }
 
@@ -224,7 +220,6 @@ impl App {
                     None
                 }
                 // y commands:
-                #[cfg(feature = "clipboard")]
                 event if self.input_state == InputState::PendingYCommand => {
                     let content_target = match event {
                         KeyEvent(Key::Char('y')) => Some(ContentTarget::PrettyPrintedValue),
@@ -287,9 +282,8 @@ impl App {
                     self.buffer_input(b'p');
                     None
                 }
-                #[cfg(feature = "clipboard")]
                 KeyEvent(Key::Char('y')) => {
-                    match &self.clipboard_context {
+                    match &self.clipboard_provider {
                         Ok(_) => {
                             self.input_state = InputState::PendingYCommand;
                             self.input_buffer.clear();
@@ -300,7 +294,6 @@ impl App {
                             self.set_error_message(msg);
                         }
                     }
-
                     None
                 }
                 KeyEvent(Key::Char('z')) => {
@@ -817,12 +810,11 @@ impl App {
         Ok(data)
     }
 
-    #[cfg(feature = "clipboard")]
     fn copy_content(&mut self, content_target: ContentTarget) {
         match self.get_content_target_data(content_target) {
             Ok(content) => {
                 // Checked when the user first hits 'y'.
-                let clipboard = self.clipboard_context.as_mut().unwrap();
+                let clipboard = self.clipboard_provider.as_mut().unwrap();
 
                 let focused_row = &self.viewer.flatjson[self.viewer.focused_row];
 
@@ -838,7 +830,7 @@ impl App {
                     ContentTarget::QueryPath => "query path",
                 };
 
-                if let Err(err) = clipboard.set_contents(content) {
+                if let Err(err) = clipboard.copy(content) {
                     self.set_error_message(format!(
                         "Unable to copy {content_type} to clipboard: {err}"
                     ));

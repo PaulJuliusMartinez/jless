@@ -71,6 +71,11 @@ pub struct Opt {
     #[arg(long = "scrolloff", default_value_t = 3)]
     pub scrolloff: u16,
 
+    /// Shell command to run for copy actions instead of the default clipboard.
+    /// The copy content will be sent into the command's stdin.
+    #[clap(long = "clipboard-cmd")]
+    pub clipboard_command: Option<String>,
+
     /// Parse input as JSON, regardless of file extension.
     #[arg(long = "json", group = "data-format", display_order = 1000)]
     pub json: bool,
