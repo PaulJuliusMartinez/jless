@@ -6,6 +6,8 @@
     "escaped_quote": "middle \"words in\" quotes",
     "escaped_spaces": "tab:\t; newline:\n; carriage return:\r; end",
     "escaped_backspace": "easy as 1, 2, 4\b3",
+    "ascii_control_characters": "NUL \\u0000, ESC \\u001B, DEL \\u007F",
+    "unicode_control_characters": "0x80: \\u0080, 0x90: \\u0090, 0x9F: \\u009F",
     "unicode_euro_sign": "€ \u20AC",
     "unicode_euro_sign_casing": "€ \u20ac \u20aC",
     "unicode_supplemental_plane": "𐐷 \uD801\uDC37",

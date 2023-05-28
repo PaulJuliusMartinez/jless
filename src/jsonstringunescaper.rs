@@ -1,4 +1,5 @@
 use std::fmt;
+use std::fmt::Write;
 
 pub struct UnescapeError {
     index: usize,
@@ -34,7 +35,8 @@ enum DecodedCodepoint {
     HighSurrogate(u16),
 }
 
-// Unescapes a syntactically valid JSON string into a valid UTF-8 string.
+// Unescapes a syntactically valid JSON string into a valid UTF-8 string,
+// except for Unicode control characters.
 //
 // This makes the assumption that the only characters following a '\' are:
 // - single character escapes: "\/bfnrt
@@ -57,7 +59,12 @@ pub fn unescape_json_string(s: &str) -> Result<String, UnescapeError> {
     while let Some(ch) = chars.next() {
         index += 1;
         if ch != '\\' {
-            unescaped.push(ch);
+            if is_control(ch) {
+                unescaped.push_str("\\u00");
+                write!(unescaped, "{:02X}", ch as u32).unwrap();
+            } else {
+                unescaped.push(ch);
+            }
             continue;
         }
 
@@ -68,7 +75,8 @@ pub fn unescape_json_string(s: &str) -> Result<String, UnescapeError> {
             '"' => unescaped.push('"'),
             '\\' => unescaped.push('\\'),
             '/' => unescaped.push('/'),
-            'b' => unescaped.push('\x08'),
+            // '\b' is backspace, a control character.
+            'b' => unescaped.push_str("\\b"),
             'f' => unescaped.push('\x0c'),
             'n' => unescaped.push('\n'),
             'r' => unescaped.push('\r'),
@@ -78,7 +86,17 @@ pub fn unescape_json_string(s: &str) -> Result<String, UnescapeError> {
                 index += 4;
 
                 match decode_codepoint(codepoint) {
-                    DecodedCodepoint::Char(ch) => unescaped.push(ch),
+                    DecodedCodepoint::Char(ch) => {
+                        if is_control(ch) {
+                            unescaped.push_str("\\u");
+                            unescaped.push(codepoint_chars[0] as char);
+                            unescaped.push(codepoint_chars[1] as char);
+                            unescaped.push(codepoint_chars[2] as char);
+                            unescaped.push(codepoint_chars[3] as char);
+                        } else {
+                            unescaped.push(ch)
+                        }
+                    }
                     DecodedCodepoint::LowSurrogate(_) => {
                         return Err(UnescapeError {
                             index: index - 6,
@@ -121,6 +139,14 @@ pub fn unescape_json_string(s: &str) -> Result<String, UnescapeError> {
     }
 
     Ok(unescaped)
+}
+
+fn is_control(ch: char) -> bool {
+    match ch as u32 {
+        0x00..=0x1F => true,
+        0x7F..=0x9F => true,
+        _ => false,
+    }
 }
 
 // Consumes four hex characters from a Chars iterator, and converts it to a u16.
@@ -190,6 +216,16 @@ mod tests {
         check("abc \\n \\t \\r", "abc \n \t \r");
         check("€ \\u20AC", "€ \u{20AC}");
         check("𐐷 \\uD801\\uDC37", "𐐷 \u{10437}");
+
+        // Control characters don't get unescaped
+        check("12x\\b34", "12x\\b34");
+        check(
+            "\\u0000 | \\u001f | \\u0020 | \\u007e | \\u007f | \\u0080 | \\u009F | \\u00a0",
+            "\\u0000 | \\u001f | \u{0020} | \u{007e} | \\u007f | \\u0080 | \\u009F | \u{00a0}",
+        );
+
+        // Non-ASCII unescaped control codes get escaped
+        check("12 \u{0080} 34", "12 \\u0080 34");
 
         // Errors; make sure index is computed properly.
         check(

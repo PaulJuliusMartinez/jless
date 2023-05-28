@@ -89,7 +89,8 @@
           "nicely" printed on one line with spaces instead of pretty
           printed.
   ys    When the currently focused value is a string, copy the contents of the
-          string, with all escape sequences unescaped, to the clipboard.
+          string, with all escape sequences, except control characters, unescaped,
+          to the clipboard.
 
   yk    Copy the object key on the currently focused line. When in data mode
           this will not include quotes around the key if the key is a valid

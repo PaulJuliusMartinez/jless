@@ -3,7 +3,7 @@ main
 
 New features:
 - A new command `ys` will copy unescaped string literals to the
-  clipboard.
+  clipboard. Control characters remain escaped.
 
 Bug fixes:
 - Scrolling with the mouse will now move the viewing window, rather than
