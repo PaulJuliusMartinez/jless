@@ -13,6 +13,7 @@ use termion::screen::{ToAlternateScreen, ToMainScreen};
 use crate::flatjson;
 use crate::input::TuiEvent;
 use crate::input::TuiEvent::{KeyEvent, MouseEvent, WinChEvent};
+use crate::jsonstringunescaper::unescape_json_string;
 use crate::lineprinter::JS_IDENTIFIER;
 use crate::options::{DataFormat, Opt};
 use crate::screenwriter::{MessageSeverity, ScreenWriter};
@@ -51,6 +52,7 @@ enum InputState {
 enum CopyTarget {
     PrettyPrintedValue,
     OneLineValue,
+    String,
     Key,
     DotPath,
     BracketPath,
@@ -156,6 +158,7 @@ impl App {
                     let copy_target = match event {
                         KeyEvent(Key::Char('y')) => Some(CopyTarget::PrettyPrintedValue),
                         KeyEvent(Key::Char('v')) => Some(CopyTarget::OneLineValue),
+                        KeyEvent(Key::Char('s')) => Some(CopyTarget::String),
                         KeyEvent(Key::Char('k')) => Some(CopyTarget::Key),
                         KeyEvent(Key::Char('p')) => Some(CopyTarget::DotPath),
                         KeyEvent(Key::Char('b')) => Some(CopyTarget::BracketPath),
@@ -641,6 +644,24 @@ impl App {
             CopyTarget::PrettyPrintedValue | CopyTarget::OneLineValue => {
                 let range = focused_row.range.clone();
                 ("value", json[range].to_string())
+            }
+            CopyTarget::String => {
+                if !focused_row.is_string() {
+                    self.set_warning_message("Current value is not a string".to_string());
+                    return;
+                }
+
+                let range = focused_row.range.clone();
+                let quoteless_range = (range.start + 1)..(range.end - 1);
+                let string_value = &json[quoteless_range];
+
+                match unescape_json_string(string_value) {
+                    Ok(unescaped) => ("string contents", unescaped),
+                    Err(err) => {
+                        self.set_warning_message(format!("{}", err));
+                        return;
+                    }
+                }
             }
             CopyTarget::Key => {
                 if let Some(key_range) = &focused_row.key_range {

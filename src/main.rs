@@ -21,6 +21,7 @@ mod flatjson;
 mod highlighting;
 mod input;
 mod jsonparser;
+mod jsonstringunescaper;
 mod jsontokenizer;
 mod lineprinter;
 mod options;

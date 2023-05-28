@@ -1,3 +1,15 @@
+main
+====
+
+New features:
+- A new command `ys` will copy unescaped string literals to the
+  clipboard.
+
+Bug fixes:
+- Scrolling with the mouse will now move the viewing window, rather than
+  the cursor.
+
+
 v0.8.0 (2022-03-10)
 ===================
 
@@ -18,7 +30,7 @@ Improvements:
 - Pressing Escape will clear the input buffer and stop highlighting
   search matches.
 
-Bug Fixes:
+Bug fixes:
 - Ignore clicks on the status bar or below rather than focusing on
   hidden lines, and don't re-render the screen, allowing the path in the
   status bar to be highlighted and copied.
@@ -29,7 +41,7 @@ Bug Fixes:
 - [PR #54]: Fix panic when using Ctrl-C or Ctrl-D to cancel entering
   search input.
 
-Other Notes:
+Other notes:
 - Upgraded regex crate to 1.5.5 due to CVE-2022-24713. jless accepts
   and compiles untrusted input as regexes, but you'd only DDOS yourself,
   so it's not terribly concerning.
@@ -45,7 +57,7 @@ New features / changes:
   node, rather than moving down a line. (Functionality was previous
   available via `i`, but was undocumented; `i` has become unmapped.)
 
-Bug Fixes:
+Bug fixes:
 - [Issue #7 / PR #32]: Fix issue with rustyline always reading from
   STDIN preventing `/` command from working when input provided via
   STDIN.
