@@ -54,6 +54,12 @@
 
   Space        Toggle the collapsed state of the currently focused node.
 
+                                    [1mDISPLAY[0m
+
+  m            Toggle display mode: line (default), data
+
+  p            Cycle preview mode: full (default), count, none
+
                                     [1mSCROLLING[0m
 
   ^e        *  Scroll down one line (or [4mN[0m lines).

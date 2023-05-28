@@ -85,6 +85,7 @@ impl App {
         };
 
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
+        viewer.set_preview(opt.preview);
         viewer.scrolloff_setting = opt.scrolloff;
 
         let screen_writer =
@@ -340,6 +341,7 @@ impl App {
                         Key::Char('G') | Key::End => Some(Action::FocusBottom),
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
+                        Key::Char('p') => Some(Action::TogglePreview),
                         Key::Char('<') => {
                             self.screen_writer
                                 .decrease_indentation_level(self.viewer.flatjson.2 as u16);
