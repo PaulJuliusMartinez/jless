@@ -4,10 +4,15 @@ main
 New features:
 - A new command `ys` will copy unescaped string literals to the
   clipboard. Control characters remain escaped.
+- The length of Arrays and size of Objects is now shown before the
+  container previews, e.g., (`foo: (3) ["apple", "banana", "cherry"]`)
 
 Bug fixes:
 - Scrolling with the mouse will now move the viewing window, rather than
   the cursor.
+
+Other notes:
+- The minimum supported Rust version has been updated to 1.67.
 
 
 v0.8.0 (2022-03-10)

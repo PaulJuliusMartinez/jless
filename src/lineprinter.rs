@@ -382,7 +382,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             let parent = self.row.parent.unwrap();
             debug_assert!(self.flatjson[parent].is_array());
 
-            write!(label, "{}", self.row.index).unwrap();
+            write!(label, "{}", self.row.index_in_parent).unwrap();
 
             (label.as_str(), None, DelimiterPair::Square)
         }
@@ -706,8 +706,13 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         let always_quote_string_object_keys = self.mode == Mode::Line;
-        let mut used_space =
-            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?;
+        let is_nested = false;
+        let mut used_space = self.generate_container_preview(
+            row,
+            available_space,
+            is_nested,
+            always_quote_string_object_keys,
+        )?;
 
         if self.trailing_comma {
             used_space += 1;
@@ -726,22 +731,54 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         Ok(used_space)
     }
 
+    fn size_of_container_and_num_digits_required(&self, row: &Row) -> (isize, isize) {
+        let container_size = {
+            let close_container = &self.flatjson[row.pair_index().unwrap()];
+            let last_child_index = close_container.last_child().unwrap();
+            (self.flatjson[last_child_index].index_in_parent as isize) + 1
+        };
+
+        // We are assuming container_size is never 0.
+        let space_needed_for_size = (isize::ilog10(container_size) as isize) + 1;
+
+        (container_size, space_needed_for_size)
+    }
+
     fn generate_container_preview(
         &mut self,
         row: &Row,
         mut available_space: isize,
+        is_nested: bool,
         always_quote_string_object_keys: bool,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
-        // Minimum amount of space required == 3: […]
-        if available_space < 3 {
+        let (container_size, space_needed_for_container_size) =
+            self.size_of_container_and_num_digits_required(row);
+
+        // Minimum amount of space required:
+        // - top level: (123) […]
+        // - nested: […]
+        let mut min_space_needed = 3;
+        if !is_nested {
+            min_space_needed += 3 + space_needed_for_container_size;
+        }
+
+        if available_space < min_space_needed {
             return Ok(0);
+        }
+
+        let mut num_printed = 0;
+
+        if !is_nested {
+            self.terminal.set_fg(terminal::LIGHT_BLACK)?;
+            write!(self.terminal, "({}) ", container_size)?;
+            available_space -= 3 + space_needed_for_container_size;
+            num_printed += 3 + space_needed_for_container_size;
         }
 
         let container_type = row.value.container_type().unwrap();
         available_space -= 2;
-        let mut num_printed = 0;
 
         // Create a copy of self.search_matches
         let original_search_matches = self.search_matches.clone();
@@ -873,7 +910,13 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?
+            let is_nested = true;
+            self.generate_container_preview(
+                row,
+                available_space,
+                is_nested,
+                always_quote_string_object_keys,
+            )?
         } else {
             self.fill_in_value_preview(row, available_space)?
         };
@@ -1294,7 +1337,7 @@ mod tests {
             8,
         ]"#;
         let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
-        fj[1].index = 12345;
+        fj[1].index_in_parent = 12345;
 
         let mut term = VisibleEscapesTerminal::new(false, true);
         let mut line: LinePrinter = LinePrinter {
@@ -1324,7 +1367,7 @@ mod tests {
             ],
         }"#;
         let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
-        fj[3].index = 12345;
+        fj[3].index_in_parent = 12345;
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 1);
@@ -1521,23 +1564,25 @@ mod tests {
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         for (available_space, used_space, always_quote_string_object_keys, expected) in vec![
-            (50, 31, true, r#"{"a": 1, "d": {…}, "b c": null}"#),
-            (50, 27, false, r#"{a: 1, d: {…}, "b c": null}"#),
-            (26, 26, false, r#"{a: 1, d: {…}, "b c": nu…}"#),
-            (25, 25, false, r#"{a: 1, d: {…}, "b c": n…}"#),
-            (24, 24, false, r#"{a: 1, d: {…}, "b c": …}"#),
-            (23, 23, false, r#"{a: 1, d: {…}, "b…": …}"#),
-            (22, 17, false, r#"{a: 1, d: {…}, …}"#),
-            (16, 15, false, r#"{a: 1, d: …, …}"#),
-            (14, 9, false, r#"{a: 1, …}"#),
-            (8, 3, false, r#"{…}"#),
-            (2, 0, false, r#""#),
+            (54, 35, true, r#"(3) {"a": 1, "d": {…}, "b c": null}"#),
+            (54, 31, false, r#"(3) {a: 1, d: {…}, "b c": null}"#),
+            (30, 30, false, r#"(3) {a: 1, d: {…}, "b c": nu…}"#),
+            (29, 29, false, r#"(3) {a: 1, d: {…}, "b c": n…}"#),
+            (28, 28, false, r#"(3) {a: 1, d: {…}, "b c": …}"#),
+            (27, 27, false, r#"(3) {a: 1, d: {…}, "b…": …}"#),
+            (26, 21, false, r#"(3) {a: 1, d: {…}, …}"#),
+            (20, 19, false, r#"(3) {a: 1, d: …, …}"#),
+            (18, 13, false, r#"(3) {a: 1, …}"#),
+            (12, 7, false, r#"(3) {…}"#),
+            (6, 0, false, r#""#),
         ]
         .into_iter()
         {
+            let is_nested = false;
             let used = line.generate_container_preview(
                 &line.flatjson[0],
                 available_space,
+                is_nested,
                 always_quote_string_object_keys,
             )?;
             assert_eq!(
@@ -1566,27 +1611,29 @@ mod tests {
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         for (available_space, used_space, expected) in vec![
-            (50, 29, r#"[1, {…}, null, "hello", true]"#),
-            (28, 28, r#"[1, {…}, null, "hello", tr…]"#),
-            (27, 27, r#"[1, {…}, null, "hello", t…]"#),
-            (26, 26, r#"[1, {…}, null, "hello", …]"#),
-            (25, 25, r#"[1, {…}, null, "hel…", …]"#),
-            (24, 24, r#"[1, {…}, null, "he…", …]"#),
-            (23, 23, r#"[1, {…}, null, "h…", …]"#),
-            (22, 17, r#"[1, {…}, null, …]"#),
-            (16, 16, r#"[1, {…}, nu…, …]"#),
-            (15, 15, r#"[1, {…}, n…, …]"#),
-            (14, 11, r#"[1, {…}, …]"#),
-            (10, 6, r#"[1, …]"#),
-            (5, 3, r#"[…]"#),
-            (2, 0, r#""#),
+            (54, 33, r#"(5) [1, {…}, null, "hello", true]"#),
+            (32, 32, r#"(5) [1, {…}, null, "hello", tr…]"#),
+            (31, 31, r#"(5) [1, {…}, null, "hello", t…]"#),
+            (30, 30, r#"(5) [1, {…}, null, "hello", …]"#),
+            (29, 29, r#"(5) [1, {…}, null, "hel…", …]"#),
+            (28, 28, r#"(5) [1, {…}, null, "he…", …]"#),
+            (27, 27, r#"(5) [1, {…}, null, "h…", …]"#),
+            (26, 21, r#"(5) [1, {…}, null, …]"#),
+            (20, 20, r#"(5) [1, {…}, nu…, …]"#),
+            (19, 19, r#"(5) [1, {…}, n…, …]"#),
+            (18, 15, r#"(5) [1, {…}, …]"#),
+            (14, 10, r#"(5) [1, …]"#),
+            (9, 7, r#"(5) […]"#),
+            (6, 0, r#""#),
         ]
         .into_iter()
         {
+            let is_nested = false;
             let always_quote_string_object_keys = false;
             let used = line.generate_container_preview(
                 &line.flatjson[0],
                 available_space,
+                is_nested,
                 always_quote_string_object_keys,
             )?;
             assert_eq!(
@@ -1614,20 +1661,20 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
-        let used = line.generate_container_preview(&line.flatjson[0], 34, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 38, false, false)?;
         assert_eq!(
-            r#"{a: [1, {…}, null, "hello", true]}"#,
+            r#"(1) {a: [1, {…}, null, "hello", true]}"#,
             line.terminal.output()
         );
-        assert_eq!(34, used);
+        assert_eq!(38, used);
 
         line.terminal.clear_output();
-        let used = line.generate_container_preview(&line.flatjson[0], 33, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 37, false, false)?;
         assert_eq!(
-            r#"{a: [1, {…}, null, "hello", tr…]}"#,
+            r#"(1) {a: [1, {…}, null, "hello", tr…]}"#,
             line.terminal.output()
         );
-        assert_eq!(33, used);
+        assert_eq!(37, used);
 
         let json = r#"[{"a": 1, "d": {"x": true}, "b c": null}]"#;
         //            [{a: 1, d: {…}, "b c": null}]
@@ -1637,14 +1684,20 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
-        let used = line.generate_container_preview(&line.flatjson[0], 29, false)?;
-        assert_eq!(r#"[{a: 1, d: {…}, "b c": null}]"#, line.terminal.output());
-        assert_eq!(29, used);
+        let used = line.generate_container_preview(&line.flatjson[0], 33, false, false)?;
+        assert_eq!(
+            r#"(1) [{a: 1, d: {…}, "b c": null}]"#,
+            line.terminal.output()
+        );
+        assert_eq!(33, used);
 
         line.terminal.clear_output();
-        let used = line.generate_container_preview(&line.flatjson[0], 28, false)?;
-        assert_eq!(r#"[{a: 1, d: {…}, "b c": nu…}]"#, line.terminal.output());
-        assert_eq!(28, used);
+        let used = line.generate_container_preview(&line.flatjson[0], 32, false, false)?;
+        assert_eq!(
+            r#"(1) [{a: 1, d: {…}, "b c": nu…}]"#,
+            line.terminal.output()
+        );
+        assert_eq!(32, used);
 
         Ok(())
     }
@@ -1664,11 +1717,11 @@ mod tests {
 
         let expected = r#"{[true]: 1, [["t", "w", "o"]]: 2, [3]: 3, [null]: 4}"#;
 
-        let _ = line.generate_container_preview(&line.flatjson[0], 100, true)?;
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, true, true)?;
         assert_eq!(expected, line.terminal.output());
 
         line.terminal.clear_output();
-        let _ = line.generate_container_preview(&line.flatjson[0], 100, false)?;
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, true, false)?;
         assert_eq!(expected, line.terminal.output());
 
         Ok(())

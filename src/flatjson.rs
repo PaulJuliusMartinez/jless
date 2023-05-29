@@ -245,7 +245,7 @@ impl FlatJson {
                 if path_type == PathType::DotWithTopLevelIndex
                     && (index != 0 || row.next_sibling.is_some())
                 {
-                    write!(buf, "[{}]", row.index)
+                    write!(buf, "[{}]", row.index_in_parent)
                 } else {
                     Ok(())
                 }
@@ -259,7 +259,7 @@ impl FlatJson {
                             write!(buf, "[]")
                         }
                     }
-                    _ => write!(buf, "[{}]", row.index),
+                    _ => write!(buf, "[{}]", row.index_in_parent),
                 }
             }
         };
@@ -378,7 +378,7 @@ pub struct Row {
     pub next_sibling: OptionIndex,
 
     pub depth: usize,
-    pub index: Index,
+    pub index_in_parent: usize,
     pub range: Range<usize>,
     pub key_range: Option<Range<usize>>,
     pub value: Value,
