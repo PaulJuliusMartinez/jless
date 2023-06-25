@@ -84,6 +84,7 @@ const FOCUSED_EXPANDED_CONTAINER: &str = "▼ ";
 const COLLAPSED_CONTAINER: &str = "▷ ";
 const EXPANDED_CONTAINER: &str = "▽ ";
 const INDICATOR_WIDTH: usize = 2;
+const NO_FOCUSED_MATCH: Range<usize> = 0..0;
 
 lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
@@ -147,6 +148,11 @@ pub struct LinePrinter<'a, 'b> {
     // For highlighting
     pub search_matches: Option<Peekable<MatchRangeIter<'b>>>,
     pub focused_search_match: &'a Range<usize>,
+
+    // It's unfortunate that this has to be exposed publicly; it's only
+    // used internally to disable the special syntax highlighting for
+    // the current focused match in container previews.
+    pub emphasize_focused_search_match: bool,
 
     // For remembering horizontal scroll positions of long lines.
     pub cached_truncated_value: Option<Entry<'a, usize, TruncatedStrView>>,
@@ -627,7 +633,18 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(available_space, row),
             (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(available_space, row),
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
-                self.fill_in_container_preview(available_space, row)
+                // Don't highlight the current focused match in the preview.
+                //
+                // When the container is expanded, it's confusing because two things are
+                // highlighted and you're not sure which is focused.
+                //
+                // When the container is collapsed, it's misleading because the first match
+                // isn't really "focused", and hitting 'n' won't jump to the next one in
+                // the preview (if more than one is visible).
+                self.emphasize_focused_search_match = false;
+                let result = self.fill_in_container_preview(available_space, row);
+                self.emphasize_focused_search_match = true;
+                result
             }
             // Impossible states
             (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
@@ -987,6 +1004,12 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             )?;
         }
 
+        let focused_search_match = if self.emphasize_focused_search_match {
+            &self.focused_search_match
+        } else {
+            &NO_FOCUSED_MATCH
+        };
+
         highlighting::highlight_truncated_str_view(
             self.terminal,
             value_ref,
@@ -1001,7 +1024,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             &highlighting::DIMMED_STYLE,
             &highlighting::GRAY_INVERTED_STYLE,
             &mut self.search_matches.as_mut(),
-            self.focused_search_match,
+            focused_search_match,
         )?;
 
         if quoted {
@@ -1051,6 +1074,12 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         self.highlight_str(delimiter.left(), str_open_delimiter_range_start, styles)?;
 
+        let focused_search_match = if self.emphasize_focused_search_match {
+            &self.focused_search_match
+        } else {
+            &NO_FOCUSED_MATCH
+        };
+
         highlighting::highlight_truncated_str_view(
             self.terminal,
             s,
@@ -1059,7 +1088,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             styles.0,
             styles.1,
             &mut self.search_matches.as_mut(),
-            self.focused_search_match,
+            focused_search_match,
         )?;
 
         self.highlight_str(delimiter.right(), str_close_delimiter_range_start, styles)?;
@@ -1074,6 +1103,12 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         str_range_start: Option<usize>,
         styles: (&Style, &Style),
     ) -> fmt::Result {
+        let focused_search_match = if self.emphasize_focused_search_match {
+            self.focused_search_match
+        } else {
+            &NO_FOCUSED_MATCH
+        };
+
         highlighting::highlight_matches(
             self.terminal,
             s,
@@ -1081,7 +1116,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             styles.0,
             styles.1,
             &mut self.search_matches.as_mut(),
-            self.focused_search_match,
+            focused_search_match,
         )
     }
 }
@@ -1115,6 +1150,7 @@ mod tests {
             trailing_comma: false,
             search_matches: None,
             focused_search_match: &DUMMY_RANGE,
+            emphasize_focused_search_match: true,
             cached_truncated_value: None,
         }
     }

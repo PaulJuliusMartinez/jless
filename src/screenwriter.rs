@@ -241,6 +241,8 @@ impl ScreenWriter {
 
             search_matches: Some(search_matches_copy),
             focused_search_match,
+            // This is only used internally and really shouldn't be exposed.
+            emphasize_focused_search_match: true,
 
             cached_truncated_value: Some(self.truncated_row_value_views.entry(index)),
         };
