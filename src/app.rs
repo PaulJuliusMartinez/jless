@@ -490,12 +490,17 @@ impl App {
                     self.search_state.current_match_range(),
                 );
             } else {
-                // Check whether we're still actively searching
-                if focused_row_before != self.viewer.focused_row
-                    || previous_collapsed_state_of_focused_row
-                        != self.viewer.flatjson[focused_row_before].is_collapsed()
-                {
+                // Check whether we're still actively searching. If the cursor moves,
+                // we're no longer actively searching. If the focused row was expanded
+                // or collapsed, we're still searching, but there's no longer a current
+                // match.
+                if focused_row_before != self.viewer.focused_row {
                     self.search_state.set_no_longer_actively_searching();
+                } else if previous_collapsed_state_of_focused_row
+                    != self.viewer.flatjson[focused_row_before].is_collapsed()
+                {
+                    self.search_state
+                        .set_matches_visible_if_actively_searching();
                 }
             }
 

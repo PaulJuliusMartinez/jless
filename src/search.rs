@@ -39,6 +39,7 @@ pub struct SearchState {
 
 pub enum ImmediateSearchState {
     NotSearching,
+    MatchesVisible,
     ActivelySearching {
         last_match_jumped_to: usize,
         last_search_into_collapsed_container: bool,
@@ -136,9 +137,17 @@ impl SearchState {
         })
     }
 
+    pub fn showing_matches(&self) -> bool {
+        match self.immediate_state {
+            ImmediateSearchState::NotSearching => false,
+            ImmediateSearchState::MatchesVisible
+            | ImmediateSearchState::ActivelySearching { .. } => true,
+        }
+    }
+
     pub fn active_search_state(&self) -> Option<(usize, bool)> {
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => None,
+            ImmediateSearchState::NotSearching | ImmediateSearchState::MatchesVisible => None,
             ImmediateSearchState::ActivelySearching {
                 last_match_jumped_to,
                 just_wrapped,
@@ -161,6 +170,15 @@ impl SearchState {
 
     pub fn set_no_longer_actively_searching(&mut self) {
         self.immediate_state = ImmediateSearchState::NotSearching;
+    }
+
+    pub fn set_matches_visible_if_actively_searching(&mut self) {
+        match self.immediate_state {
+            ImmediateSearchState::ActivelySearching { .. } => {
+                self.immediate_state = ImmediateSearchState::MatchesVisible
+            }
+            _ => {}
+        }
     }
 
     pub fn jump_to_match(
@@ -221,7 +239,8 @@ impl SearchState {
     pub fn matches_iter(&self, range_start: usize) -> MatchRangeIter {
         match self.immediate_state {
             ImmediateSearchState::NotSearching => STATIC_EMPTY_SLICE.iter(),
-            ImmediateSearchState::ActivelySearching { .. } => {
+            ImmediateSearchState::MatchesVisible
+            | ImmediateSearchState::ActivelySearching { .. } => {
                 let search_result = self
                     .matches
                     .binary_search_by(|probe| probe.end.cmp(&range_start));
@@ -238,7 +257,7 @@ impl SearchState {
     /// if not actively searching.
     pub fn current_match_range(&self) -> Range<usize> {
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => 0..0,
+            ImmediateSearchState::NotSearching | ImmediateSearchState::MatchesVisible => 0..0,
             ImmediateSearchState::ActivelySearching {
                 last_match_jumped_to,
                 ..
@@ -265,7 +284,7 @@ impl SearchState {
         debug_assert!(jumps != 0);
 
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => {
+            ImmediateSearchState::NotSearching | ImmediateSearchState::MatchesVisible => {
                 let focused_row_range = flatjson[focused_row].range_represented_by_row();
 
                 match true_direction {

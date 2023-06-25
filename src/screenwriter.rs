@@ -313,22 +313,24 @@ impl ScreenWriter {
                 ..terminal::Style::default()
             })?;
             self.terminal.write_str(contents)?;
-        } else if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
+        } else if search_state.showing_matches() {
             self.terminal
                 .write_char(search_state.direction.prompt_char())?;
             self.terminal.write_str(&search_state.search_term)?;
 
-            // Print out which match we're on:
-            let match_tracker = format!("[{}/{}]", match_num + 1, search_state.num_matches());
-            self.terminal.position_cursor(
-                self.dimensions.width
-                    - (1 + MAX_BUFFER_SIZE as u16)
-                    - (3 + match_tracker.len() as u16 + 3),
-                self.dimensions.height,
-            )?;
+            if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
+                // Print out which match we're on:
+                let match_tracker = format!("[{}/{}]", match_num + 1, search_state.num_matches());
+                self.terminal.position_cursor(
+                    self.dimensions.width
+                        - (1 + MAX_BUFFER_SIZE as u16)
+                        - (3 + match_tracker.len() as u16 + 3),
+                    self.dimensions.height,
+                )?;
 
-            let wrapped_char = if just_wrapped { 'W' } else { ' ' };
-            write!(self.terminal, " {} {}", wrapped_char, match_tracker)?;
+                let wrapped_char = if just_wrapped { 'W' } else { ' ' };
+                write!(self.terminal, " {} {}", wrapped_char, match_tracker)?;
+            }
         } else {
             write!(self.terminal, ":")?;
         }
