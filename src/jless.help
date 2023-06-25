@@ -77,33 +77,37 @@
   <            Decrease the indentation of every line by one (or [4mN[0m) tabs.
   >            Increase the indentation of every line by one (or [4mN[0m) tabs.
 
-                                    [1mCOPYING[0m
+                              [1mCOPYING AND PRINTING[0m
 
       You can copy various parts of the JSON file to your clipboard using
       any one of a set of commands starting with 'y'.
 
-  yy    Copy the currently focused value to the clipboard, pretty printed.
-          When focused on the key/value pair of an object, this will [4mnot[0m
-          include the key.
-  yv    Copy the currently focused value to the clipboard, like yy, but
-          "nicely" printed on one line with spaces instead of pretty
-          printed.
-  ys    When the currently focused value is a string, copy the contents of the
-          string, with all escape sequences, except control characters, unescaped,
-          to the clipboard.
+      Alternatively, you can print out values using 'p'. This is useful for
+      viewing long string values all at once, or if the clipboard functionality
+      is not working; mouse-tracking will be temporarily disabled, allowing you
+      to use your terminal's native clipboard capabilities to select and copy
+      the desired text.
 
-  yk    Copy the object key on the currently focused line. When in data mode
-          this will not include quotes around the key if the key is a valid
-          JavaScript identifier.
+  yy pp   Copy/print the currently focused value, pretty printed. When focused
+            on the key/value pair of an object, this will [4mnot[0m include the key.
+  yv pv   Copy/print the currently focused value, like yy/pp, but "nicely"
+             printed on one line with spaces instead of pretty printed.
+  ys ps   When the currently focused value is a string, copy/print the contents
+            of the string, with all escape sequences, except control characters,
+            unescaped.
 
-  yp    Copy the path from the top level JSON root to the currently focused
-          value. Object keys will be accessed using ".key" unless they are not
-          valid JavaScript identifiers.
-  yb    Same as yp, but use square brackets for all object key accesses. Useful
-          if copying the path for use in an environment that doesn't support
-          the ".key" syntax, e.g. Python.
-  yq    Copy a path that can be used by jq to filter the input JSON and return
-          the currently focused value.
+  yk pk   Copy/print the object key on the currently focused line. When in data
+            mode this will not include quotes around the key if the key is a
+            valid JavaScript identifier.
+
+  yp pP   Copy/print the path from the top level JSON root to the currently
+            focused value. Object keys will be accessed using ".key" unless they
+            are not valid JavaScript identifiers.
+  yb pb   Same as yp, but use square brackets for all object key accesses.
+            Useful if getting the path for use in an environment that doesn't
+            support the ".key" syntax, e.g. Python.
+  yq pq   Copy/print a path that can be used by jq to filter the input JSON and
+            return the currently focused value.
 
                                      [1mSEARCH[0m
 
@@ -144,7 +148,7 @@
         /[1, 2, 3]      matches an array: [1, 2, 3]
         /\[bch\]at      matches "bat", "cat" or "hat"
         /{}             matches an empty object
-        /(ha)\{2,3}     matches "haha" or "hahaha"
+        /(ha)\{2,3\}    matches "haha" or "hahaha"
 
       For exhaustive documentation of the supported regular expression syntax,
       see the following documentation of the underlying regex engine:

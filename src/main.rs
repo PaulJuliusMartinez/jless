@@ -60,17 +60,12 @@ fn main() {
     // sure rustyline gets the /dev/tty input.
     input::remap_dev_tty_to_stdin();
 
-    let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
-        io::stdout().into_raw_mode().unwrap(),
-    )));
+    let stdout = Box::new(MouseTerminal::from(HideCursor::from(
+        AlternateScreen::from(io::stdout()),
+    ))) as Box<dyn std::io::Write>;
+    let raw_stdout = stdout.into_raw_mode().unwrap();
 
-    let mut app = match App::new(
-        &opt,
-        input_string,
-        data_format,
-        input_filename,
-        Box::new(stdout),
-    ) {
+    let mut app = match App::new(&opt, input_string, data_format, input_filename, raw_stdout) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{}", err);

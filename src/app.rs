@@ -8,6 +8,7 @@ use rustyline::Editor;
 use termion::event::Key;
 use termion::event::MouseButton::{Left, WheelDown, WheelUp};
 use termion::event::MouseEvent::Press;
+use termion::raw::RawTerminal;
 use termion::screen::{ToAlternateScreen, ToMainScreen};
 
 use crate::flatjson;
@@ -44,12 +45,15 @@ pub struct App {
 #[derive(PartialEq)]
 enum InputState {
     Default,
+    PendingPCommand,
     PendingYCommand,
     PendingZCommand,
+    WaitingForAnyKeyPress,
 }
 
-// Various things that can be copied
-enum CopyTarget {
+// Various things that can be copied/printed.
+#[derive(Copy, Clone)]
+enum ContentTarget {
     PrettyPrintedValue,
     OneLineValue,
     String,
@@ -71,13 +75,33 @@ const HELP: &str = std::include_str!("./jless.help");
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BELL: &str = "\x07";
 
+// https://docs.rs/termion/2.0.1/src/termion/input.rs.html#176-180
+//
+// The termion MouseTerminal sends the following escape codes:
+//
+// ESC [ ? 1000 h
+// ESC [ ? 1002 h
+// ESC [ ? 1015 h
+// ESC [ ? 1006 h
+//
+// https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+//
+// 1000 enables better mouse support; 1002 enables button-event tracking,
+// then 1015 and 1006 change the format that mouse events are sent in.
+// (It seems like 1006 overrides 1015, but probably some legacy issue somewhere.)
+//
+// When we print stuff to the screen with 'p', we want to allow the user to
+// highlight it with their mouse, so we disable the regular mouse button tracking.
+const DISABLE_MOUSE_BUTTON_TRACKING: &str = "\x1b[?1002l";
+const ENABLE_MOUSE_BUTTON_TRACKING: &str = "\x1b[?1002h";
+
 impl App {
     pub fn new(
         opt: &Opt,
         data: String,
         data_format: DataFormat,
         input_filename: String,
-        stdout: Box<dyn Write>,
+        stdout: RawTerminal<Box<dyn Write>>,
     ) -> Result<App, String> {
         let flatjson = match Self::parse_input(data, data_format) {
             Ok(flatjson) => flatjson,
@@ -116,9 +140,30 @@ impl App {
         self.draw_screen();
 
         for event in input {
-            if let Err(io_error) = event {
-                self.set_error_message(format!("Error: {}", io_error));
-                self.draw_status_bar();
+            let event = match event {
+                Ok(event) => event,
+                Err(io_error) => {
+                    self.set_error_message(format!("Error: {}", io_error));
+                    self.draw_status_bar();
+                    continue;
+                }
+            };
+
+            // This state trumps everything else. We won't do anything until the user
+            // hits a key, then we will redraw the screen and return to the default input
+            // state. (We ignore the actual value of the key they press.)
+            if self.input_state == InputState::WaitingForAnyKeyPress {
+                if matches!(event, KeyEvent(_)) {
+                    let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
+                    let _ = write!(
+                        self.screen_writer.stdout,
+                        "{}",
+                        ENABLE_MOUSE_BUTTON_TRACKING
+                    );
+                    self.input_state = InputState::Default;
+                    self.draw_screen();
+                    self.message = None;
+                }
                 continue;
             }
 
@@ -139,9 +184,6 @@ impl App {
             let previous_collapsed_state_of_focused_row =
                 self.viewer.flatjson[focused_row_before].is_collapsed();
 
-            // Error case checked above.
-            let event = event.unwrap();
-
             let action = match event {
                 // Put this first so the current input state doesn't get reset
                 // when resizing the window.
@@ -153,21 +195,47 @@ impl App {
                     ))
                 }
                 // Handle special input states:
-                // y commands:
-                event if self.input_state == InputState::PendingYCommand => {
-                    let copy_target = match event {
-                        KeyEvent(Key::Char('y')) => Some(CopyTarget::PrettyPrintedValue),
-                        KeyEvent(Key::Char('v')) => Some(CopyTarget::OneLineValue),
-                        KeyEvent(Key::Char('s')) => Some(CopyTarget::String),
-                        KeyEvent(Key::Char('k')) => Some(CopyTarget::Key),
-                        KeyEvent(Key::Char('p')) => Some(CopyTarget::DotPath),
-                        KeyEvent(Key::Char('b')) => Some(CopyTarget::BracketPath),
-                        KeyEvent(Key::Char('q')) => Some(CopyTarget::QueryPath),
+                // p commands:
+                event if self.input_state == InputState::PendingPCommand => {
+                    let content_target = match event {
+                        KeyEvent(Key::Char('p')) => Some(ContentTarget::PrettyPrintedValue),
+                        KeyEvent(Key::Char('v')) => Some(ContentTarget::OneLineValue),
+                        KeyEvent(Key::Char('s')) => Some(ContentTarget::String),
+                        KeyEvent(Key::Char('k')) => Some(ContentTarget::Key),
+                        KeyEvent(Key::Char('P')) => Some(ContentTarget::DotPath),
+                        KeyEvent(Key::Char('b')) => Some(ContentTarget::BracketPath),
+                        KeyEvent(Key::Char('q')) => Some(ContentTarget::QueryPath),
                         _ => None,
                     };
 
-                    if let Some(copy_target) = copy_target {
-                        self.copy_content(copy_target);
+                    self.input_buffer.clear();
+
+                    if let Some(content_target) = content_target {
+                        if self.print_content(content_target) {
+                            self.input_state = InputState::WaitingForAnyKeyPress;
+                            continue;
+                        }
+                    }
+
+                    self.input_state = InputState::Default;
+
+                    None
+                }
+                // y commands:
+                event if self.input_state == InputState::PendingYCommand => {
+                    let content_target = match event {
+                        KeyEvent(Key::Char('y')) => Some(ContentTarget::PrettyPrintedValue),
+                        KeyEvent(Key::Char('v')) => Some(ContentTarget::OneLineValue),
+                        KeyEvent(Key::Char('s')) => Some(ContentTarget::String),
+                        KeyEvent(Key::Char('k')) => Some(ContentTarget::Key),
+                        KeyEvent(Key::Char('p')) => Some(ContentTarget::DotPath),
+                        KeyEvent(Key::Char('b')) => Some(ContentTarget::BracketPath),
+                        KeyEvent(Key::Char('q')) => Some(ContentTarget::QueryPath),
+                        _ => None,
+                    };
+
+                    if let Some(content_target) = content_target {
+                        self.copy_content(content_target);
                     }
 
                     self.input_state = InputState::Default;
@@ -209,6 +277,12 @@ impl App {
                         self.buffer_input(ch as u8);
                         None
                     }
+                }
+                KeyEvent(Key::Char('p')) => {
+                    self.input_state = InputState::PendingPCommand;
+                    self.input_buffer.clear();
+                    self.buffer_input(b'p');
+                    None
                 }
                 KeyEvent(Key::Char('y')) => {
                     match &self.clipboard_context {
@@ -625,30 +699,24 @@ impl App {
         let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
     }
 
-    fn copy_content(&mut self, copy_target: CopyTarget) {
-        // Checked when the user first hits 'y'.
-        let clipboard = self.clipboard_context.as_mut().unwrap();
-
+    fn get_content_target_data(&self, content_target: ContentTarget) -> Result<String, String> {
         let json = &self.viewer.flatjson.1;
         let focused_row_index = self.viewer.focused_row;
         let focused_row = &self.viewer.flatjson[focused_row_index];
 
-        let (content_desc, content) = match copy_target {
-            CopyTarget::PrettyPrintedValue if focused_row.is_container() => (
-                "pretty-printed value",
-                self.viewer
-                    .flatjson
-                    .pretty_printed_value(focused_row_index)
-                    .unwrap(),
-            ),
-            CopyTarget::PrettyPrintedValue | CopyTarget::OneLineValue => {
+        let data = match content_target {
+            ContentTarget::PrettyPrintedValue if focused_row.is_container() => self
+                .viewer
+                .flatjson
+                .pretty_printed_value(focused_row_index)
+                .unwrap(),
+            ContentTarget::PrettyPrintedValue | ContentTarget::OneLineValue => {
                 let range = focused_row.range.clone();
-                ("value", json[range].to_string())
+                json[range].to_string()
             }
-            CopyTarget::String => {
+            ContentTarget::String => {
                 if !focused_row.is_string() {
-                    self.set_warning_message("Current value is not a string".to_string());
-                    return;
+                    return Err("Current value is not a string".to_string());
                 }
 
                 let range = focused_row.range.clone();
@@ -656,37 +724,37 @@ impl App {
                 let string_value = &json[quoteless_range];
 
                 match unescape_json_string(string_value) {
-                    Ok(unescaped) => ("string contents", unescaped),
+                    Ok(unescaped) => unescaped,
                     Err(err) => {
-                        self.set_warning_message(format!("{}", err));
-                        return;
+                        return Err(format!("{}", err));
                     }
                 }
             }
-            CopyTarget::Key => {
-                if let Some(key_range) = &focused_row.key_range {
-                    let quoteless_range = (key_range.start + 1)..(key_range.end - 1);
+            ContentTarget::Key => {
+                let Some(key_range) = &focused_row.key_range else {
+                    return Err("No object key to copy".to_string());
+                };
 
-                    // Don't copy quotes in Data mode.
-                    let copied_key = if self.viewer.mode == Mode::Data
-                        && JS_IDENTIFIER.is_match(&json[quoteless_range.clone()])
-                    {
-                        json[quoteless_range].to_string()
-                    } else {
-                        json[key_range.clone()].to_string()
-                    };
+                let quoteless_range = (key_range.start + 1)..(key_range.end - 1);
 
-                    ("key", copied_key)
+                // Don't copy quotes in Data mode.
+                let copied_key = if self.viewer.mode == Mode::Data
+                    && JS_IDENTIFIER.is_match(&json[quoteless_range.clone()])
+                {
+                    json[quoteless_range].to_string()
                 } else {
-                    self.set_warning_message("No object key to copy".to_string());
-                    return;
-                }
+                    json[key_range.clone()].to_string()
+                };
+
+                copied_key
             }
-            ct @ (CopyTarget::DotPath | CopyTarget::BracketPath | CopyTarget::QueryPath) => {
-                let (content_desc, path_type) = match ct {
-                    CopyTarget::DotPath => ("path", flatjson::PathType::Dot),
-                    CopyTarget::BracketPath => ("bracketed path", flatjson::PathType::Bracket),
-                    CopyTarget::QueryPath => ("query path", flatjson::PathType::Query),
+            ct @ (ContentTarget::DotPath
+            | ContentTarget::BracketPath
+            | ContentTarget::QueryPath) => {
+                let path_type = match ct {
+                    ContentTarget::DotPath => flatjson::PathType::Dot,
+                    ContentTarget::BracketPath => flatjson::PathType::Bracket,
+                    ContentTarget::QueryPath => flatjson::PathType::Query,
                     _ => unreachable!(),
                 };
 
@@ -695,22 +763,78 @@ impl App {
                     .flatjson
                     .build_path_to_node(path_type, focused_row_index)
                 {
-                    Ok(path) => (content_desc, path),
-                    Err(err) => {
-                        self.set_error_message(err);
-                        return;
-                    }
+                    Ok(path) => path,
+                    Err(err) => return Err(err),
                 }
             }
         };
 
-        if let Err(err) = clipboard.set_contents(content) {
-            self.set_error_message(format!(
-                "Unable to copy {} to clipboard: {}",
-                content_desc, err
-            ));
-        } else {
-            self.set_info_message(format!("Copied {} to clipboard", content_desc));
+        Ok(data)
+    }
+
+    fn copy_content(&mut self, content_target: ContentTarget) {
+        match self.get_content_target_data(content_target) {
+            Ok(content) => {
+                // Checked when the user first hits 'y'.
+                let clipboard = self.clipboard_context.as_mut().unwrap();
+
+                let focused_row = &self.viewer.flatjson[self.viewer.focused_row];
+
+                let content_type = match content_target {
+                    ContentTarget::PrettyPrintedValue if focused_row.is_container() => {
+                        "pretty-printed value"
+                    }
+                    ContentTarget::PrettyPrintedValue | ContentTarget::OneLineValue => "value",
+                    ContentTarget::String => "string contents",
+                    ContentTarget::Key => "key",
+                    ContentTarget::DotPath => "path",
+                    ContentTarget::BracketPath => "bracketed path",
+                    ContentTarget::QueryPath => "query path",
+                };
+
+                if let Err(err) = clipboard.set_contents(content) {
+                    self.set_error_message(format!(
+                        "Unable to copy {} to clipboard: {}",
+                        content_type, err
+                    ));
+                } else {
+                    self.set_info_message(format!("Copied {} to clipboard", content_type));
+                }
+            }
+            Err(err) => self.set_warning_message(err),
+        }
+    }
+
+    fn print_content(&mut self, content_target: ContentTarget) -> bool {
+        match self.get_content_target_data(content_target) {
+            Ok(content) => {
+                // Exit raw mode so that the terminal interprets newlines as usual.
+                let _ = self.screen_writer.stdout.suspend_raw_mode();
+                // Go to the main screen so that the text will persist after exiting.
+                let _ = write!(self.screen_writer.stdout, "{}", ToMainScreen);
+                // Disable mouse button tracking so that the user can use their mouse
+                // to highlight the text.
+                let _ = write!(
+                    self.screen_writer.stdout,
+                    "{}",
+                    DISABLE_MOUSE_BUTTON_TRACKING
+                );
+                let _ = write!(
+                    self.screen_writer.stdout,
+                    "{}{}{}\n\nPress any key to continue.",
+                    termion::clear::All,
+                    termion::cursor::Goto(1, 1),
+                    content
+                );
+                let _ = self.screen_writer.stdout.flush();
+                // Go back to raw mode so we can immediately get key presses.
+                let _ = self.screen_writer.stdout.activate_raw_mode();
+                true
+            }
+            Err(err) => {
+                self.set_warning_message(err);
+                false
+            }
         }
     }
 }

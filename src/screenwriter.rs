@@ -4,6 +4,7 @@ use std::iter::Peekable;
 use std::ops::Range;
 
 use rustyline::Editor;
+use termion::raw::RawTerminal;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
@@ -18,10 +19,10 @@ use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
 pub struct ScreenWriter {
-    pub stdout: Box<dyn std::io::Write>,
+    pub stdout: RawTerminal<Box<dyn std::io::Write>>,
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
-    terminal: AnsiTerminal,
+    pub terminal: AnsiTerminal,
 
     indentation_reduction: u16,
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
@@ -49,7 +50,7 @@ const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {
     pub fn init(
-        stdout: Box<dyn std::io::Write>,
+        stdout: RawTerminal<Box<dyn std::io::Write>>,
         command_editor: Editor<()>,
         dimensions: TTYDimensions,
     ) -> Self {
