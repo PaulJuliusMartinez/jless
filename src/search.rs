@@ -266,7 +266,7 @@ impl SearchState {
 
         match self.immediate_state {
             ImmediateSearchState::NotSearching => {
-                let focused_row_range = flatjson[focused_row].full_range();
+                let focused_row_range = flatjson[focused_row].range_represented_by_row();
 
                 match true_direction {
                     SearchDirection::Forward => {
@@ -362,7 +362,7 @@ impl SearchState {
         // We want to jump to the last row that starts before (or at) the start of the match.
         flatjson
             .0
-            .partition_point(|row| row.full_range().start <= match_range.start)
+            .partition_point(|row| row.range_represented_by_row().start <= match_range.start)
             - 1
     }
 }

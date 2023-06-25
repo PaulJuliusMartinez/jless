@@ -430,11 +430,25 @@ impl Row {
         self.value.pair_index()
     }
 
-    pub fn full_range(&self) -> Range<usize> {
-        match &self.key_range {
-            Some(key_range) => key_range.start..self.range.end,
-            None => self.range.clone(),
-        }
+    // The range of what the row represents on the screen. If the row is
+    // a container, and it is collapsed, this includes the entire range
+    // of the container, but if it is expanded, it just represents the
+    // single opening character.
+    //
+    // This also includes the key range for objects.
+    pub fn range_represented_by_row(&self) -> Range<usize> {
+        let start = match &self.key_range {
+            Some(key_range) => key_range.start,
+            None => self.range.start,
+        };
+
+        let end = if self.is_container() && self.is_expanded() {
+            self.range.start + 1
+        } else {
+            self.range.end
+        };
+
+        start..end
     }
 }
 
