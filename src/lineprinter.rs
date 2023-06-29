@@ -128,6 +128,13 @@ impl DelimiterPair {
     }
 }
 
+// What line number should be displayed
+#[derive(Copy, Clone)]
+pub struct LineNumber {
+    pub absolute: usize,
+    pub max_width: isize,
+}
+
 pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
     pub terminal: &'a mut dyn Terminal,
@@ -136,6 +143,7 @@ pub struct LinePrinter<'a, 'b> {
     // we're printing out.
     pub flatjson: &'a FlatJson,
     pub row: &'a Row,
+    pub line_number: Option<LineNumber>,
 
     // Width of the terminal and how much we should indent the line.
     pub width: isize,
@@ -165,6 +173,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         let mut available_space = self.width as isize;
 
+        let space_used_for_line_number = self.print_line_number(available_space)?;
+        available_space -= space_used_for_line_number;
+
         let expected_space_used_for_indicators = INDICATOR_WIDTH + self.indentation;
         let space_used_for_indicators =
             self.print_focus_and_container_indicators(available_space)?;
@@ -190,6 +201,35 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         Ok(())
     }
 
+    fn print_line_number(&mut self, available_space: isize) -> Result<isize, fmt::Error> {
+        let Some(line_number) = self.line_number else { return Ok(0) };
+
+        // If the line number is going to fill up all the available space (or overfill it)
+        // then don't print the line number.
+        if line_number.max_width + 1 >= available_space {
+            return Ok(0);
+        }
+
+        if self.focused {
+            self.terminal.set_style(&Style {
+                fg: terminal::YELLOW,
+                ..Style::default()
+            })?;
+        } else {
+            self.terminal.set_style(&highlighting::DIMMED_STYLE)?;
+        }
+
+        write!(
+            self.terminal,
+            "{: >1$}",
+            line_number.absolute, line_number.max_width as usize,
+        )?;
+        self.terminal.reset_style()?;
+        write!(self.terminal, " ")?;
+
+        Ok(line_number.max_width + 1)
+    }
+
     fn print_focus_and_container_indicators(
         &mut self,
         mut available_space: isize,
@@ -209,14 +249,14 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
                     let space_available_for_indentation = self.indentation.min(available_space - 1);
                     used_space += space_available_for_indentation;
-                    self.print_n_spaces(space_available_for_indentation);
+                    self.print_n_spaces(space_available_for_indentation)?;
                 }
             }
             Mode::Data => {
                 let space_available_for_indentation =
                     self.indentation.min(available_space - 1 - INDICATOR_WIDTH);
                 used_space += space_available_for_indentation;
-                self.print_n_spaces(space_available_for_indentation);
+                self.print_n_spaces(space_available_for_indentation)?;
 
                 if space_available_for_indentation == self.indentation {
                     if self.row.is_primitive() {
@@ -1158,6 +1198,7 @@ mod tests {
             terminal,
             flatjson,
             row: &flatjson[index],
+            line_number: None,
             indentation: 0,
             width: 100,
             focused: false,
@@ -1168,6 +1209,44 @@ mod tests {
             emphasize_focused_search_match: true,
             cached_truncated_value: None,
         }
+    }
+
+    #[test]
+    fn test_full_line_printer_basic() -> std::fmt::Result {
+        const JSON: &str = r#"{
+            "hello": 1,
+            "2": [
+                3,
+            ],
+        }"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+
+        let mut term = VisibleEscapesTerminal::new(true, false);
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 3);
+        line.indentation = 4;
+        line.focused = true;
+
+        line.print_line()?;
+        assert_eq!(
+            format!("    {}[0]: 3", FOCUSED_LINE),
+            line.terminal.output()
+        );
+        line.terminal.clear_output();
+
+        line.mode = Mode::Line;
+        line.line_number = Some(LineNumber {
+            absolute: 4,
+            max_width: 4,
+        });
+
+        line.print_line()?;
+        assert_eq!(
+            format!("   4 {}    3", FOCUSED_LINE),
+            line.terminal.output()
+        );
+        line.terminal.clear_output();
+
+        Ok(())
     }
 
     #[test]

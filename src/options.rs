@@ -31,6 +31,13 @@ pub struct Opt {
     #[clap(short, long, arg_enum, hide_possible_values = true, default_value_t = Mode::Data)]
     pub mode: Mode,
 
+    /// Whether to show "line" numbers. Line numbers are determined by
+    /// the line number of focused line if the document were pretty printed.
+    /// These means there are discontinuities when viewing in data mode
+    /// because the lines containing closing brackets and braces aren't displayed.
+    #[clap(long = "number")]
+    pub show_line_numbers: bool,
+
     /// Number of lines to maintain as padding between the currently
     /// focused row and the top or bottom of the screen. Setting this to
     /// a large value will keep the focused in the middle of the screen

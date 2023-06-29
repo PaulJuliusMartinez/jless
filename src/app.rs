@@ -111,8 +111,12 @@ impl App {
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
         viewer.scrolloff_setting = opt.scrolloff;
 
-        let screen_writer =
-            ScreenWriter::init(stdout, Editor::<()>::new(), TTYDimensions::default());
+        let screen_writer = ScreenWriter::init(
+            stdout,
+            Editor::<()>::new(),
+            TTYDimensions::default(),
+            opt.show_line_numbers,
+        );
 
         Ok(App {
             viewer,

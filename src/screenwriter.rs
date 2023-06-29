@@ -11,6 +11,7 @@ use unicode_width::UnicodeWidthStr;
 use crate::app::MAX_BUFFER_SIZE;
 use crate::flatjson::{Index, OptionIndex, PathType, Row, Value};
 use crate::lineprinter as lp;
+use crate::lineprinter::LineNumber;
 use crate::search::{MatchRangeIter, SearchState};
 use crate::terminal;
 use crate::terminal::{AnsiTerminal, Terminal};
@@ -23,6 +24,7 @@ pub struct ScreenWriter {
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
     pub terminal: AnsiTerminal,
+    pub show_line_numbers: bool,
 
     indentation_reduction: u16,
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
@@ -53,12 +55,14 @@ impl ScreenWriter {
         stdout: RawTerminal<Box<dyn std::io::Write>>,
         command_editor: Editor<()>,
         dimensions: TTYDimensions,
+        show_line_numbers: bool,
     ) -> Self {
         ScreenWriter {
             stdout,
             command_editor,
             dimensions,
             terminal: AnsiTerminal::new(String::new()),
+            show_line_numbers,
             indentation_reduction: 0,
             truncated_row_value_views: HashMap::new(),
         }
@@ -225,12 +229,24 @@ impl ScreenWriter {
 
         let search_matches_copy = (*search_matches).clone();
 
+        let mut line_number = None;
+        if self.show_line_numbers {
+            line_number = Some(LineNumber {
+                absolute: (index + 1) as usize,
+                max_width: isize::max(
+                    2,
+                    isize::ilog10(viewer.flatjson.0.len() as isize + 1) as isize + 1,
+                ),
+            });
+        }
+
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
             terminal: &mut self.terminal,
 
             flatjson: &viewer.flatjson,
             row,
+            line_number,
 
             width: self.dimensions.width as isize,
             indentation,
