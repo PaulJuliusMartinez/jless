@@ -122,8 +122,6 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         search_state: &SearchState,
     ) -> std::fmt::Result {
-        self.terminal.clear_screen()?;
-
         let mut line = OptionIndex::Index(viewer.top_row);
         let mut search_matches = search_state
             .matches_iter(viewer.flatjson[line.unwrap()].range.start)
@@ -134,6 +132,7 @@ impl ScreenWriter {
             match line {
                 OptionIndex::Nil => {
                     self.terminal.position_cursor(1, row_index + 1)?;
+                    self.terminal.clear_line()?;
                     self.terminal.set_fg(terminal::LIGHT_BLACK)?;
                     self.terminal.write_char('~')?;
                 }
@@ -182,6 +181,7 @@ impl ScreenWriter {
         let is_focused = index == viewer.focused_row;
 
         self.terminal.position_cursor(1, screen_index + 1)?;
+        self.terminal.clear_line()?;
         let row = &viewer.flatjson[index];
 
         let indentation_level = row
@@ -284,6 +284,7 @@ impl ScreenWriter {
     ) -> std::fmt::Result {
         self.terminal
             .position_cursor(1, self.dimensions.height - 1)?;
+        self.terminal.clear_line()?;
         self.terminal.set_style(&terminal::Style {
             inverted: true,
             ..terminal::Style::default()
@@ -306,6 +307,7 @@ impl ScreenWriter {
         )?;
 
         self.terminal.position_cursor(1, self.dimensions.height)?;
+        self.terminal.clear_line()?;
 
         if let Some((contents, severity)) = message {
             self.terminal.set_style(&terminal::Style {
