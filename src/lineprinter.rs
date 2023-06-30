@@ -79,11 +79,12 @@ use crate::viewer::Mode;
 //                          >|
 
 const FOCUSED_LINE: &str = "▶ ";
+const NOT_FOCUSED_LINE: &str = "  ";
 const FOCUSED_COLLAPSED_CONTAINER: &str = "▶ ";
 const FOCUSED_EXPANDED_CONTAINER: &str = "▼ ";
 const COLLAPSED_CONTAINER: &str = "▷ ";
 const EXPANDED_CONTAINER: &str = "▽ ";
-const INDICATOR_WIDTH: usize = 2;
+const INDICATOR_WIDTH: isize = 2;
 const NO_FOCUSED_MATCH: Range<usize> = 0..0;
 
 lazy_static::lazy_static! {
@@ -137,8 +138,8 @@ pub struct LinePrinter<'a, 'b> {
     pub row: &'a Row,
 
     // Width of the terminal and how much we should indent the line.
-    pub width: usize,
-    pub indentation: usize,
+    pub width: isize,
+    pub indentation: isize,
 
     // Line-by-line formatting options
     pub focused: bool,
@@ -162,75 +163,91 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     pub fn print_line(&mut self) -> fmt::Result {
         self.terminal.reset_style()?;
 
-        self.print_focus_and_container_indicators()?;
+        let mut available_space = self.width as isize;
 
-        let label_depth = INDICATOR_WIDTH + self.indentation;
+        let expected_space_used_for_indicators = INDICATOR_WIDTH + self.indentation;
+        let space_used_for_indicators =
+            self.print_focus_and_container_indicators(available_space)?;
 
-        // I don't know if there's standard behavior for setting the column
-        // past the width of the screen, so let's avoid doing that. There
-        // will still be cases where this condition is true, but we still end
-        // up printing the truncated indicator, but that's fine.
-        if label_depth < self.width {
-            self.terminal
-                .position_cursor_col((1 + label_depth) as u16)?;
-        }
+        if space_used_for_indicators == expected_space_used_for_indicators {
+            let space_used_for_label = self.fill_in_label(available_space)?;
 
-        let mut available_space = self.width as isize - label_depth as isize;
+            available_space -= space_used_for_label;
 
-        let space_used_for_label = self.fill_in_label(available_space)?;
-
-        available_space -= space_used_for_label;
-
-        if self.has_label() && space_used_for_label == 0 {
-            self.print_truncated_indicator()?;
-        } else {
-            let space_used_for_value = self.fill_in_value(available_space)?;
-
-            if space_used_for_value == 0 {
+            if self.has_label() && space_used_for_label == 0 {
                 self.print_truncated_indicator()?;
+            } else {
+                let space_used_for_value = self.fill_in_value(available_space)?;
+
+                if space_used_for_value == 0 {
+                    self.print_truncated_indicator()?;
+                }
             }
+        } else {
+            self.print_truncated_indicator()?;
         }
 
         Ok(())
     }
 
-    fn print_focus_and_container_indicators(&mut self) -> fmt::Result {
+    fn print_focus_and_container_indicators(
+        &mut self,
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
+        let mut used_space = 0;
+
         match self.mode {
-            Mode::Line => self.print_focused_line_indicator(),
-            Mode::Data => self.print_container_indicator(),
+            Mode::Line => {
+                if available_space >= INDICATOR_WIDTH + 1 {
+                    if self.focused {
+                        write!(self.terminal, "{}", FOCUSED_LINE)?;
+                    } else {
+                        write!(self.terminal, "{}", NOT_FOCUSED_LINE)?;
+                    }
+                    used_space += INDICATOR_WIDTH;
+                    available_space -= INDICATOR_WIDTH;
+
+                    let space_available_for_indentation = self.indentation.min(available_space - 1);
+                    used_space += space_available_for_indentation;
+                    self.print_n_spaces(space_available_for_indentation);
+                }
+            }
+            Mode::Data => {
+                let space_available_for_indentation =
+                    self.indentation.min(available_space - 1 - INDICATOR_WIDTH);
+                used_space += space_available_for_indentation;
+                self.print_n_spaces(space_available_for_indentation);
+
+                if space_available_for_indentation == self.indentation {
+                    if self.row.is_primitive() {
+                        if self.focused {
+                            write!(self.terminal, "{}", FOCUSED_LINE)?;
+                        } else {
+                            write!(self.terminal, "{}", NOT_FOCUSED_LINE)?;
+                        }
+                    } else {
+                        self.print_container_indicator()?;
+                    }
+                    used_space += 2;
+                }
+            }
         }
+
+        Ok(used_space)
     }
 
-    fn print_focused_line_indicator(&mut self) -> fmt::Result {
-        if self.focused {
-            self.terminal.position_cursor_col(1)?;
-            write!(self.terminal, "{}", FOCUSED_LINE)?;
+    fn print_n_spaces(&mut self, n: isize) -> fmt::Result {
+        for _ in 0..n {
+            write!(self.terminal, " ")?;
         }
 
         Ok(())
     }
 
     fn print_container_indicator(&mut self) -> fmt::Result {
-        if self.row.is_primitive() {
-            // Print a focused indicator for top-level primitives.
-            if self.focused && self.row.depth == 0 {
-                self.terminal.position_cursor_col(0)?;
-                write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
-            }
-            return Ok(());
-        }
-
         debug_assert!(self.row.is_opening_of_container());
 
         let collapsed = self.row.is_collapsed();
-
-        // Make sure there's enough room for the indicator
-        if self.width <= INDICATOR_WIDTH + self.indentation {
-            return Ok(());
-        }
-
-        let container_indicator_col = (1 + self.indentation) as u16;
-        self.terminal.position_cursor_col(container_indicator_col)?;
 
         let indicator = match (self.focused, collapsed) {
             (true, true) => FOCUSED_COLLAPSED_CONTAINER,
@@ -239,9 +256,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             (false, false) => EXPANDED_CONTAINER,
         };
 
-        write!(self.terminal, "{}", indicator)?;
-
-        Ok(())
+        write!(self.terminal, "{}", indicator)
     }
 
     pub fn fill_in_label(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
@@ -1164,19 +1179,28 @@ mod tests {
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = LinePrinter {
             mode: Mode::Line,
-            indentation: 10,
+            indentation: 4,
             ..default_line_printer(&mut term, &fj, 1)
         };
 
         // Not focused; no indicator.
-        line.print_focus_and_container_indicators()?;
-        assert_eq!("", line.terminal.output());
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!("      ", line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = true;
 
-        line.print_focus_and_container_indicators()?;
-        assert_eq!(format!("_C(1)_{}", FOCUSED_LINE), line.terminal.output());
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("{}    ", FOCUSED_LINE), line.terminal.output());
+        line.terminal.clear_output();
+
+        line.print_focus_and_container_indicators(3)?;
+        assert_eq!(format!("{}", FOCUSED_LINE), line.terminal.output());
+        line.terminal.clear_output();
+
+        line.print_focus_and_container_indicators(2)?;
+        assert_eq!("", line.terminal.output());
+        line.terminal.clear_output();
 
         Ok(())
     }
@@ -1199,37 +1223,45 @@ mod tests {
             ..default_line_printer(&mut term, &fj, 0)
         };
 
-        line.print_focus_and_container_indicators()?;
-        assert_eq!(
-            format!("_C(1)_{}", EXPANDED_CONTAINER),
-            line.terminal.output()
-        );
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("{}", EXPANDED_CONTAINER), line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = true;
 
-        line.print_focus_and_container_indicators()?;
+        line.print_focus_and_container_indicators(100)?;
         assert_eq!(
-            format!("_C(1)_{}", FOCUSED_EXPANDED_CONTAINER),
+            format!("{}", FOCUSED_EXPANDED_CONTAINER),
             line.terminal.output()
         );
         line.terminal.clear_output();
 
-        line.row = &line.flatjson[5];
+        line.row = &line.flatjson[3];
         line.indentation = 2;
 
-        line.print_focus_and_container_indicators()?;
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("  {}", FOCUSED_LINE), line.terminal.output());
+        line.terminal.clear_output();
+
+        line.row = &line.flatjson[5];
+        line.indentation = 4;
+
+        line.print_focus_and_container_indicators(7)?;
         assert_eq!(
-            format!("_C(3)_{}", FOCUSED_COLLAPSED_CONTAINER),
+            format!("    {}", FOCUSED_COLLAPSED_CONTAINER),
             line.terminal.output()
         );
+        line.terminal.clear_output();
+
+        line.print_focus_and_container_indicators(6)?;
+        assert_eq!("   ", line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = false;
 
-        line.print_focus_and_container_indicators()?;
+        line.print_focus_and_container_indicators(100)?;
         assert_eq!(
-            format!("_C(3)_{}", COLLAPSED_CONTAINER),
+            format!("    {}", COLLAPSED_CONTAINER),
             line.terminal.output()
         );
 
