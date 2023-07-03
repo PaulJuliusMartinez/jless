@@ -17,6 +17,7 @@ use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
 mod app;
+mod clipboard;
 mod flatjson;
 mod highlighting;
 mod input;
