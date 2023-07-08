@@ -112,12 +112,12 @@ impl Terminal for AnsiTerminal {
     }
 
     fn position_cursor(&mut self, col: u16, row: u16) -> Result {
-        write!(self, "\x1b[{};{}H", row, col)?;
+        write!(self, "\x1b[{row};{col}H")?;
         self.reset_style()
     }
 
     fn position_cursor_col(&mut self, col: u16) -> Result {
-        write!(self, "\x1b[{}G", col)?;
+        write!(self, "\x1b[{col}G")?;
         self.reset_style()
     }
 
@@ -138,7 +138,7 @@ impl Terminal for AnsiTerminal {
     fn set_fg(&mut self, color: Color) -> Result {
         if self.style.fg != color {
             match color {
-                Color::C16(c) => write!(self, "\x1b[38;5;{}m", c)?,
+                Color::C16(c) => write!(self, "\x1b[38;5;{c}m")?,
                 Color::Default => write!(self, "\x1b[39m")?,
             }
             self.style.fg = color;
@@ -149,7 +149,7 @@ impl Terminal for AnsiTerminal {
     fn set_bg(&mut self, color: Color) -> Result {
         if self.style.bg != color {
             match color {
-                Color::C16(c) => write!(self, "\x1b[48;5;{}m", c)?,
+                Color::C16(c) => write!(self, "\x1b[48;5;{c}m")?,
                 Color::Default => write!(self, "\x1b[49m")?,
             }
             self.style.bg = color;
@@ -353,7 +353,7 @@ pub mod test {
 
         fn position_cursor(&mut self, row: u16, col: u16) -> Result {
             if self.show_position {
-                write!(self, "_RC({},{})_", row, col)
+                write!(self, "_RC({row},{col})_")
             } else {
                 Ok(())
             }
@@ -361,7 +361,7 @@ pub mod test {
 
         fn position_cursor_col(&mut self, col: u16) -> Result {
             if self.show_position {
-                write!(self, "_C({})_", col)
+                write!(self, "_C({col})_")
             } else {
                 Ok(())
             }

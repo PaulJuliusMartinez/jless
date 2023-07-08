@@ -179,7 +179,7 @@ pub fn highlight_matches<'a>(
 ) -> fmt::Result {
     if str_range_start.is_none() {
         out.set_style(style)?;
-        write!(out, "{}", s)?;
+        write!(out, "{s}")?;
         return Ok(());
     }
 

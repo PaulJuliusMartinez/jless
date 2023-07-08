@@ -18,12 +18,11 @@ impl fmt::Display for UnescapeError {
         let codepoint_chars = std::str::from_utf8(&self.codepoint_chars).unwrap();
         match &self.error {
             UnicodeError::UnexpectedLowSurrogate => {
-                write!(f, "unexpected low surrogate \"\\u{}\"", codepoint_chars)
+                write!(f, "unexpected low surrogate \"\\u{codepoint_chars}\"")
             }
             UnicodeError::UnmatchedHighSurrogate => write!(
                 f,
-                "high surrogate \"\\u{}\" not followed by low surrogate",
-                codepoint_chars
+                "high surrogate \"\\u{codepoint_chars}\" not followed by low surrogate"
             ),
         }
     }
@@ -201,7 +200,7 @@ mod tests {
     fn check(escaped: &str, expected_unescaped: &str) {
         let unescaped = match unescape_json_string(escaped) {
             Ok(s) => s,
-            Err(err) => format!("ERR: {}", err),
+            Err(err) => format!("ERR: {err}"),
         };
 
         assert_eq!(expected_unescaped, &unescaped);

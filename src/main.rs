@@ -42,7 +42,7 @@ fn main() {
     let (input_string, input_filename) = match get_input_and_filename(&opt) {
         Ok(input_and_filename) => input_and_filename,
         Err(err) => {
-            eprintln!("Unable to get input: {}", err);
+            eprintln!("Unable to get input: {err}");
             std::process::exit(1);
         }
     };
@@ -68,7 +68,7 @@ fn main() {
     let mut app = match App::new(&opt, input_string, data_format, input_filename, raw_stdout) {
         Ok(jl) => jl,
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{err}");
             return;
         }
     };
@@ -79,14 +79,14 @@ fn main() {
 fn print_pretty_printed_input(input: String, data_format: DataFormat) {
     // Don't try to pretty print YAML input; just pass it through.
     if data_format == DataFormat::Yaml {
-        print!("{}", input);
+        print!("{input}");
         return;
     }
 
     let flatjson = match flatjson::parse_top_level_json(input) {
         Ok(flatjson) => flatjson,
         Err(err) => {
-            eprintln!("Unable to parse input: {:?}", err);
+            eprintln!("Unable to parse input: {err:?}");
             std::process::exit(1);
         }
     };

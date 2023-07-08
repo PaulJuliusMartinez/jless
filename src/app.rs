@@ -105,7 +105,7 @@ impl App {
     ) -> Result<App, String> {
         let flatjson = match Self::parse_input(data, data_format) {
             Ok(flatjson) => flatjson,
-            Err(err) => return Err(format!("Unable to parse input: {:?}", err)),
+            Err(err) => return Err(format!("Unable to parse input: {err:?}")),
         };
 
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
@@ -143,7 +143,7 @@ impl App {
             let event = match event {
                 Ok(event) => event,
                 Err(io_error) => {
-                    self.set_error_message(format!("Error: {}", io_error));
+                    self.set_error_message(format!("Error: {io_error}"));
                     self.draw_status_bar();
                     continue;
                 }
@@ -154,11 +154,10 @@ impl App {
             // state. (We ignore the actual value of the key they press.)
             if self.input_state == InputState::WaitingForAnyKeyPress {
                 if matches!(event, KeyEvent(_)) {
-                    let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
+                    let _ = write!(self.screen_writer.stdout, "{ToAlternateScreen}");
                     let _ = write!(
                         self.screen_writer.stdout,
-                        "{}",
-                        ENABLE_MOUSE_BUTTON_TRACKING
+                        "{ENABLE_MOUSE_BUTTON_TRACKING}"
                     );
                     self.input_state = InputState::Default;
                     self.draw_screen();
@@ -292,7 +291,7 @@ impl App {
                             self.buffer_input(b'y');
                         }
                         Err(err) => {
-                            let msg = format!("Unable to access clipboard: {}", err);
+                            let msg = format!("Unable to access clipboard: {err}");
                             self.set_error_message(msg);
                         }
                     }
@@ -435,8 +434,7 @@ impl App {
                                     Command::Help => self.show_help(),
                                     Command::Unknown => {
                                         self.set_warning_message(format!(
-                                            "Unknown command: {}",
-                                            command
+                                            "Unknown command: {command}"
                                         ));
                                     }
                                 }
@@ -445,7 +443,7 @@ impl App {
                             None
                         }
                         _ => {
-                            eprint!("{}\r", BELL);
+                            eprint!("{BELL}\r");
                             None
                         }
                     };
@@ -475,7 +473,7 @@ impl App {
                     }
                 }
                 TuiEvent::Unknown(bytes) => {
-                    self.set_error_message(format!("Unknown byte sequence: {:?}", bytes));
+                    self.set_error_message(format!("Unknown byte sequence: {bytes:?}"));
                     None
                 }
             };
@@ -550,7 +548,7 @@ impl App {
             // User hit Ctrl-C or Ctrl-D to cancel prompt
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => None,
             Err(err) => {
-                self.set_error_message(format!("Error getting {}: {}", purpose, err));
+                self.set_error_message(format!("Error getting {purpose}: {err}"));
                 None
             }
         }
@@ -681,7 +679,7 @@ impl App {
     }
 
     fn show_help(&mut self) {
-        let _ = write!(self.screen_writer.stdout, "{}", ToMainScreen);
+        let _ = write!(self.screen_writer.stdout, "{ToMainScreen}");
         let child = std::process::Command::new("less")
             .arg("-r")
             .stdin(std::process::Stdio::piped())
@@ -697,11 +695,11 @@ impl App {
                 let _ = child.wait();
             }
             Err(err) => {
-                self.set_error_message(format!("Error piping help documentation to less: {}", err));
+                self.set_error_message(format!("Error piping help documentation to less: {err}"));
             }
         }
 
-        let _ = write!(self.screen_writer.stdout, "{}", ToAlternateScreen);
+        let _ = write!(self.screen_writer.stdout, "{ToAlternateScreen}");
     }
 
     fn get_content_target_data(&self, content_target: ContentTarget) -> Result<String, String> {
@@ -731,7 +729,7 @@ impl App {
                 match unescape_json_string(string_value) {
                     Ok(unescaped) => unescaped,
                     Err(err) => {
-                        return Err(format!("{}", err));
+                        return Err(format!("{err}"));
                     }
                 }
             }
@@ -799,11 +797,10 @@ impl App {
 
                 if let Err(err) = clipboard.set_contents(content) {
                     self.set_error_message(format!(
-                        "Unable to copy {} to clipboard: {}",
-                        content_type, err
+                        "Unable to copy {content_type} to clipboard: {err}"
                     ));
                 } else {
-                    self.set_info_message(format!("Copied {} to clipboard", content_type));
+                    self.set_info_message(format!("Copied {content_type} to clipboard"));
                 }
             }
             Err(err) => self.set_warning_message(err),
@@ -816,13 +813,12 @@ impl App {
                 // Exit raw mode so that the terminal interprets newlines as usual.
                 let _ = self.screen_writer.stdout.suspend_raw_mode();
                 // Go to the main screen so that the text will persist after exiting.
-                let _ = write!(self.screen_writer.stdout, "{}", ToMainScreen);
+                let _ = write!(self.screen_writer.stdout, "{ToMainScreen}");
                 // Disable mouse button tracking so that the user can use their mouse
                 // to highlight the text.
                 let _ = write!(
                     self.screen_writer.stdout,
-                    "{}",
-                    DISABLE_MOUSE_BUTTON_TRACKING
+                    "{DISABLE_MOUSE_BUTTON_TRACKING}"
                 );
                 let _ = write!(
                     self.screen_writer.stdout,

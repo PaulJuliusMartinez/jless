@@ -89,11 +89,11 @@ impl ScreenWriter {
             Ok(_) => match self.terminal.flush_contents(&mut self.stdout) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error while printing viewer: {}", e);
+                    eprintln!("Error while printing viewer: {e}");
                 }
             },
             Err(e) => {
-                eprintln!("Error while printing viewer: {}", e);
+                eprintln!("Error while printing viewer: {e}");
             }
         }
     }
@@ -116,11 +116,11 @@ impl ScreenWriter {
             Ok(_) => match self.terminal.flush_contents(&mut self.stdout) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error while printing status bar: {}", e);
+                    eprintln!("Error while printing status bar: {e}");
                 }
             },
             Err(e) => {
-                eprintln!("Error while printing status bar: {}", e);
+                eprintln!("Error while printing status bar: {e}");
             }
         }
     }
@@ -364,7 +364,7 @@ impl ScreenWriter {
                 )?;
 
                 let wrapped_char = if just_wrapped { 'W' } else { ' ' };
-                write!(self.terminal, " {} {}", wrapped_char, match_tracker)?;
+                write!(self.terminal, " {wrapped_char} {match_tracker}")?;
             }
         } else {
             write!(self.terminal, ":")?;
@@ -426,7 +426,7 @@ impl ScreenWriter {
             truncated_view: &truncated_base,
         };
 
-        write!(self.terminal, "{}", base_slice)?;
+        write!(self.terminal, "{base_slice}")?;
 
         self.terminal.set_bg(terminal::DEFAULT)?;
 
@@ -445,7 +445,7 @@ impl ScreenWriter {
                 truncated_view: &TruncatedStrView::init_back(path_to_node, width),
             };
 
-            write!(self.terminal, "{}", path_slice)?;
+            write!(self.terminal, "{path_slice}")?;
         }
 
         if truncated_filename.any_contents_visible() {
@@ -460,7 +460,7 @@ impl ScreenWriter {
                 truncated_view: &truncated_filename,
             };
 
-            write!(self.terminal, "{}", truncated_slice)?;
+            write!(self.terminal, "{truncated_slice}")?;
         }
 
         Ok(())

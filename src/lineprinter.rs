@@ -258,9 +258,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             Mode::Line => {
                 if available_space >= INDICATOR_WIDTH + 1 {
                     if self.focused {
-                        write!(self.terminal, "{}", FOCUSED_LINE)?;
+                        write!(self.terminal, "{FOCUSED_LINE}")?;
                     } else {
-                        write!(self.terminal, "{}", NOT_FOCUSED_LINE)?;
+                        write!(self.terminal, "{NOT_FOCUSED_LINE}")?;
                     }
                     used_space += INDICATOR_WIDTH;
                     available_space -= INDICATOR_WIDTH;
@@ -279,9 +279,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
                 if space_available_for_indentation == self.indentation {
                     if self.row.is_primitive() {
                         if self.focused {
-                            write!(self.terminal, "{}", FOCUSED_LINE)?;
+                            write!(self.terminal, "{FOCUSED_LINE}")?;
                         } else {
-                            write!(self.terminal, "{}", NOT_FOCUSED_LINE)?;
+                            write!(self.terminal, "{NOT_FOCUSED_LINE}")?;
                         }
                     } else {
                         self.print_container_indicator()?;
@@ -314,7 +314,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             (false, false) => EXPANDED_CONTAINER,
         };
 
-        write!(self.terminal, "{}", indicator)
+        write!(self.terminal, "{indicator}")
     }
 
     pub fn fill_in_label(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
@@ -862,7 +862,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         if !is_nested {
             self.terminal.set_fg(terminal::LIGHT_BLACK)?;
-            write!(self.terminal, "({}) ", container_size)?;
+            write!(self.terminal, "({container_size}) ")?;
             available_space -= 3 + space_needed_for_container_size;
             num_printed += 3 + space_needed_for_container_size;
         }
@@ -1253,14 +1253,14 @@ mod tests {
         let n_line = NOT_FOCUSED_LINE;
 
         for (absolute, relative, focused, expected) in vec![
-            (None, None, false, format!("    {}[0]: 3", NOT_FOCUSED_LINE)),
-            (None, None, true, format!("    {}[0]: 3", FOCUSED_LINE)),
-            (abs, None, false, format!("  14     {}[0]: 3", n_line)),
-            (abs, None, true, format!("  14     {}[0]: 3", f_line)),
-            (None, rel, false, format!("   6     {}[0]: 3", n_line)),
-            (None, rel, true, format!("   6     {}[0]: 3", f_line)),
-            (abs, rel, false, format!("   6     {}[0]: 3", n_line)),
-            (abs, rel, true, format!("14       {}[0]: 3", f_line)),
+            (None, None, false, format!("    {n_line}[0]: 3")),
+            (None, None, true, format!("    {f_line}[0]: 3")),
+            (abs, None, false, format!("  14     {n_line}[0]: 3")),
+            (abs, None, true, format!("  14     {f_line}[0]: 3")),
+            (None, rel, false, format!("   6     {n_line}[0]: 3")),
+            (None, rel, true, format!("   6     {f_line}[0]: 3")),
+            (abs, rel, false, format!("   6     {n_line}[0]: 3")),
+            (abs, rel, true, format!("14       {f_line}[0]: 3")),
         ]
         .into_iter()
         {
@@ -1273,23 +1273,20 @@ mod tests {
             assert_eq!(
                 expected,
                 line.terminal.output(),
-                "expected output for abs: {:?}, rel: {:?}, focused: {} in data mode",
-                absolute,
-                relative,
-                focused,
+                "expected output for abs: {absolute:?}, rel: {relative:?}, focused: {focused} in data mode",
             );
         }
 
         line.mode = Mode::Line;
         for (absolute, relative, focused, expected) in vec![
-            (None, None, false, format!("{}    3", NOT_FOCUSED_LINE)),
-            (None, None, true, format!("{}    3", FOCUSED_LINE)),
-            (abs, None, false, format!("  14 {}    3", n_line)),
-            (abs, None, true, format!("  14 {}    3", f_line)),
-            (None, rel, false, format!("   6 {}    3", n_line)),
-            (None, rel, true, format!("   6 {}    3", f_line)),
-            (abs, rel, false, format!("   6 {}    3", n_line)),
-            (abs, rel, true, format!("14   {}    3", f_line)),
+            (None, None, false, format!("{n_line}    3")),
+            (None, None, true, format!("{f_line}    3")),
+            (abs, None, false, format!("  14 {n_line}    3")),
+            (abs, None, true, format!("  14 {f_line}    3")),
+            (None, rel, false, format!("   6 {n_line}    3")),
+            (None, rel, true, format!("   6 {f_line}    3")),
+            (abs, rel, false, format!("   6 {n_line}    3")),
+            (abs, rel, true, format!("14   {f_line}    3")),
         ]
         .into_iter()
         {
@@ -1302,10 +1299,7 @@ mod tests {
             assert_eq!(
                 expected,
                 line.terminal.output(),
-                "expected output for abs: {:?}, rel: {:?}, focused: {} in line mode",
-                absolute,
-                relative,
-                focused,
+                "expected output for abs: {absolute:?}, rel: {relative:?}, focused: {focused} in line mode",
             );
         }
 
@@ -1333,11 +1327,11 @@ mod tests {
         line.focused = true;
 
         line.print_focus_and_container_indicators(100)?;
-        assert_eq!(format!("{}    ", FOCUSED_LINE), line.terminal.output());
+        assert_eq!(format!("{FOCUSED_LINE}    "), line.terminal.output());
         line.terminal.clear_output();
 
         line.print_focus_and_container_indicators(3)?;
-        assert_eq!(format!("{}", FOCUSED_LINE), line.terminal.output());
+        assert_eq!(format!("{FOCUSED_LINE}"), line.terminal.output());
         line.terminal.clear_output();
 
         line.print_focus_and_container_indicators(2)?;
@@ -1366,14 +1360,14 @@ mod tests {
         };
 
         line.print_focus_and_container_indicators(100)?;
-        assert_eq!(format!("{}", EXPANDED_CONTAINER), line.terminal.output());
+        assert_eq!(format!("{EXPANDED_CONTAINER}"), line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = true;
 
         line.print_focus_and_container_indicators(100)?;
         assert_eq!(
-            format!("{}", FOCUSED_EXPANDED_CONTAINER),
+            format!("{FOCUSED_EXPANDED_CONTAINER}"),
             line.terminal.output()
         );
         line.terminal.clear_output();
@@ -1382,7 +1376,7 @@ mod tests {
         line.indentation = 2;
 
         line.print_focus_and_container_indicators(100)?;
-        assert_eq!(format!("  {}", FOCUSED_LINE), line.terminal.output());
+        assert_eq!(format!("  {FOCUSED_LINE}"), line.terminal.output());
         line.terminal.clear_output();
 
         line.row = &line.flatjson[5];
@@ -1390,7 +1384,7 @@ mod tests {
 
         line.print_focus_and_container_indicators(7)?;
         assert_eq!(
-            format!("    {}", FOCUSED_COLLAPSED_CONTAINER),
+            format!("    {FOCUSED_COLLAPSED_CONTAINER}"),
             line.terminal.output()
         );
         line.terminal.clear_output();
@@ -1402,10 +1396,7 @@ mod tests {
         line.focused = false;
 
         line.print_focus_and_container_indicators(100)?;
-        assert_eq!(
-            format!("    {}", COLLAPSED_CONTAINER),
-            line.terminal.output()
-        );
+        assert_eq!(format!("    {COLLAPSED_CONTAINER}"), line.terminal.output());
 
         Ok(())
     }
@@ -1428,7 +1419,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"hello\"_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_\"hello\"_FG(Default)_: "),
             line.terminal.output()
         );
         assert_eq!(9, used_space);
@@ -1439,7 +1430,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_hello_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_hello_FG(Default)_: "),
             line.terminal.output()
         );
         assert_eq!(7, used_space);
@@ -1450,7 +1441,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_BG({})__INV__B_hello_BG(Default)__!INV__!B_: ", BLUE),
+            format!("_BG({BLUE})__INV__B_hello_BG(Default)__!INV__!B_: "),
             line.terminal.output(),
         );
         assert_eq!(7, used_space);
@@ -1464,7 +1455,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"french fry\"_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_\"french fry\"_FG(Default)_: "),
             line.terminal.output(),
         );
         assert_eq!(14, used_space);
@@ -1476,7 +1467,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"\"_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_\"\"_FG(Default)_: "),
             line.terminal.output(),
         );
         assert_eq!(4, used_space);

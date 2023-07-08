@@ -20,7 +20,7 @@ pub fn parse(yaml: String) -> Result<(Vec<Row>, String, usize), String> {
 
     let docs = match YamlLoader::load_from_str(&yaml) {
         Ok(yaml_docs) => yaml_docs,
-        Err(err) => return Err(format!("{}", err)),
+        Err(err) => return Err(format!("{err}")),
     };
 
     let mut prev_sibling = OptionIndex::Nil;

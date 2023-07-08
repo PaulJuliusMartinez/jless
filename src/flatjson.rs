@@ -224,16 +224,16 @@ impl FlatJson {
                     );
                 }
 
-                write!(buf, "[{}]", key)
+                write!(buf, "[{key}]")
             } else {
                 if path_type != PathType::Bracket && lineprinter::JS_IDENTIFIER.is_match(key) {
-                    write!(buf, ".{}", key)
+                    write!(buf, ".{key}")
                 } else {
                     if path_type == PathType::Query && row.depth == 1 {
                         // Handle square brackets as the first part of the path.
-                        write!(buf, ".[\"{}\"]", key)
+                        write!(buf, ".[\"{key}\"]")
                     } else {
-                        write!(buf, "[\"{}\"]", key)
+                        write!(buf, "[\"{key}\"]")
                     }
                 }
             }
@@ -716,9 +716,7 @@ mod tests {
             assert_eq!(
                 accessor_fn(elem),
                 Into::<OptionIndex>::into(*expected_value),
-                "incorrect {} at index {}",
-                field,
-                i,
+                "incorrect {field} at index {i}",
             );
         }
     }
