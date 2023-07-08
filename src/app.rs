@@ -66,6 +66,8 @@ enum ContentTarget {
 enum Command {
     Quit,
     Help,
+    SetShowLineNumber(Option<bool>),
+    SetShowRelativeLineNumber(Option<bool>),
     Unknown,
 }
 
@@ -429,6 +431,20 @@ impl App {
                                 match Self::parse_command(&command) {
                                     Command::Quit => break,
                                     Command::Help => self.show_help(),
+                                    Command::SetShowLineNumber(Some(new_val)) => {
+                                        self.screen_writer.show_line_numbers = new_val
+                                    }
+                                    Command::SetShowLineNumber(None) => {
+                                        self.screen_writer.show_line_numbers =
+                                            !self.screen_writer.show_line_numbers
+                                    }
+                                    Command::SetShowRelativeLineNumber(Some(new_val)) => {
+                                        self.screen_writer.show_relative_line_numbers = new_val
+                                    }
+                                    Command::SetShowRelativeLineNumber(None) => {
+                                        self.screen_writer.show_relative_line_numbers =
+                                            !self.screen_writer.show_relative_line_numbers
+                                    }
                                     Command::Unknown => {
                                         self.set_warning_message(format!(
                                             "Unknown command: {command}"
@@ -671,6 +687,12 @@ impl App {
         match command {
             "h" | "he" | "hel" | "help" => Command::Help,
             "q" | "qu" | "qui" | "quit" | "quit()" | "exit" | "exit()" => Command::Quit,
+            "set number" => Command::SetShowLineNumber(Some(true)),
+            "set number!" => Command::SetShowLineNumber(None),
+            "set nonumber" => Command::SetShowLineNumber(Some(false)),
+            "set relativenumber" => Command::SetShowRelativeLineNumber(Some(true)),
+            "set relativenumber!" => Command::SetShowRelativeLineNumber(None),
+            "set norelativenumber" => Command::SetShowRelativeLineNumber(Some(false)),
             _ => Command::Unknown,
         }
     }

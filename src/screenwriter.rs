@@ -26,8 +26,8 @@ pub struct ScreenWriter {
     pub dimensions: TTYDimensions,
     pub terminal: AnsiTerminal,
 
-    show_line_numbers: bool,
-    show_relative_line_numbers: bool,
+    pub show_line_numbers: bool,
+    pub show_relative_line_numbers: bool,
 
     indentation_reduction: u16,
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
