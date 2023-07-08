@@ -485,7 +485,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             }
             LabelType::Index => {
                 let style = if self.focused {
-                    &highlighting::BOLD_STYLE
+                    &highlighting::BOLD_INVERTED_STYLE
                 } else {
                     &highlighting::DIMMED_STYLE
                 };
@@ -1607,7 +1607,7 @@ mod tests {
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!("_B_[12345]_!B_: ", line.terminal.output());
+        assert_eq!("_INV__B_[12345]_!INV__!B_: ", line.terminal.output());
         assert_eq!(9, used_space);
 
         Ok(())
