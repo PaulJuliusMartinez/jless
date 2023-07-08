@@ -182,8 +182,9 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             self.print_focus_and_container_indicators(available_space)?;
 
         if space_used_for_indicators == expected_space_used_for_indicators {
-            let space_used_for_label = self.fill_in_label(available_space)?;
+            available_space -= space_used_for_indicators;
 
+            let space_used_for_label = self.fill_in_label(available_space)?;
             available_space -= space_used_for_label;
 
             if self.has_label() && space_used_for_label == 0 {
@@ -1302,6 +1303,59 @@ mod tests {
                 "expected output for abs: {absolute:?}, rel: {relative:?}, focused: {focused} in line mode",
             );
         }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_print_line_tracks_available_space() -> std::fmt::Result {
+        const JSON: &str = r#"{
+            "hello": 1,
+            "key_2": {
+                "key_3": "value",
+                "key_4": "value2",
+            },
+        }"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+
+        let mut term = VisibleEscapesTerminal::new(true, false);
+        // ### __> key_2: (2) {key_3: "value", key_4: "value2"}
+        // 1234567890123456789012345678901234567890123456789012
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 2);
+        line.indentation = 2;
+        line.line_number.max_width = 3;
+
+        line.width = 48;
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "value2"}}"#),
+            line.terminal.output(),
+        );
+        line.terminal.clear_output();
+
+        line.width = 47;
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "valu…"}}"#),
+            line.terminal.output(),
+        );
+        line.terminal.clear_output();
+
+        line.width = 52;
+        line.line_number.absolute = Some(2);
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  2   {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "value2"}}"#),
+            line.terminal.output(),
+        );
+        line.terminal.clear_output();
+
+        line.width = 51;
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  2   {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "valu…"}}"#),
+            line.terminal.output(),
+        );
 
         Ok(())
     }
