@@ -173,11 +173,8 @@ impl SearchState {
     }
 
     pub fn set_matches_visible_if_actively_searching(&mut self) {
-        match self.immediate_state {
-            ImmediateSearchState::ActivelySearching { .. } => {
-                self.immediate_state = ImmediateSearchState::MatchesVisible
-            }
-            _ => {}
+        if let ImmediateSearchState::ActivelySearching { .. } = self.immediate_state {
+            self.immediate_state = ImmediateSearchState::MatchesVisible;
         }
     }
 

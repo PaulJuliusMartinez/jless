@@ -155,10 +155,7 @@ impl App {
             if self.input_state == InputState::WaitingForAnyKeyPress {
                 if matches!(event, KeyEvent(_)) {
                     let _ = write!(self.screen_writer.stdout, "{ToAlternateScreen}");
-                    let _ = write!(
-                        self.screen_writer.stdout,
-                        "{ENABLE_MOUSE_BUTTON_TRACKING}"
-                    );
+                    let _ = write!(self.screen_writer.stdout, "{ENABLE_MOUSE_BUTTON_TRACKING}");
                     self.input_state = InputState::Default;
                     self.draw_screen();
                     self.message = None;
@@ -741,15 +738,13 @@ impl App {
                 let quoteless_range = (key_range.start + 1)..(key_range.end - 1);
 
                 // Don't copy quotes in Data mode.
-                let copied_key = if self.viewer.mode == Mode::Data
+                if self.viewer.mode == Mode::Data
                     && JS_IDENTIFIER.is_match(&json[quoteless_range.clone()])
                 {
                     json[quoteless_range].to_string()
                 } else {
                     json[key_range.clone()].to_string()
-                };
-
-                copied_key
+                }
             }
             ct @ (ContentTarget::DotPath
             | ContentTarget::BracketPath
@@ -816,10 +811,7 @@ impl App {
                 let _ = write!(self.screen_writer.stdout, "{ToMainScreen}");
                 // Disable mouse button tracking so that the user can use their mouse
                 // to highlight the text.
-                let _ = write!(
-                    self.screen_writer.stdout,
-                    "{DISABLE_MOUSE_BUTTON_TRACKING}"
-                );
+                let _ = write!(self.screen_writer.stdout, "{DISABLE_MOUSE_BUTTON_TRACKING}");
                 let _ = write!(
                     self.screen_writer.stdout,
                     "{}{}{}\n\nPress any key to continue.",

@@ -141,11 +141,7 @@ pub fn unescape_json_string(s: &str) -> Result<String, UnescapeError> {
 }
 
 fn is_control(ch: char) -> bool {
-    match ch as u32 {
-        0x00..=0x1F => true,
-        0x7F..=0x9F => true,
-        _ => false,
-    }
+    matches!(ch as u32, 0x00..=0x1F | 0x7F..=0x9F)
 }
 
 // Consumes four hex characters from a Chars iterator, and converts it to a u16.
