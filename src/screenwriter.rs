@@ -12,6 +12,7 @@ use crate::app::MAX_BUFFER_SIZE;
 use crate::flatjson::{Index, OptionIndex, PathType, Row, Value};
 use crate::lineprinter as lp;
 use crate::lineprinter::LineNumber;
+use crate::options::Opt;
 use crate::search::{MatchRangeIter, SearchState};
 use crate::terminal;
 use crate::terminal::{AnsiTerminal, Terminal};
@@ -24,7 +25,9 @@ pub struct ScreenWriter {
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
     pub terminal: AnsiTerminal,
-    pub show_line_numbers: bool,
+
+    show_line_numbers: bool,
+    show_relative_line_numbers: bool,
 
     indentation_reduction: u16,
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
@@ -52,17 +55,18 @@ const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {
     pub fn init(
+        options: &Opt,
         stdout: RawTerminal<Box<dyn std::io::Write>>,
         command_editor: Editor<()>,
         dimensions: TTYDimensions,
-        show_line_numbers: bool,
     ) -> Self {
         ScreenWriter {
             stdout,
             command_editor,
             dimensions,
             terminal: AnsiTerminal::new(String::new()),
-            show_line_numbers,
+            show_line_numbers: options.show_line_numbers,
+            show_relative_line_numbers: options.show_relative_line_numbers,
             indentation_reduction: 0,
             truncated_row_value_views: HashMap::new(),
         }
@@ -132,6 +136,8 @@ impl ScreenWriter {
             .peekable();
         let current_match = search_state.current_match_range();
 
+        let mut delta_to_focused_row = viewer.index_of_focused_row_on_screen() as isize;
+
         for row_index in 0..viewer.dimensions.height {
             match line {
                 OptionIndex::Nil => {
@@ -145,6 +151,7 @@ impl ScreenWriter {
                         viewer,
                         row_index,
                         index,
+                        delta_to_focused_row,
                         &mut search_matches,
                         &current_match,
                     )?;
@@ -154,6 +161,8 @@ impl ScreenWriter {
                     };
                 }
             }
+
+            delta_to_focused_row -= 1;
         }
 
         Ok(())
@@ -179,6 +188,7 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         screen_index: u16,
         index: Index,
+        delta_to_focused_row: isize,
         search_matches: &mut Peekable<MatchRangeIter>,
         focused_search_match: &Range<usize>,
     ) -> std::fmt::Result {
@@ -229,15 +239,18 @@ impl ScreenWriter {
 
         let search_matches_copy = (*search_matches).clone();
 
-        let mut line_number = None;
+        let mut absolute_line_number = None;
+        let mut relative_line_number = None;
+        let max_line_number_width = isize::max(
+            2,
+            isize::ilog10(viewer.flatjson.0.len() as isize + 1) as isize + 1,
+        );
+
         if self.show_line_numbers {
-            line_number = Some(LineNumber {
-                absolute: (index + 1) as usize,
-                max_width: isize::max(
-                    2,
-                    isize::ilog10(viewer.flatjson.0.len() as isize + 1) as isize + 1,
-                ),
-            });
+            absolute_line_number = Some(index + 1 as usize);
+        }
+        if self.show_relative_line_numbers {
+            relative_line_number = Some(delta_to_focused_row.abs() as usize);
         }
 
         let mut line = lp::LinePrinter {
@@ -246,7 +259,11 @@ impl ScreenWriter {
 
             flatjson: &viewer.flatjson,
             row,
-            line_number,
+            line_number: LineNumber {
+                absolute: absolute_line_number,
+                relative: relative_line_number,
+                max_width: max_line_number_width,
+            },
 
             width: self.dimensions.width as isize,
             indentation,

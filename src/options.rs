@@ -38,6 +38,12 @@ pub struct Opt {
     #[clap(long = "number")]
     pub show_line_numbers: bool,
 
+    /// Whether to line numbers relative to the current position of the cursor.
+    /// Relative line numbers help you use a count with vertical motion commands
+    /// (j k) without having to count.
+    #[clap(long = "relative-number")]
+    pub show_relative_line_numbers: bool,
+
     /// Number of lines to maintain as padding between the currently
     /// focused row and the top or bottom of the screen. Setting this to
     /// a large value will keep the focused in the middle of the screen

@@ -897,7 +897,7 @@ impl JsonViewer {
     }
 
     // Returns the index of the focused row within the actual viewing window.
-    fn index_of_focused_row_on_screen(&self) -> u16 {
+    pub fn index_of_focused_row_on_screen(&self) -> u16 {
         self.count_visible_rows_before(
             self.top_row,
             self.focused_row,

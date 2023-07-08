@@ -131,7 +131,8 @@ impl DelimiterPair {
 // What line number should be displayed
 #[derive(Copy, Clone)]
 pub struct LineNumber {
-    pub absolute: usize,
+    pub absolute: Option<usize>,
+    pub relative: Option<usize>,
     pub max_width: isize,
 }
 
@@ -143,7 +144,7 @@ pub struct LinePrinter<'a, 'b> {
     // we're printing out.
     pub flatjson: &'a FlatJson,
     pub row: &'a Row,
-    pub line_number: Option<LineNumber>,
+    pub line_number: LineNumber,
 
     // Width of the terminal and how much we should indent the line.
     pub width: isize,
@@ -201,33 +202,50 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         Ok(())
     }
 
+    // Absolute | Relative | Focused | Format
+    // ---------+----------+---------+--------
+    //     N    |     N    |    -    | Nothing
+    //     Y    |     N    |    N    | Right aligned, dimmed
+    //     Y    |     N    |    Y    | Right aligned, yellow
+    //     N    |     Y    |    N    | Right aligned, dimmed
+    //     N    |     Y    |    Y    | Right aligned, yellow
+    //     Y    |     Y    |    N    | Relative, right aligned, dimmed
+    //     Y    |     Y    |    Y    | Absolute, left aligned, yellow
     fn print_line_number(&mut self, available_space: isize) -> Result<isize, fmt::Error> {
-        let Some(line_number) = self.line_number else { return Ok(0) };
+        let LineNumber {
+            absolute,
+            relative,
+            max_width,
+        } = self.line_number;
 
         // If the line number is going to fill up all the available space (or overfill it)
         // then don't print the line number.
-        if line_number.max_width + 1 >= available_space {
+        if max_width + 1 >= available_space {
             return Ok(0);
         }
 
-        if self.focused {
-            self.terminal.set_style(&Style {
-                fg: terminal::YELLOW,
-                ..Style::default()
-            })?;
-        } else {
-            self.terminal.set_style(&highlighting::DIMMED_STYLE)?;
-        }
+        let (n, style, right_aligned) = match (absolute, relative, self.focused) {
+            (None, None, _) => return Ok(0),
+            (Some(n), None, false) | (None, Some(n), false) | (Some(_), Some(n), false) => {
+                (n, &highlighting::DIMMED_STYLE, true)
+            }
+            (Some(n), None, true) | (None, Some(n), true) => {
+                (n, &highlighting::CURRENT_LINE_NUMBER, true)
+            }
+            (Some(n), Some(_), true) => (n, &highlighting::CURRENT_LINE_NUMBER, false),
+        };
 
-        write!(
-            self.terminal,
-            "{: >1$}",
-            line_number.absolute, line_number.max_width as usize,
-        )?;
+        self.terminal.set_style(style)?;
+
+        if right_aligned {
+            write!(self.terminal, "{: >1$}", n, max_width as usize)?;
+        } else {
+            write!(self.terminal, "{: <1$}", n, max_width as usize)?;
+        }
         self.terminal.reset_style()?;
         write!(self.terminal, " ")?;
 
-        Ok(line_number.max_width + 1)
+        Ok(max_width + 1)
     }
 
     fn print_focus_and_container_indicators(
@@ -1198,7 +1216,11 @@ mod tests {
             terminal,
             flatjson,
             row: &flatjson[index],
-            line_number: None,
+            line_number: LineNumber {
+                absolute: None,
+                relative: None,
+                max_width: 4,
+            },
             indentation: 0,
             width: 100,
             focused: false,
@@ -1212,7 +1234,7 @@ mod tests {
     }
 
     #[test]
-    fn test_full_line_printer_basic() -> std::fmt::Result {
+    fn test_line_numbers() -> std::fmt::Result {
         const JSON: &str = r#"{
             "hello": 1,
             "2": [
@@ -1224,27 +1246,68 @@ mod tests {
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 3);
         line.indentation = 4;
-        line.focused = true;
 
-        line.print_line()?;
-        assert_eq!(
-            format!("    {}[0]: 3", FOCUSED_LINE),
-            line.terminal.output()
-        );
-        line.terminal.clear_output();
+        let abs = Some(14);
+        let rel = Some(6);
+        let f_line = FOCUSED_LINE;
+        let n_line = NOT_FOCUSED_LINE;
+
+        for (absolute, relative, focused, expected) in vec![
+            (None, None, false, format!("    {}[0]: 3", NOT_FOCUSED_LINE)),
+            (None, None, true, format!("    {}[0]: 3", FOCUSED_LINE)),
+            (abs, None, false, format!("  14     {}[0]: 3", n_line)),
+            (abs, None, true, format!("  14     {}[0]: 3", f_line)),
+            (None, rel, false, format!("   6     {}[0]: 3", n_line)),
+            (None, rel, true, format!("   6     {}[0]: 3", f_line)),
+            (abs, rel, false, format!("   6     {}[0]: 3", n_line)),
+            (abs, rel, true, format!("14       {}[0]: 3", f_line)),
+        ]
+        .into_iter()
+        {
+            line.terminal.clear_output();
+            line.line_number.absolute = absolute;
+            line.line_number.relative = relative;
+            line.focused = focused;
+
+            line.print_line()?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected output for abs: {:?}, rel: {:?}, focused: {} in data mode",
+                absolute,
+                relative,
+                focused,
+            );
+        }
 
         line.mode = Mode::Line;
-        line.line_number = Some(LineNumber {
-            absolute: 4,
-            max_width: 4,
-        });
+        for (absolute, relative, focused, expected) in vec![
+            (None, None, false, format!("{}    3", NOT_FOCUSED_LINE)),
+            (None, None, true, format!("{}    3", FOCUSED_LINE)),
+            (abs, None, false, format!("  14 {}    3", n_line)),
+            (abs, None, true, format!("  14 {}    3", f_line)),
+            (None, rel, false, format!("   6 {}    3", n_line)),
+            (None, rel, true, format!("   6 {}    3", f_line)),
+            (abs, rel, false, format!("   6 {}    3", n_line)),
+            (abs, rel, true, format!("14   {}    3", f_line)),
+        ]
+        .into_iter()
+        {
+            line.terminal.clear_output();
+            line.line_number.absolute = absolute;
+            line.line_number.relative = relative;
+            line.focused = focused;
 
-        line.print_line()?;
-        assert_eq!(
-            format!("   4 {}    3", FOCUSED_LINE),
-            line.terminal.output()
-        );
-        line.terminal.clear_output();
+            line.print_line()?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected output for abs: {:?}, rel: {:?}, focused: {} in line mode",
+                absolute,
+                relative,
+                focused,
+            );
+        }
 
         Ok(())
     }

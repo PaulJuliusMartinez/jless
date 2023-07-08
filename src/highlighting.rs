@@ -92,6 +92,11 @@ pub const DIMMED_STYLE: Style = Style {
     ..Style::default()
 };
 
+pub const CURRENT_LINE_NUMBER: Style = Style {
+    fg: terminal::YELLOW,
+    ..Style::default()
+};
+
 pub const PREVIEW_STYLES: (&Style, &Style) = (&DIMMED_STYLE, &GRAY_INVERTED_STYLE);
 
 pub const BLUE_STYLE: Style = Style {
