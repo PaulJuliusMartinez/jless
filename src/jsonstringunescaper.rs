@@ -151,7 +151,7 @@ fn is_control(ch: char) -> bool {
 // Consumes four hex characters from a Chars iterator, and converts it to a u16.
 // Also returns the four original characters as a mini [u8] that can be safely
 // interpreted as a str.
-fn parse_codepoint_from_chars<'a, 'b>(chars: &'a mut std::str::Chars<'b>) -> (u16, [u8; 4]) {
+fn parse_codepoint_from_chars(chars: &mut std::str::Chars<'_>) -> (u16, [u8; 4]) {
     let mut codepoint = 0;
     let chars = [
         chars.next().unwrap(),

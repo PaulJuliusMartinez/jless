@@ -96,7 +96,7 @@ struct RangeAdjuster<'a> {
 impl TruncatedRange {
     // Create a RangeAdjuster representing the current state of the
     // TruncatedRange.
-    fn adjuster<'a, 'b>(&'a self, s: &'b str, available_space: isize) -> RangeAdjuster<'b> {
+    fn adjuster<'a>(&self, s: &'a str, available_space: isize) -> RangeAdjuster<'a> {
         let mut used_space = self.used_space;
         // The adjuster doesn't keep track of the replacement character.
         if self.showing_replacement_character {
@@ -203,7 +203,7 @@ impl TruncatedStrView {
     // Creates a RangeAdjuster that represents the current state of
     // the TruncatedStrView. This should only be called when the string
     // is representable and we have a view.
-    fn range_adjuster<'a, 'b>(&'a self, s: &'b str) -> RangeAdjuster<'b> {
+    fn range_adjuster<'a>(&self, s: &'a str) -> RangeAdjuster<'a> {
         debug_assert!(self.range.is_some());
         self.range.unwrap().adjuster(s, self.available_space)
     }

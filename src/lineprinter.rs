@@ -172,7 +172,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     pub fn print_line(&mut self) -> fmt::Result {
         self.terminal.reset_style()?;
 
-        let mut available_space = self.width as isize;
+        let mut available_space = self.width;
 
         let space_used_for_line_number = self.print_line_number(available_space)?;
         available_space -= space_used_for_line_number;
@@ -1078,7 +1078,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         let focused_search_match = if self.emphasize_focused_search_match {
-            &self.focused_search_match
+            self.focused_search_match
         } else {
             &NO_FOCUSED_MATCH
         };
@@ -1148,7 +1148,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         self.highlight_str(delimiter.left(), str_open_delimiter_range_start, styles)?;
 
         let focused_search_match = if self.emphasize_focused_search_match {
-            &self.focused_search_match
+            self.focused_search_match
         } else {
             &NO_FOCUSED_MATCH
         };
