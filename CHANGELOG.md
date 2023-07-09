@@ -24,7 +24,8 @@ New features:
   - Absolute line numbers are enabled by default, but not relative line
     numbers. These can be enabled/disabled/re-enabled via command line
     flags `--line-numbers`, `--no-line-numbers`,
-    `--relative-line-numbers` and `--no-relative-line-numbers`.
+    `--relative-line-numbers` and `--no-relative-line-numbers`, or via
+    the short flags `-n`, `-N`, `-r`, and `-R` respectively.
   - These settings can also be modified while jless is running. Entering
     `:set number`/`:set relativenumber` will enable these settings,
     `:set nonumber`/`:set norelativenumber` will disable them, and

@@ -220,28 +220,30 @@
       rather what line the node would appear on if the original input were
       pretty printed.
 
-      Line numbers can be disabled with the "--no-line-numbers" flag,
-      (or re-enabled with the "--line-numbers" flag), and they can also be
-      controlled while jless is running. ":set number" will turn on line
-      numbers, ":set nonumber" will turn them off, and ":set number!" will
-      toggle the current setting.
+      jless also supports relative line numbers. When this is enabled, the
+      number displayed next to each line will indicate how many lines away it
+      is from the currently focused line. This makes it easier to use the j
+      and k commands with specified counts.
 
-      jless also has support for displaying relative line numbers. When this
-      is enabled, the number displayed next to each line will indicate how
-      many lines away it is from the currently focused line. This makes it
-      easier to use the j and k commands with specified counts.
+      The appearance of line numbers can be configured via command line flags:
 
-      Relative line numbers can be enabled with the "--relative-line-numbers"
-      flag, (or disabled with "--no-relative-line-numbers"), and they can also
-      be controlled while jless is running. ":set relativenumber" will turn on
-      relative line numbers, ":set norelativenumber" will turn them off, and
-      ":set relativenumber!" will toggle the current setting.
+  -n, --line-numbers              Show absolute line numbers.
+  -N, --no-line-numbers           Don't show absolute line numbers.
+
+  -r, --relative-line-numbers     Show relative line numbers.
+  -R, --no-relative-line-numbers  Don't show relative line numbers.
+
+      As well as at runtime:
+
+  :set number             Show absolute line numbers.
+  :set nonumber           Don't show absolute line numbers.
+  :set number!            Toggle whether showing absolute line numbers.
+
+  :set relativenumber     Show relative line numbers.
+  :set norelativenumber   Don't show relative line numbers.
+  :set relativenumber!    Toggle whether showing relative line numbers.
 
       When just using relative line numbers, "0" will be displayed next to the
       currently focused line. When both flags are set, the absolute line
       number will be displayed next to the focused lines, and all other line
       numbers will be relative. This matches vim's behavior.
-
-      These flags can also be disabled at runtime by entering ":set nonumber"
-      or ":set norelativenumber", or toggled by entering ":set number!" or
-      ":set relativenumber!".
