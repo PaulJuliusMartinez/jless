@@ -212,3 +212,29 @@
 
       In line mode you can press '%' when focused on an open or close
       delimiter of an object or array to jump to its matching pair.
+
+                                  [1mLINE NUMBERS[0m
+
+      jless has support for displaying line numbers. This can be enabled
+      either via a command line flag, "--number", or while jless is running,
+      by entering ":set number".
+
+      The line numbers do not reflect the position of a node in the original
+      input, but rather what line the node would appear on if the original
+      input were pretty printed.
+
+      jless also has support for displaying relative line numbers, which can
+      be enabled with the command line flag, "--relative-number", or the
+      command ":set relativenumber". When this is enabled, the number
+      displayed next to each line will indicate how many lines away it is from
+      the currently focused line. This makes it easier to use the j and k
+      commands with specified counts.
+
+      When just using relative line numbers, "0" will be displayed next to the
+      currently focused line. When both flags are set, the absolute line
+      number will be displayed next to the focused lines, and all other line
+      numbers will be relative. This matches vim's behavior.
+
+      These flags can also be disabled at runtime by entering ":set nonumber"
+      or ":set norelativenumber", or toggled by entering ":set number!" or
+      ":set relativenumber!".

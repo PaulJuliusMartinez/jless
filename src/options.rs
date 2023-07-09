@@ -32,7 +32,7 @@ pub struct Opt {
     pub mode: Mode,
 
     /// Whether to show "line" numbers. Line numbers are determined by
-    /// the line number of focused line if the document were pretty printed.
+    /// the line number of a given line if the document were pretty printed.
     /// These means there are discontinuities when viewing in data mode
     /// because the lines containing closing brackets and braces aren't displayed.
     #[clap(long = "number")]

@@ -6,13 +6,60 @@ New features:
   clipboard. Control characters remain escaped.
 - The length of Arrays and size of Objects is now shown before the
   container previews, e.g., (`foo: (3) ["apple", "banana", "cherry"]`)
+- Add a new family of "print" commands, that nearly map to the existing
+  copy commands, that will simply print a value to the screen. This is
+  useful for viewing the entirety of long string values all at once, or
+  if the clipboard functionality is not working; mouse-tracking will be
+  temporarily disabled, allowing you to use your terminal's native
+  clipboard capabilities to select and copy the desired text.
+- Support showing line numbers, both absolute and/or relative by passing
+  `--number` or `--relative-number` on the command line. Absolute line
+  numbers refer to what line number a given node would appear on if the
+  document were pretty printed. This means there are discontinuities
+  when in data mode because closing brackets and braces aren't
+  displayed. Relative line numbers show how far a line is relative to
+  the currently focused line. The behavior of the various combinations
+  of these settings matches vim: when using just relative line numbers
+  alone, the focused line will show `0`, but when both flags are enabled
+  the focused line will show its absolute line number.
+  - These settings can also be enabled while jless is running by
+    entering `:set number`/`:set relativenumber`, disabled by entering
+    `:set nonumber`/`:set norelativenumber`, or toggle by entering
+    `:set number!`/`:set relativenumber!`, matching vim.
+  - There is not yet support for a jless config file, so if you would
+    like line numbers by default, it is recommended to set up an alias:
+    `alias jless=jless --number --relative-number`.
+- You can jump to an exact line number using `<count>g` or `<count>G`.
+  When using `<count>g` (lowercase 'g'), if the desired line number is
+  hidden inside of a collapsed container, the last visible line number
+  before the desired one will be focused. When using `<coung>G`
+  (uppercase 'G'), all the ancestors of the desired line will be
+  expanded to ensure it is visible.
+
+Improvements:
+- In data mode, when a array element is focused, the highlighting on the
+  index label (e.g., "[8]") is now inverted. Additionally, a '▶' is
+  always displayed next to the currently focused line, even if the
+  focused node is a primitive. Together these changes should make it
+  more clear which line is focused, especially when the terminal's
+  current style doesn't support dimming (`ESC [ 2 m`).
 
 Bug fixes:
 - Scrolling with the mouse will now move the viewing window, rather than
   the cursor.
+- When searching, jless will do a better job jumping to the first match
+  after the cursor; previously if a user started a search while focused
+  on the opening of a Object or Array, any matches inside that container
+  were initially skipped over.
+- When jumping to a search match that is inside a collapsed container,
+  search matches will continue to be highlighted after expanding the
+  container.
 
 Other notes:
 - The minimum supported Rust version has been updated to 1.67.
+- jless now re-renders the screen by emitting "clear line" escape codes
+  (`ESC [ 2 K`) for each line, instead of a single "clear screen" escape
+  code (`ESC [ 2 J`), in the hopes of reducing flicking when scrolling.
 
 
 v0.8.0 (2022-03-10)
