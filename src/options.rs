@@ -29,33 +29,34 @@ pub struct Opt {
     #[arg(short, long, value_enum, hide_possible_values = true, default_value_t = Mode::Data)]
     pub mode: Mode,
 
-    // This godforsaken configuration to get both --number and --no-number to work
-    // (with --number as the default) and --relative-number and --no-relative-number to
-    // work (with --no-relative-number as the default) was taken from here:
+    // This godforsaken configuration to get both --line-numbers and --no-line-numbers to
+    // work (with --line-numbers as the default) and --relative-line-numbers and
+    // --no-relative-line-numbers to work (with --no-relative-line-numbers as the default)
+    // was taken from here:
     //
     // https://jwodder.github.io/kbits/posts/clap-bool-negate/
     /// Don't show line numbers.
-    #[arg(long = "no-number", action = ArgAction::SetFalse)]
+    #[arg(long = "no-line-numbers", action = ArgAction::SetFalse)]
     pub show_line_numbers: bool,
 
     /// Show "line" numbers (default). Line numbers are determined by
     /// the line number of a given line if the document were pretty printed.
     /// These means there are discontinuities when viewing in data mode
     /// because the lines containing closing brackets and braces aren't displayed.
-    #[arg(long = "number", overrides_with = "show_line_numbers")]
+    #[arg(long = "line-numbers", overrides_with = "show_line_numbers")]
     pub _show_line_numbers_hidden: bool,
 
     /// Show the line number relative to the currently focused line. Relative line
     /// numbers help you use a count with vertical motion commands (j k) without
     /// having to count.
     #[arg(
-        long = "relative-number",
+        long = "relative-line-numbers",
         overrides_with = "_show_relative_line_numbers_hidden"
     )]
     pub show_relative_line_numbers: bool,
 
     /// Don't show relative line numbers (default).
-    #[arg(long = "no-relative-number")]
+    #[arg(long = "no-relative-line-numbers")]
     _show_relative_line_numbers_hidden: bool,
 
     /// Number of lines to maintain as padding between the currently

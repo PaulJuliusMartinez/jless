@@ -23,8 +23,8 @@ New features:
   the focused line will show its absolute line number.
   - Absolute line numbers are enabled by default, but not relative line
     numbers. These can be enabled/disabled/re-enabled via command line
-    flags `--number`, `--no-number`, `--relative-number` and
-    `--no-relative-number`.
+    flags `--line-numbers`, `--no-line-numbers`,
+    `--relative-line-numbers` and `--no-relative-line-numbers`.
   - These settings can also be modified while jless is running. Entering
     `:set number`/`:set relativenumber` will enable these settings,
     `:set nonumber`/`:set norelativenumber` will disable them, and
@@ -32,7 +32,7 @@ New features:
     vim's behavior.
   - There is not yet support for a jless config file, so if you would
     like relative line numbers by default, it is recommended to set up
-    an alias: `alias jless=jless --number --relative-number`.
+    an alias: `alias jless=jless --line-numbers --relative-line-numbers`.
 - You can jump to an exact line number using `<count>g` or `<count>G`.
   When using `<count>g` (lowercase 'g'), if the desired line number is
   hidden inside of a collapsed container, the last visible line number

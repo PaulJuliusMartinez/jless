@@ -220,19 +220,20 @@
       rather what line the node would appear on if the original input were
       pretty printed.
 
-      Line numbers can be disabled with the "--no-number" flag, (or re-enabled
-      with the "--number" flag), and they can also be controlled while jless
-      is running. ":set number" will turn on line numbers, ":set nonumber"
-      will turn them off, and ":set number!" will toggle the current setting.
+      Line numbers can be disabled with the "--no-line-numbers" flag,
+      (or re-enabled with the "--line-numbers" flag), and they can also be
+      controlled while jless is running. ":set number" will turn on line
+      numbers, ":set nonumber" will turn them off, and ":set number!" will
+      toggle the current setting.
 
       jless also has support for displaying relative line numbers. When this
       is enabled, the number displayed next to each line will indicate how
       many lines away it is from the currently focused line. This makes it
       easier to use the j and k commands with specified counts.
 
-      Relative line numbers can be enabled with the "--relative-number" flag,
-      (or disabled with the "--no-relative-number" flag), and they can also be
-      controlled while jless is running. ":set relativenumber" will turn on
+      Relative line numbers can be enabled with the "--relative-line-numbers"
+      flag, (or disabled with "--no-relative-line-numbers"), and they can also
+      be controlled while jless is running. ":set relativenumber" will turn on
       relative line numbers, ":set norelativenumber" will turn them off, and
       ":set relativenumber!" will toggle the current setting.
 
