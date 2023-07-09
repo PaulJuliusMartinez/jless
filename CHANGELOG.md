@@ -12,23 +12,27 @@ New features:
   if the clipboard functionality is not working; mouse-tracking will be
   temporarily disabled, allowing you to use your terminal's native
   clipboard capabilities to select and copy the desired text.
-- Support showing line numbers, both absolute and/or relative by passing
-  `--number` or `--relative-number` on the command line. Absolute line
-  numbers refer to what line number a given node would appear on if the
-  document were pretty printed. This means there are discontinuities
+- Support showing line numbers, both absolute and/or relative. Absolute
+  line numbers refer to what line number a given node would appear on if
+  the document were pretty printed. This means there are discontinuities
   when in data mode because closing brackets and braces aren't
   displayed. Relative line numbers show how far a line is relative to
   the currently focused line. The behavior of the various combinations
   of these settings matches vim: when using just relative line numbers
   alone, the focused line will show `0`, but when both flags are enabled
   the focused line will show its absolute line number.
-  - These settings can also be enabled while jless is running by
-    entering `:set number`/`:set relativenumber`, disabled by entering
-    `:set nonumber`/`:set norelativenumber`, or toggle by entering
-    `:set number!`/`:set relativenumber!`, matching vim.
+  - Absolute line numbers are enabled by default, but not relative line
+    numbers. These can be enabled/disabled/re-enabled via command line
+    flags `--number`, `--no-number`, `--relative-number` and
+    `--no-relative-number`.
+  - These settings can also be modified while jless is running. Entering
+    `:set number`/`:set relativenumber` will enable these settings,
+    `:set nonumber`/`:set norelativenumber` will disable them, and
+    `:set number!`/`:set relativenumber!` will toggle them, matching
+    vim's behavior.
   - There is not yet support for a jless config file, so if you would
-    like line numbers by default, it is recommended to set up an alias:
-    `alias jless=jless --number --relative-number`.
+    like relative line numbers by default, it is recommended to set up
+    an alias: `alias jless=jless --number --relative-number`.
 - You can jump to an exact line number using `<count>g` or `<count>G`.
   When using `<count>g` (lowercase 'g'), if the desired line number is
   hidden inside of a collapsed container, the last visible line number
@@ -72,8 +76,8 @@ New features:
   or explicit `--yaml` or `--json` flags.
 - Implement `ctrl-b` and `ctrl-f` commands for scrolling up and down by
   the height of the screen. (Aliases for `PageUp` and `PageDown`)
-- Support copy values (with `yy` or `yv`), object keys (with `yk`), and
-  paths to the currently focused node (with `yp`, `yb` or `yq`).
+- Support copying values (with `yy` or `yv`), object keys (with `yk`),
+  and paths to the currently focused node (with `yp`, `yb` or `yq`).
 
 Improvements:
 - Keep focused line in same place on screen when toggling between line

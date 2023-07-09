@@ -215,20 +215,26 @@
 
                                   [1mLINE NUMBERS[0m
 
-      jless has support for displaying line numbers. This can be enabled
-      either via a command line flag, "--number", or while jless is running,
-      by entering ":set number".
+      jless supports displaying line numbers, and does so by default. The line
+      numbers do not reflect the position of a node in the original input, but
+      rather what line the node would appear on if the original input were
+      pretty printed.
 
-      The line numbers do not reflect the position of a node in the original
-      input, but rather what line the node would appear on if the original
-      input were pretty printed.
+      Line numbers can be disabled with the "--no-number" flag, (or re-enabled
+      with the "--number" flag), and they can also be controlled while jless
+      is running. ":set number" will turn on line numbers, ":set nonumber"
+      will turn them off, and ":set number!" will toggle the current setting.
 
-      jless also has support for displaying relative line numbers, which can
-      be enabled with the command line flag, "--relative-number", or the
-      command ":set relativenumber". When this is enabled, the number
-      displayed next to each line will indicate how many lines away it is from
-      the currently focused line. This makes it easier to use the j and k
-      commands with specified counts.
+      jless also has support for displaying relative line numbers. When this
+      is enabled, the number displayed next to each line will indicate how
+      many lines away it is from the currently focused line. This makes it
+      easier to use the j and k commands with specified counts.
+
+      Relative line numbers can be enabled with the "--relative-number" flag,
+      (or disabled with the "--no-relative-number" flag), and they can also be
+      controlled while jless is running. ":set relativenumber" will turn on
+      relative line numbers, ":set norelativenumber" will turn them off, and
+      ":set relativenumber!" will toggle the current setting.
 
       When just using relative line numbers, "0" will be displayed next to the
       currently focused line. When both flags are set, the absolute line
