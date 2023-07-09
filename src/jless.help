@@ -46,8 +46,15 @@
   0  ^         Move to the first sibling of the focused node's parent.
   $            Move to the last  sibling of the focused node's parent.
 
-  g  Home      Focus the first line in the input.
-  G  End       Focus the last  line in the input.
+  Home         Focus the first line in the input.
+  End          Focus the last  line in the input.
+
+  g         *  Focus the first line in the input if no count is given. If a
+                 count is given, focus that line number. If the line isn't
+                 visible, focus the last visible line before it.
+  G         *  Focus the last  line in the input if no count is given. If a
+                 count is given, focus that line number, expanding any of its
+                 parent nodes if necessary.
 
   c            Collapse the focused node and all its siblings.
   e            Expand   the focused node and all its siblings.

@@ -357,6 +357,20 @@ impl App {
                             jumped_to_search_match = true;
                             self.jump_to_search_match(JumpDirection::Prev, count)
                         }
+                        Key::Char('g') => match self.maybe_parse_input_buffer_as_number() {
+                            None => Some(Action::FocusTop),
+                            Some(n) => Some(Action::JumpTo {
+                                line: n - 1,
+                                make_visible: false,
+                            }),
+                        },
+                        Key::Char('G') => match self.maybe_parse_input_buffer_as_number() {
+                            None => Some(Action::FocusBottom),
+                            Some(n) => Some(Action::JumpTo {
+                                line: n - 1,
+                                make_visible: true,
+                            }),
+                        },
                         Key::Char('.') => {
                             let count = self.parse_input_buffer_as_number();
                             self.screen_writer
@@ -408,8 +422,8 @@ impl App {
                         Key::Char(' ') => Some(Action::ToggleCollapsed),
                         Key::Char('^') => Some(Action::FocusFirstSibling),
                         Key::Char('$') => Some(Action::FocusLastSibling),
-                        Key::Char('g') | Key::Home => Some(Action::FocusTop),
-                        Key::Char('G') | Key::End => Some(Action::FocusBottom),
+                        Key::Home => Some(Action::FocusTop),
+                        Key::End => Some(Action::FocusBottom),
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
                         Key::Char('<') => {
@@ -680,7 +694,10 @@ impl App {
             jump_direction,
             jumps,
         );
-        Some(Action::MoveTo(destination))
+        Some(Action::JumpTo {
+            line: destination,
+            make_visible: false,
+        })
     }
 
     fn parse_command(command: &str) -> Command {
