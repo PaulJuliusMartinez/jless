@@ -59,6 +59,8 @@ Bug fixes:
 - When jumping to a search match that is inside a collapsed container,
   search matches will continue to be highlighted after expanding the
   container.
+- [Issue #71 / PR #98]: jless will return a non-zero exit code if it
+  fails to parse the input.
 
 Other notes:
 - The minimum supported Rust version has been updated to 1.67.

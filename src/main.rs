@@ -71,7 +71,7 @@ fn main() {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{err}");
-            return;
+            std::process::exit(1);
         }
     };
 
