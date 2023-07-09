@@ -224,16 +224,16 @@ impl FlatJson {
                     );
                 }
 
-                write!(buf, "[{}]", key)
+                write!(buf, "[{key}]")
             } else {
                 if path_type != PathType::Bracket && lineprinter::JS_IDENTIFIER.is_match(key) {
-                    write!(buf, ".{}", key)
+                    write!(buf, ".{key}")
                 } else {
                     if path_type == PathType::Query && row.depth == 1 {
                         // Handle square brackets as the first part of the path.
-                        write!(buf, ".[\"{}\"]", key)
+                        write!(buf, ".[\"{key}\"]")
                     } else {
-                        write!(buf, "[\"{}\"]", key)
+                        write!(buf, "[\"{key}\"]")
                     }
                 }
             }
@@ -245,7 +245,7 @@ impl FlatJson {
                 if path_type == PathType::DotWithTopLevelIndex
                     && (index != 0 || row.next_sibling.is_some())
                 {
-                    write!(buf, "[{}]", row.index)
+                    write!(buf, "[{}]", row.index_in_parent)
                 } else {
                     Ok(())
                 }
@@ -259,7 +259,7 @@ impl FlatJson {
                             write!(buf, "[]")
                         }
                     }
-                    _ => write!(buf, "[{}]", row.index),
+                    _ => write!(buf, "[{}]", row.index_in_parent),
                 }
             }
         };
@@ -378,7 +378,7 @@ pub struct Row {
     pub next_sibling: OptionIndex,
 
     pub depth: usize,
-    pub index: Index,
+    pub index_in_parent: usize,
     pub range: Range<usize>,
     pub key_range: Option<Range<usize>>,
     pub value: Value,
@@ -430,11 +430,25 @@ impl Row {
         self.value.pair_index()
     }
 
-    pub fn full_range(&self) -> Range<usize> {
-        match &self.key_range {
-            Some(key_range) => key_range.start..self.range.end,
-            None => self.range.clone(),
-        }
+    // The range of what the row represents on the screen. If the row is
+    // a container, and it is collapsed, this includes the entire range
+    // of the container, but if it is expanded, it just represents the
+    // single opening character.
+    //
+    // This also includes the key range for objects.
+    pub fn range_represented_by_row(&self) -> Range<usize> {
+        let start = match &self.key_range {
+            Some(key_range) => key_range.start,
+            None => self.range.start,
+        };
+
+        let end = if self.is_container() && self.is_expanded() {
+            self.range.start + 1
+        } else {
+            self.range.end
+        };
+
+        start..end
     }
 }
 
@@ -702,9 +716,7 @@ mod tests {
             assert_eq!(
                 accessor_fn(elem),
                 Into::<OptionIndex>::into(*expected_value),
-                "incorrect {} at index {}",
-                field,
-                i,
+                "incorrect {field} at index {i}",
             );
         }
     }

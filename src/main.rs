@@ -1,6 +1,8 @@
 // I don't like this rule because it changes the semantic
 // structure of the code.
 #![allow(clippy::collapsible_else_if)]
+// Sometimes "x >= y + 1" is semantically clearer than "x > y"
+#![allow(clippy::int_plus_one)]
 
 extern crate lazy_static;
 extern crate libc_stdhandle;
@@ -21,6 +23,7 @@ mod flatjson;
 mod highlighting;
 mod input;
 mod jsonparser;
+mod jsonstringunescaper;
 mod jsontokenizer;
 mod lineprinter;
 mod options;
@@ -41,7 +44,7 @@ fn main() {
     let (input_string, input_filename) = match get_input_and_filename(&opt) {
         Ok(input_and_filename) => input_and_filename,
         Err(err) => {
-            eprintln!("Unable to get input: {}", err);
+            eprintln!("Unable to get input: {err}");
             std::process::exit(1);
         }
     };
@@ -59,20 +62,15 @@ fn main() {
     // sure rustyline gets the /dev/tty input.
     input::remap_dev_tty_to_stdin();
 
-    let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
-        io::stdout().into_raw_mode().unwrap(),
-    )));
+    let stdout = Box::new(MouseTerminal::from(HideCursor::from(
+        AlternateScreen::from(io::stdout()),
+    ))) as Box<dyn std::io::Write>;
+    let raw_stdout = stdout.into_raw_mode().unwrap();
 
-    let mut app = match App::new(
-        &opt,
-        input_string,
-        data_format,
-        input_filename,
-        Box::new(stdout),
-    ) {
+    let mut app = match App::new(&opt, input_string, data_format, input_filename, raw_stdout) {
         Ok(jl) => jl,
         Err(err) => {
-            eprintln!("{}", err);
+            eprintln!("{err}");
             std::process::exit(1);
         }
     };
@@ -83,14 +81,14 @@ fn main() {
 fn print_pretty_printed_input(input: String, data_format: DataFormat) {
     // Don't try to pretty print YAML input; just pass it through.
     if data_format == DataFormat::Yaml {
-        print!("{}", input);
+        print!("{input}");
         return;
     }
 
     let flatjson = match flatjson::parse_top_level_json(input) {
         Ok(flatjson) => flatjson,
         Err(err) => {
-            eprintln!("Unable to parse input: {:?}", err);
+            eprintln!("Unable to parse input: {err:?}");
             std::process::exit(1);
         }
     };

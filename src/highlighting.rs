@@ -92,6 +92,11 @@ pub const DIMMED_STYLE: Style = Style {
     ..Style::default()
 };
 
+pub const CURRENT_LINE_NUMBER: Style = Style {
+    fg: terminal::YELLOW,
+    ..Style::default()
+};
+
 pub const PREVIEW_STYLES: (&Style, &Style) = (&DIMMED_STYLE, &GRAY_INVERTED_STYLE);
 
 pub const BLUE_STYLE: Style = Style {
@@ -107,14 +112,14 @@ pub const INVERTED_BOLD_BLUE_STYLE: Style = Style {
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn highlight_truncated_str_view<'a>(
+pub fn highlight_truncated_str_view(
     out: &mut dyn Terminal,
     mut s: &str,
     str_view: &TruncatedStrView,
     mut str_range_start: Option<usize>,
     style: &Style,
     highlight_style: &Style,
-    matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
+    matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'_>>>,
     focused_search_match: &Range<usize>,
 ) -> fmt::Result {
     let mut leading_ellipsis = false;
@@ -163,18 +168,18 @@ pub fn highlight_truncated_str_view<'a>(
     Ok(())
 }
 
-pub fn highlight_matches<'a>(
+pub fn highlight_matches(
     out: &mut dyn Terminal,
     mut s: &str,
     str_range_start: Option<usize>,
     style: &Style,
     highlight_style: &Style,
-    matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'a>>>,
+    matches_iter: &mut Option<&mut Peekable<MatchRangeIter<'_>>>,
     focused_search_match: &Range<usize>,
 ) -> fmt::Result {
     if str_range_start.is_none() {
         out.set_style(style)?;
-        write!(out, "{}", s)?;
+        write!(out, "{s}")?;
         return Ok(());
     }
 

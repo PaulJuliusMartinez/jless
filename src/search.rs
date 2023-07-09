@@ -39,6 +39,7 @@ pub struct SearchState {
 
 pub enum ImmediateSearchState {
     NotSearching,
+    MatchesVisible,
     ActivelySearching {
         last_match_jumped_to: usize,
         last_search_into_collapsed_container: bool,
@@ -123,7 +124,7 @@ impl SearchState {
         let regex = RegexBuilder::new(&inverted)
             .case_insensitive(!case_sensitive)
             .build()
-            .map_err(|e| format!("{}", e).replace('\n', " "))?;
+            .map_err(|e| format!("{e}").replace('\n', " "))?;
 
         let matches: Vec<Range<usize>> = regex.find_iter(haystack).map(|m| m.range()).collect();
 
@@ -136,9 +137,17 @@ impl SearchState {
         })
     }
 
+    pub fn showing_matches(&self) -> bool {
+        match self.immediate_state {
+            ImmediateSearchState::NotSearching => false,
+            ImmediateSearchState::MatchesVisible
+            | ImmediateSearchState::ActivelySearching { .. } => true,
+        }
+    }
+
     pub fn active_search_state(&self) -> Option<(usize, bool)> {
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => None,
+            ImmediateSearchState::NotSearching | ImmediateSearchState::MatchesVisible => None,
             ImmediateSearchState::ActivelySearching {
                 last_match_jumped_to,
                 just_wrapped,
@@ -161,6 +170,12 @@ impl SearchState {
 
     pub fn set_no_longer_actively_searching(&mut self) {
         self.immediate_state = ImmediateSearchState::NotSearching;
+    }
+
+    pub fn set_matches_visible_if_actively_searching(&mut self) {
+        if let ImmediateSearchState::ActivelySearching { .. } = self.immediate_state {
+            self.immediate_state = ImmediateSearchState::MatchesVisible;
+        }
     }
 
     pub fn jump_to_match(
@@ -221,7 +236,8 @@ impl SearchState {
     pub fn matches_iter(&self, range_start: usize) -> MatchRangeIter {
         match self.immediate_state {
             ImmediateSearchState::NotSearching => STATIC_EMPTY_SLICE.iter(),
-            ImmediateSearchState::ActivelySearching { .. } => {
+            ImmediateSearchState::MatchesVisible
+            | ImmediateSearchState::ActivelySearching { .. } => {
                 let search_result = self
                     .matches
                     .binary_search_by(|probe| probe.end.cmp(&range_start));
@@ -238,7 +254,7 @@ impl SearchState {
     /// if not actively searching.
     pub fn current_match_range(&self) -> Range<usize> {
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => 0..0,
+            ImmediateSearchState::NotSearching | ImmediateSearchState::MatchesVisible => 0..0,
             ImmediateSearchState::ActivelySearching {
                 last_match_jumped_to,
                 ..
@@ -265,8 +281,8 @@ impl SearchState {
         debug_assert!(jumps != 0);
 
         match self.immediate_state {
-            ImmediateSearchState::NotSearching => {
-                let focused_row_range = flatjson[focused_row].full_range();
+            ImmediateSearchState::NotSearching | ImmediateSearchState::MatchesVisible => {
+                let focused_row_range = flatjson[focused_row].range_represented_by_row();
 
                 match true_direction {
                     SearchDirection::Forward => {
@@ -362,7 +378,7 @@ impl SearchState {
         // We want to jump to the last row that starts before (or at) the start of the match.
         flatjson
             .0
-            .partition_point(|row| row.full_range().start <= match_range.start)
+            .partition_point(|row| row.range_represented_by_row().start <= match_range.start)
             - 1
     }
 }

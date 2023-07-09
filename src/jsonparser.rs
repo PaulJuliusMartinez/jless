@@ -86,7 +86,7 @@ impl<'a> JsonParser<'a> {
             num_child += 1;
 
             self.rows[next_top_level].prev_sibling = OptionIndex::Index(prev_top_level);
-            self.rows[next_top_level].index = num_child;
+            self.rows[next_top_level].index_in_parent = num_child;
             self.rows[prev_top_level].next_sibling = OptionIndex::Index(next_top_level);
 
             prev_top_level = next_top_level;
@@ -198,7 +198,7 @@ impl<'a> JsonParser<'a> {
             }
 
             self.rows[child].prev_sibling = prev_sibling;
-            self.rows[child].index = num_children;
+            self.rows[child].index_in_parent = num_children;
             if let OptionIndex::Index(prev) = prev_sibling {
                 self.rows[prev].next_sibling = OptionIndex::Index(child);
             }
@@ -322,7 +322,7 @@ impl<'a> JsonParser<'a> {
             }
 
             self.rows[child].prev_sibling = prev_sibling;
-            self.rows[child].index = num_children;
+            self.rows[child].index_in_parent = num_children;
             if let OptionIndex::Index(prev) = prev_sibling {
                 self.rows[prev].next_sibling = OptionIndex::Index(child);
             }
@@ -441,7 +441,7 @@ impl<'a> JsonParser<'a> {
             // To be filled in by caller
             prev_sibling: OptionIndex::Nil,
             next_sibling: OptionIndex::Nil,
-            index: 0,
+            index_in_parent: 0,
             key_range: None,
         });
 

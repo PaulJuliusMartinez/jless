@@ -4,12 +4,15 @@ use std::iter::Peekable;
 use std::ops::Range;
 
 use rustyline::Editor;
+use termion::raw::RawTerminal;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
 use crate::app::MAX_BUFFER_SIZE;
 use crate::flatjson::{Index, OptionIndex, PathType, Row, Value};
 use crate::lineprinter as lp;
+use crate::lineprinter::LineNumber;
+use crate::options::Opt;
 use crate::search::{MatchRangeIter, SearchState};
 use crate::terminal;
 use crate::terminal::{AnsiTerminal, Terminal};
@@ -18,10 +21,13 @@ use crate::types::TTYDimensions;
 use crate::viewer::{JsonViewer, Mode};
 
 pub struct ScreenWriter {
-    pub stdout: Box<dyn std::io::Write>,
+    pub stdout: RawTerminal<Box<dyn std::io::Write>>,
     pub command_editor: Editor<()>,
     pub dimensions: TTYDimensions,
-    terminal: AnsiTerminal,
+    pub terminal: AnsiTerminal,
+
+    pub show_line_numbers: bool,
+    pub show_relative_line_numbers: bool,
 
     indentation_reduction: u16,
     truncated_row_value_views: HashMap<Index, TruncatedStrView>,
@@ -43,13 +49,14 @@ impl MessageSeverity {
     }
 }
 
-const TAB_SIZE: usize = 2;
+const TAB_SIZE: isize = 2;
 const PATH_BASE: &str = "input";
 const SPACE_BETWEEN_PATH_AND_FILENAME: isize = 3;
 
 impl ScreenWriter {
     pub fn init(
-        stdout: Box<dyn std::io::Write>,
+        options: &Opt,
+        stdout: RawTerminal<Box<dyn std::io::Write>>,
         command_editor: Editor<()>,
         dimensions: TTYDimensions,
     ) -> Self {
@@ -58,6 +65,8 @@ impl ScreenWriter {
             command_editor,
             dimensions,
             terminal: AnsiTerminal::new(String::new()),
+            show_line_numbers: options.show_line_numbers,
+            show_relative_line_numbers: options.show_relative_line_numbers,
             indentation_reduction: 0,
             truncated_row_value_views: HashMap::new(),
         }
@@ -80,11 +89,11 @@ impl ScreenWriter {
             Ok(_) => match self.terminal.flush_contents(&mut self.stdout) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error while printing viewer: {}", e);
+                    eprintln!("Error while printing viewer: {e}");
                 }
             },
             Err(e) => {
-                eprintln!("Error while printing viewer: {}", e);
+                eprintln!("Error while printing viewer: {e}");
             }
         }
     }
@@ -107,11 +116,11 @@ impl ScreenWriter {
             Ok(_) => match self.terminal.flush_contents(&mut self.stdout) {
                 Ok(_) => {}
                 Err(e) => {
-                    eprintln!("Error while printing status bar: {}", e);
+                    eprintln!("Error while printing status bar: {e}");
                 }
             },
             Err(e) => {
-                eprintln!("Error while printing status bar: {}", e);
+                eprintln!("Error while printing status bar: {e}");
             }
         }
     }
@@ -121,18 +130,19 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         search_state: &SearchState,
     ) -> std::fmt::Result {
-        self.terminal.clear_screen()?;
-
         let mut line = OptionIndex::Index(viewer.top_row);
         let mut search_matches = search_state
             .matches_iter(viewer.flatjson[line.unwrap()].range.start)
             .peekable();
         let current_match = search_state.current_match_range();
 
+        let mut delta_to_focused_row = viewer.index_of_focused_row_on_screen() as isize;
+
         for row_index in 0..viewer.dimensions.height {
             match line {
                 OptionIndex::Nil => {
                     self.terminal.position_cursor(1, row_index + 1)?;
+                    self.terminal.clear_line()?;
                     self.terminal.set_fg(terminal::LIGHT_BLACK)?;
                     self.terminal.write_char('~')?;
                 }
@@ -141,6 +151,7 @@ impl ScreenWriter {
                         viewer,
                         row_index,
                         index,
+                        delta_to_focused_row,
                         &mut search_matches,
                         &current_match,
                     )?;
@@ -150,6 +161,8 @@ impl ScreenWriter {
                     };
                 }
             }
+
+            delta_to_focused_row -= 1;
         }
 
         Ok(())
@@ -175,17 +188,19 @@ impl ScreenWriter {
         viewer: &JsonViewer,
         screen_index: u16,
         index: Index,
+        delta_to_focused_row: isize,
         search_matches: &mut Peekable<MatchRangeIter>,
         focused_search_match: &Range<usize>,
     ) -> std::fmt::Result {
         let is_focused = index == viewer.focused_row;
 
         self.terminal.position_cursor(1, screen_index + 1)?;
+        self.terminal.clear_line()?;
         let row = &viewer.flatjson[index];
 
-        let indentation_level = row
-            .depth
-            .saturating_sub(self.indentation_reduction as usize);
+        let indentation_level =
+            row.depth
+                .saturating_sub(self.indentation_reduction as usize) as isize;
         let indentation = indentation_level * TAB_SIZE;
 
         let focused = is_focused;
@@ -224,14 +239,33 @@ impl ScreenWriter {
 
         let search_matches_copy = (*search_matches).clone();
 
+        let mut absolute_line_number = None;
+        let mut relative_line_number = None;
+        let max_line_number_width = isize::max(
+            2,
+            isize::ilog10(viewer.flatjson.0.len() as isize + 1) as isize + 1,
+        );
+
+        if self.show_line_numbers {
+            absolute_line_number = Some(index + 1);
+        }
+        if self.show_relative_line_numbers {
+            relative_line_number = Some(delta_to_focused_row.unsigned_abs());
+        }
+
         let mut line = lp::LinePrinter {
             mode: viewer.mode,
             terminal: &mut self.terminal,
 
             flatjson: &viewer.flatjson,
             row,
+            line_number: LineNumber {
+                absolute: absolute_line_number,
+                relative: relative_line_number,
+                max_width: max_line_number_width,
+            },
 
-            width: self.dimensions.width as usize,
+            width: self.dimensions.width as isize,
             indentation,
 
             focused,
@@ -240,6 +274,8 @@ impl ScreenWriter {
 
             search_matches: Some(search_matches_copy),
             focused_search_match,
+            // This is only used internally and really shouldn't be exposed.
+            emphasize_focused_search_match: true,
 
             cached_truncated_value: Some(self.truncated_row_value_views.entry(index)),
         };
@@ -281,6 +317,7 @@ impl ScreenWriter {
     ) -> std::fmt::Result {
         self.terminal
             .position_cursor(1, self.dimensions.height - 1)?;
+        self.terminal.clear_line()?;
         self.terminal.set_style(&terminal::Style {
             inverted: true,
             ..terminal::Style::default()
@@ -303,6 +340,7 @@ impl ScreenWriter {
         )?;
 
         self.terminal.position_cursor(1, self.dimensions.height)?;
+        self.terminal.clear_line()?;
 
         if let Some((contents, severity)) = message {
             self.terminal.set_style(&terminal::Style {
@@ -310,22 +348,24 @@ impl ScreenWriter {
                 ..terminal::Style::default()
             })?;
             self.terminal.write_str(contents)?;
-        } else if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
+        } else if search_state.showing_matches() {
             self.terminal
                 .write_char(search_state.direction.prompt_char())?;
             self.terminal.write_str(&search_state.search_term)?;
 
-            // Print out which match we're on:
-            let match_tracker = format!("[{}/{}]", match_num + 1, search_state.num_matches());
-            self.terminal.position_cursor(
-                self.dimensions.width
-                    - (1 + MAX_BUFFER_SIZE as u16)
-                    - (3 + match_tracker.len() as u16 + 3),
-                self.dimensions.height,
-            )?;
+            if let Some((match_num, just_wrapped)) = search_state.active_search_state() {
+                // Print out which match we're on:
+                let match_tracker = format!("[{}/{}]", match_num + 1, search_state.num_matches());
+                self.terminal.position_cursor(
+                    self.dimensions.width
+                        - (1 + MAX_BUFFER_SIZE as u16)
+                        - (3 + match_tracker.len() as u16 + 3),
+                    self.dimensions.height,
+                )?;
 
-            let wrapped_char = if just_wrapped { 'W' } else { ' ' };
-            write!(self.terminal, " {} {}", wrapped_char, match_tracker)?;
+                let wrapped_char = if just_wrapped { 'W' } else { ' ' };
+                write!(self.terminal, " {wrapped_char} {match_tracker}")?;
+            }
         } else {
             write!(self.terminal, ":")?;
         }
@@ -371,7 +411,7 @@ impl ScreenWriter {
             TruncatedStrView::init_start(filename, space_available_for_filename);
 
         if truncated_filename.any_contents_visible() {
-            let filename_width = truncated_filename.used_space().unwrap() as isize;
+            let filename_width = truncated_filename.used_space().unwrap();
             space_available_for_base -= filename_width - SPACE_BETWEEN_PATH_AND_FILENAME;
         }
 
@@ -386,7 +426,7 @@ impl ScreenWriter {
             truncated_view: &truncated_base,
         };
 
-        write!(self.terminal, "{}", base_slice)?;
+        write!(self.terminal, "{base_slice}")?;
 
         self.terminal.set_bg(terminal::DEFAULT)?;
 
@@ -405,11 +445,11 @@ impl ScreenWriter {
                 truncated_view: &TruncatedStrView::init_back(path_to_node, width),
             };
 
-            write!(self.terminal, "{}", path_slice)?;
+            write!(self.terminal, "{path_slice}")?;
         }
 
         if truncated_filename.any_contents_visible() {
-            let filename_width = truncated_filename.used_space().unwrap() as isize;
+            let filename_width = truncated_filename.used_space().unwrap();
 
             self.terminal
                 .position_cursor(self.dimensions.width - (filename_width as u16) + 1, row)?;
@@ -420,7 +460,7 @@ impl ScreenWriter {
                 truncated_view: &truncated_filename,
             };
 
-            write!(self.terminal, "{}", truncated_slice)?;
+            write!(self.terminal, "{truncated_slice}")?;
         }
 
         Ok(())
