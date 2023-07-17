@@ -36,7 +36,7 @@ You can install `jless` using various package managers:
 | [Void Linux](https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless) | `sudo xbps-install jless` |
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
 | [FreeBSD](https://freshports.org/textproc/jless/)          | `pkg install jless`       |
-| Any OS (Requires [Rust toolchain](https://www.rust-lang.org/tools/install))          | `cargo install jless`       |
+| From source (Requires [Rust toolchain](https://www.rust-lang.org/tools/install))       | `cargo install jless`       |
 
 The [releases](https://github.com/PaulJuliusMartinez/jless/releases)
 page also contains links to binaries for various architectures.
