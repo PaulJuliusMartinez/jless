@@ -1,6 +1,6 @@
 ## Release Checklist
 
-- `VERSION=<new version>`
+- `VERSION=<new version>` (including a `v` at the start)
 - Update version in [`Cargo.toml`](./Cargo.toml).
 - Run `cargo build` to update [`Cargo.lock`](./Cargo.lock).
 - Add changes since last release to [`CHANGELOG.md`](./CHANGELOG.md). (You
