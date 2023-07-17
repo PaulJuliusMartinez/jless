@@ -56,8 +56,10 @@
                  count is given, focus that line number, expanding any of its
                  parent nodes if necessary.
 
-  c            Collapse the focused node and all its siblings.
-  e            Expand   the focused node and all its siblings.
+  c            Shallow collapse the focused node and all its siblings.
+  C            Deeply  collapse the focused node and all its siblings.
+  e            Shallow expand   the focused node and all its siblings.
+  E            Deeply  expand   the focused node and all its siblings.
 
   Space        Toggle the collapsed state of the currently focused node.
 

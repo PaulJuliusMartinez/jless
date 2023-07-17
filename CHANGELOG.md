@@ -37,9 +37,11 @@ New features:
 - You can jump to an exact line number using `<count>g` or `<count>G`.
   When using `<count>g` (lowercase 'g'), if the desired line number is
   hidden inside of a collapsed container, the last visible line number
-  before the desired one will be focused. When using `<coung>G`
+  before the desired one will be focused. When using `<count>G`
   (uppercase 'G'), all the ancestors of the desired line will be
   expanded to ensure it is visible.
+- Add `C` and `E` commands, analagous to the existing `c` and `e`
+  commands, to deeply collapse/expand a node and all its siblings.
 
 Improvements:
 - In data mode, when a array element is focused, the highlighting on the
@@ -48,6 +50,10 @@ Improvements:
   focused node is a primitive. Together these changes should make it
   more clear which line is focused, especially when the terminal's
   current style doesn't support dimming (`ESC [ 2 m`).
+- When using the `c` and `e` commands (and the new `C` and `E`
+  commands), the focused row will stay at the same spot on the screen.
+  (Previously jless would try to keep the same row visible at the top of
+  the screen, which didn't make sense.)
 
 Bug fixes:
 - Scrolling with the mouse will now move the viewing window, rather than
