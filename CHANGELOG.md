@@ -1,6 +1,11 @@
 main
 ====
 
+No changes yet!
+
+v0.9.0 (2023-07-16)
+==================
+
 New features:
 - A new command `ys` will copy unescaped string literals to the
   clipboard. Control characters remain escaped.

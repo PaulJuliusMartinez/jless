@@ -5,11 +5,8 @@
 - Run `cargo build` to update [`Cargo.lock`](./Cargo.lock).
 - Add changes since last release to [`CHANGELOG.md`](./CHANGELOG.md). (You
   should do this with every commit!)
-- Update [`docs/releases.html`](./docs/releases.html)
-  - Create new release section
-  - Copy changes from `CHANGELOG.md` to new section
-  - Add binaries section to new release with updated paths
-- Update version number in [`docs/index.html`](./docs/index.html) install instructions
+  - Update the top of the CHANGELOG to say the new version number with
+    the release date, then start a new section for `main`
 - Commit all changes with commit message: `vX.Y.Z Release`
 - Tag commit and push it to GitHub: `git tag $VERSION && git push origin $VERSION`
 - Publish new version to crates.io: `cargo publish`
@@ -30,3 +27,6 @@
   - Select tag
   - Copy stuff from `CHANGELOG.md` to description
   - Attach binaries generated above
+- Update the [`website` branch](https://github.com/PaulJuliusMartinez/jless/tree/website)
+  - Update [`releases_page.rb`](https://github.com/PaulJuliusMartinez/jless/blob/website/releases_page.rb) with the new release
+  - Update [`user_guide_page.rb`](https://github.com/PaulJuliusMartinez/jless/blob/website/user_guide_page.rb) with any new commands

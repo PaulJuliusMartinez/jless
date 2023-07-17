@@ -1,6 +1,6 @@
 [package]
 name = "jless"
-version = "0.8.0"
+version = "0.9.0"
 authors = ["Paul Julius Martinez <pauljuliusmartinez@gmail.com>"]
 license = "MIT"
 description = "A command-line JSON viewer"
