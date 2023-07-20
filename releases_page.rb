@@ -1,6 +1,12 @@
 class ReleasesPage < BasePage
-  BINARIES = {
+  ONLY_INTEL_BINARIES = {
     'macOS' => ['x86_64-apple-darwin'],
+    'Linux' => ['x86_64-unknown-linux-gnu'],
+  }
+
+  INTEL_AND_APPLE_ARM_BINARIES = {
+    'macOS (Intel)' => ['x86_64-apple-darwin'],
+    'macOS (ARM)' => ['aarch64-apple-darwin'],
     'Linux' => ['x86_64-unknown-linux-gnu'],
   }
 
@@ -34,6 +40,7 @@ class ReleasesPage < BasePage
 
   def self.render_contents
     releases = [
+      v0_9_0_release,
       v0_8_0_release,
       v0_7_2_release,
       v0_7_1_release,
@@ -84,8 +91,144 @@ class ReleasesPage < BasePage
 
   # Individual Releases
 
+  def self.v0_9_0_release
+    release_boilerplate('v0.9.0', INTEL_AND_APPLE_ARM_BINARIES) do
+      p1 = p(<<~P)
+        The newest version of jless ships with a handful of new helpful features:
+      P
+
+      feature1 = li(<<~LI)
+        A #{code('ys')} command to copy unescaped string literals to the clipboard
+      LI
+
+      feature2 = li(<<~LI)
+        A family of printing #{code('p')} commands, analogous to the #{code('y')}
+        commands, that print simply content to the screen. Useful for viewing long
+        string values, or if the clipboard functionality isn't working
+      LI
+
+      feature3 = li(<<~LI)
+        Line numbers! Both absolute and relative
+      LI
+
+      feature4 = li(<<~LI)
+        #{code('C')} and #{code('E')} commands, analogous to the existing #{code('c')} and #{code('e')} commands, for deeply collapsing/expanding values
+      LI
+
+      main_features = ul([feature1, feature2, feature3, feature4].join("\n"))
+
+      new_features = section('Full list of new features', [
+        <<~ITEM,
+          A new command #{code('ys')} will copy unescaped string literals to the
+          clipboard. Control characters remain escaped.
+        ITEM
+        <<~ITEM,
+          The length of Arrays and size of Objects is now shown before the container previews
+        ITEM
+        <<~ITEM,
+          Add a new family of "print" commands, that nearly map to the existing copy
+          commands, that will simply print a value to the screen. This is useful for
+          viewing the entirety of long string values all at once, or if the clipboard
+          functionality is not working; mouse-tracking will be temporarily disabled,
+          allowing you to use your terminal's native clipboard capabilities to select
+          and copy the desired text.
+        ITEM
+        p(<<~P) +
+          Support showing line numbers, both absolute and/or relative. Absolute line
+          numbers refer to what line number a given node would appear on if the document
+          were pretty printed. This means there are discontinuities when in data mode because
+          closing brackets and braces aren't displayed. Relative line numbers show how far a
+          line is relative to the currently focused line. The behavior of the various
+          combinations of these settings matches vim: when using just relative line numbers
+          alone, the focused line will show 0, but when both flags are enabled the focused
+          line will show its absolute line number.
+        P
+        p(<<~P) +
+          Absolute line numbers are enabled by default, but not relative line numbers. These
+          can be enabled/disabled/re-enabled via command line flags #{code('--line-numbers')},
+          #{code('--no-line-numbers')}, #{code('--relative-line-numbers')} and
+          #{code('--no-relative-line-numbers')}, or via the short flags #{code('-n')},
+          #{code('-N')}, #{code('-r')}, and #{code('-R')} respectively.
+        P
+        p(<<~P) +
+          These settings can also be modified while jless is running. Entering
+          #{code(':set number')}/#{code(':set relativenumber')} will enable these settings,
+          #{code(':set nonumber')}/#{code(':set norelativenumber')} will disable them, and
+          #{code(':set number!')}/#{code(':set relativenumber!')} will toggle them, matching
+          vim's behavior.
+        P
+        p(<<~P),
+          There is not yet support for a jless config file, so if you would like relative
+          line numbers by default, it is recommended to set up an alias:
+          #{code('alias jless=jless --line-numbers --relative-line-numbers')}.
+        P
+        <<~ITEM,
+          You can jump to an exact line number using #{code('<count>g')} or
+          #{code('<count>G')}. When using #{code('<count>g')} (lowercase 'g'), if the
+          desired line number is hidden inside of a collapsed container, the last visible
+          line number before the desired one will be focused. When using #{code('<count>G')}
+          (uppercase 'G'), all the ancestors of the desired line will be expanded to
+          ensure it is visible.
+        ITEM
+        <<~ITEM,
+          Add #{code('C')} and #{code('E')} commands, analogous to the existing #{code('c')}
+          and #{code('e')} commands, to deeply collapse/expand a node and all its siblings.
+        ITEM
+      ])
+
+      improvements = section('Improvements', [
+        <<~ITEM,
+          In data mode, when a array element is focused, the highlighting on the index
+          label (e.g., #{code('[8]')}) is now inverted. Additionally, a #{code('▶')} is always
+          displayed next to the currently focused line, even if the focused node is a
+          primitive. Together these changes should make it more clear which line is
+          focused, especially when the terminal's current style doesn't support
+          dimming (#{code('ESC [ 2 m')}).
+        ITEM
+        <<~ITEM,
+          When using the #{code('c')} and #{code('e')} commands (and the new #{code('C')}
+          and #{code('E')} commands), the focused row will stay at the same spot on the
+          screen. (Previously jless would try to keep the same row visible at the top of
+          the screen, which didn't make sense.)
+        ITEM
+      ])
+
+      bug_fixes = section('Bug Fixes', [
+        <<~ITEM,
+          Scrolling with the mouse will now move the viewing window, rather than the cursor.
+        ITEM
+        <<~ITEM,
+          When searching, jless will do a better job jumping to the first match after the
+          cursor; previously if a user started a search while focused on the opening of a
+          Object or Array, any matches inside that container were initially skipped over.
+        ITEM
+        <<~ITEM,
+          When jumping to a search match that is inside a collapsed container, search
+          matches will continue to be highlighted after expanding the container.
+        ITEM
+        <<~ITEM,
+          [#{issue(71)}/#{pr(98)}]: jless will return a non-zero exit code if it fails to
+          parse the input.
+        ITEM
+      ])
+
+      other_notes = section('Other Notes', [
+        <<~ITEM,
+          The minimum supported Rust version has been updated to 1.67.
+        ITEM
+        <<~ITEM,
+          jless now re-renders the screen by emitting "clear line" escape codes
+          (#{code('ESC [ 2 K')}) for each line, instead of a single "clear screen" escape
+          #{code('code (ESC [ 2 J')}), in the hopes of reducing flicking when scrolling.
+        ITEM
+      ])
+
+      [p1, main_features, new_features, improvements, bug_fixes, other_notes].join("\n")
+    end
+  end
+
   def self.v0_8_0_release
-    release_boilerplate('v0.8.0', BINARIES) do
+    release_boilerplate('v0.8.0', ONLY_INTEL_BINARIES) do
       p1 = p(<<~P)
         This release ships with two major new features: basic YAML support
         and copying to clipboard!
@@ -199,7 +342,7 @@ class ReleasesPage < BasePage
   end
 
   def self.v0_7_2_release
-    release_boilerplate('v0.7.2', BINARIES) do
+    release_boilerplate('v0.7.2', ONLY_INTEL_BINARIES) do
       new_features_and_changes = section('New features', [
         <<~ITEM,
           Space now toggles the collapsed state of the currently focused
@@ -225,7 +368,7 @@ class ReleasesPage < BasePage
   end
 
   def self.v0_7_1_release
-    release_boilerplate('v0.7.1', BINARIES) do
+    release_boilerplate('v0.7.1', ONLY_INTEL_BINARIES) do
       new_features = section('New features', [
         'F1 now opens help page',
         <<~ITEM,
@@ -260,7 +403,7 @@ class ReleasesPage < BasePage
       P
       p('The intention is to not release a 1.0 version until Windows support is added.')
 
-    release_boilerplate('v0.7.0', BINARIES) {content}
+    release_boilerplate('v0.7.0', ONLY_INTEL_BINARIES) {content}
   end
 
   def self.release_boilerplate(version, binaries, &block)
