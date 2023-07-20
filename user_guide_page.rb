@@ -62,10 +62,11 @@ class UserGuidePage < BasePage
       render_util_commands +
       render_movement_commands +
       render_scrolling_commands +
-      render_copying_commands +
+      render_copying_and_printing_commands +
       render_search_commands +
       render_search_input_explanation +
-      render_modes
+      render_modes +
+      render_line_numbers
   end
 
   def self.render_util_commands
@@ -97,10 +98,20 @@ class UserGuidePage < BasePage
       count_command(%w[Ctrl-b PageUp], "Move up by one window's height or #{N} windows' heights.") +
       command(%w[0 ^], "Move to the first sibling of the focused node's parent.") +
       command(%w[$], "Move to the last sibling of the focused node's parent.") +
-      command(%w[g Home], 'Focus the first line in the input') +
-      command(%w[G End], 'Focus the last line in the input') +
-      command(%w[c], 'Collapse the focused node and all its siblings.') +
-      command(%w[e], 'Expand the focused node and all its siblings.') +
+      command(%w[Home], 'Focus the first line in the input') +
+      command(%w[End], 'Focus the last line in the input') +
+      count_command(%w[g], <<~DESC) +
+        Focus the first line in the input if no count is given. If a count is given, focus
+        that line number. If the line isn't visible, focus the last visible line before it.
+      DESC
+      count_command(%w[G], <<~DESC) +
+        Focus the last line in the input if no count is given. If a count is given, focus
+        that line number, expanding any of its parent nodes if necessary.
+      DESC
+      command(%w[c], 'Shallow collapse the focused node and all its siblings.') +
+      command(%w[C], 'Deep collapse the focused node and all its siblings.') +
+      command(%w[e], 'Shallow expand the focused node and all its siblings.') +
+      command(%w[E], 'Deep expand the focused node and all its siblings.') +
       command(%w[Space], 'Toggle the collapsed state of the currently focused node.')
     end
   end
@@ -130,16 +141,20 @@ class UserGuidePage < BasePage
     end
   end
 
-  def self.render_copying_commands
+  def self.render_copying_and_printing_commands
     copy_commands = ul do
-      yy = command(['yy'], 'Copy the value of the currently focused node, pretty printed')
-      yv = command(['yv'], 'Copy the value of the currently focused node in a "nicely" printed one-line format')
-      yk = command(['yk'], 'Copy the key of the current key/value pair')
-      yp = command(['yp'], <<~CMD)
-        Copy the path from the root JSON element to the currently focused
+      yy_pp = command(['yy', 'pp'], 'Copy/print the value of the currently focused node, pretty printed')
+      yv_pv = command(['yv', 'pv'], 'Copy/print the value of the currently focused node in a "nicely" printed one-line format')
+      ys_ps = command(['ys', 'ps'], <<~DESC)
+        When the currently focused value is a string, copy/print the contents of the
+        string unescaped (except control characters)
+      DESC
+      yk_pk = command(['yk', 'pk'], 'Copy/print the key of the current key/value pair')
+      yp_pP = command(['yp', 'pP'], <<~CMD)
+        Copy/print the path from the root JSON element to the currently focused
         node, e.g., #{code('.foo[3].bar')}
       CMD
-      yb = command(['yb'], <<~CMD)
+      yb_pb = command(['yb', 'pb'], <<~CMD)
         Like #{code('yp')}, but always uses the bracket form for object keys,
         e.g., #{code('["foo"][3]["bar"]')}, which is useful if the environment
         where you'll paste the path doesn't support the #{code('.key')} format,
@@ -147,18 +162,25 @@ class UserGuidePage < BasePage
       CMD
 
       jq_link = code {a(href: 'https://stedolan.github.io/jq/') {'jq'}}
-      yq = command(['yq'], <<~CMD)
-        Copy a #{jq_link} style path that will select the currently focused
+      yq_pq = command(['yq', 'pq'], <<~CMD)
+        Copy/print a #{jq_link} style path that will select the currently focused
         node, e.g., #{code('.foo[].bar')}
       CMD
 
-      [yy, yv, yk, yp, yb, yq].join("\n")
+      [yy_pp, yv_pv, ys_ps, yk_pk, yp_pP, yb_pb, yq_pq].join("\n")
     end
 
-    h3(id: 'copying') {'Copying'} +
+    h3(id: 'copying-and-printing') {'Copying and Printing'} +
       p(<<~P) +
         You can copy various parts of the JSON file to your clipboard using
-        one of the following commands:
+        one of the following #{code('y')} commands.
+      P
+      p(<<~P) +
+        Alternatively, you can print out values using #{code('p')}. This is useful
+        for viewing long string values all at once, or if the clipboard functionality
+        is not working; mouse-tracking will be temporarily disabled, allowing you
+        to use your terminal's native clipboard capabilities to select and copy
+        the desired text.
       P
       copy_commands
   end
@@ -291,6 +313,85 @@ class UserGuidePage < BasePage
       p(<<~P)
         In line mode you can press <code>%</code> when focused on an open or
         close delimiter of an object or array to jump to its matching pair.
+      P
+  end
+
+  def self.render_line_numbers
+    flag1 = li(<<~LI)
+      #{code('-n')}, #{code('--line-numbers')} Show absolute line numbers.
+    LI
+
+    flag2 = li(<<~LI)
+      #{code('-N')}, #{code('--no-line-numbers')} Don't show absolute line numbers.
+    LI
+
+    flag3 = li(<<~LI)
+      #{code('-r')}, #{code('--relative-line-numbers')} Show relative line numbers.
+    LI
+
+    flag4 = li(<<~LI)
+      #{code('-R')}, #{code('--no-relative-line-numbers')} Don't show relative line numbers.
+    LI
+
+    cli_flags = ul(flag1 + flag2 + flag3 + flag4)
+
+    setting1 = li(<<~LI)
+      #{code(':set number')} Show absolute line numbers.
+    LI
+
+    setting2 = li(<<~LI)
+      #{code(':set nonumber')} Don't show absolute line numbers.
+    LI
+
+    setting3 = li(<<~LI)
+      #{code(':set number!')} Toggle whether showing absolute line numbers.
+    LI
+
+    setting4 = li(<<~LI)
+      #{code(':set relativenumber')} Show relative line numbers.
+    LI
+
+    setting5 = li(<<~LI)
+      #{code(':set norelativenumber')} Don't show relative line numbers.
+    LI
+
+    setting6 = li(<<~LI)
+      #{code(':set relativenumber!')} Toggle whether showing relative line numbers.
+    LI
+
+    settings = [
+      setting1,
+      setting2,
+      setting3,
+      setting4,
+      setting5,
+      setting6,
+    ].join("\n")
+
+    h3(id: 'line-numbers') {"Line Numbers"} +
+      p(<<~P) +
+        jless supports displaying line numbers, and does so by default. The line
+        numbers do not reflect the position of a node in the original input, but
+        rather what line the node would appear on if the original input were
+        pretty printed.
+      P
+      p(<<~P) +
+        jless also supports relative line numbers. When this is enabled, the
+        number displayed next to each line will indicate how many lines away it
+        is from the currently focused line. This makes it easier to use the
+        #{code('j')} and #{code('k')} commands with specified counts.
+      P
+      p(<<~P) +
+        The appearance of line numbers can be configured via command line flags:
+      P
+      cli_flags +
+      p("As well as at runtime:") +
+      settings +
+      p(<<~P)
+        When just using relative line numbers, "0" will be displayed next to the
+        currently focused line. When both flags are set, the absolute line
+        number will be displayed next to the focused lines, and all other line
+        numbers will be relative. This matches vim's behavior.
       P
   end
 

@@ -10,6 +10,7 @@ class HomePage < BasePage
     { os: 'Void Linux', command: 'sudo xbps-install jless', link: 'https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless' },
     { os: 'NetBSD', command: 'pkgin install jless', link: 'https://pkgsrc.se/textproc/jless/' },
     { os: 'FreeBSD', command: 'pkg install jless', link: 'https://freshports.org/textproc/jless/' },
+    { os: "From source (requires #{a(href: "https://www.rust-lang.org/tools/install") {"Rust toolchain"}})", command: 'cargo install jless' },
   ].freeze
 
   def self.page_css
@@ -141,11 +142,19 @@ class HomePage < BasePage
         if pkg[:tool]
           cells << td {pkg[:os]}
           cells << td do
-            a(href: pkg[:link]) {pkg[:tool]}
+            if pkg[:link]
+              a(href: pkg[:link]) {pkg[:tool]}
+            else
+              pkg[:tool]
+            end
           end
         else
           cells << td(colspan: '2') do
-            a(href: pkg[:link]) {pkg[:os]}
+            if pkg[:link]
+              a(href: pkg[:link]) {pkg[:os]}
+            else
+              pkg[:os]
+            end
           end
         end
 
@@ -157,16 +166,11 @@ class HomePage < BasePage
       thead {header_row} + tbody {rows}
     end
 
-    cargo = p do
-      msg = 'If you have a Rust toolchain installed, you can also install directly from source using cargo:'
-      msg + code_block(['cargo install jless'])
-    end
-
     github_releases = a(href: GITHUB_RELEASES) {'GitHub'}
     binaries = p(<<~P)
       Binaries for various architectures are also available on #{github_releases}.
     P
 
-    intro + package_managers + cargo + binaries
+    intro + package_managers + binaries
   end
 end
