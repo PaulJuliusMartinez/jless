@@ -45,7 +45,7 @@ New features:
   before the desired one will be focused. When using `<count>G`
   (uppercase 'G'), all the ancestors of the desired line will be
   expanded to ensure it is visible.
-- Add `C` and `E` commands, analagous to the existing `c` and `e`
+- Add `C` and `E` commands, analogous to the existing `c` and `e`
   commands, to deeply collapse/expand a node and all its siblings.
 
 Improvements:

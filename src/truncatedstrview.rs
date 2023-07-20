@@ -50,8 +50,8 @@ pub struct TruncatedStrView {
 /// character.
 ///
 /// Since showing a replacement character is less than ideal, when
-/// we are showing other chracters, we will opt for not using the
-/// entire available space, rather than including the replacment
+/// we are showing other characters, we will opt for not using the
+/// entire available space, rather than including the replacement
 /// character.
 ///
 /// This range also keeps track of how much space it takes up.
@@ -570,7 +570,7 @@ impl<'a> RangeAdjuster<'a> {
         let mut more_on_left = true;
         let mut more_on_right = true;
 
-        // Need to try to expand even even when used_space == available_space
+        // Need to try to expand even when used_space == available_space
         // to possible consume ellipses.
         while self.used_space <= self.available_space {
             let mut added_to_left = false;
@@ -657,7 +657,7 @@ impl<'a> RangeAdjuster<'a> {
         // ellipsis (because it's the last character), so
         // something like "🦀" is represented as "…", not "�".
         let showing_replacement_character =
-            // We only show a repacement character if we're not
+            // We only show a replacement character if we're not
             // showing anything at all...
             self.start == self.end &&
                 // But we have room to showing something...
@@ -783,7 +783,7 @@ mod tests {
         assert_init_states("🦀🦀abc🦀🦀", 5, "🦀🦀…", "…🦀🦀", Some(5));
 
         // Since we're showing a normal character, these don't use the
-        // replacment, so the lengths are different for front vs. back.
+        // replacement, so the lengths are different for front vs. back.
         assert_init_start("a🦀bc", 3, "a…", Some(2));
         assert_init_back("a🦀bc", 3, "…bc", Some(3));
 

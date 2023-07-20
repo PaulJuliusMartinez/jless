@@ -660,7 +660,7 @@ impl JsonViewer {
         }
     }
 
-    // If the user provided a count to a jump command, sets that as the the new
+    // If the user provided a count to a jump command, sets that as the new
     // jump distance. Otherwise, use the stored jump distance, or if none has
     // been set yet, use the default of half a window size.
     fn determine_jump_distance(&mut self, distance: Option<usize>) -> usize {
@@ -787,7 +787,7 @@ impl JsonViewer {
 
     fn toggle_mode(&mut self) {
         // If we're transitioning from line mode to focused mode, and we're focused on
-        // the closing of a container, we need to move the focuse.
+        // the closing of a container, we need to move the focus.
         if self.mode == Mode::Line && self.flatjson[self.focused_row].is_closing_of_container() {
             // We'll move focus to the next item, unless we're at the end of
             // the file and have to move focus backwards.
@@ -831,7 +831,7 @@ impl JsonViewer {
         // row and the top or bottom of the screen.
         let max_padding = self.dimensions.height - scrolloff - 1;
 
-        // Normally as the user moves down the the file we'll keep the focused line
+        // Normally as the user moves down the file we'll keep the focused line
         // scrolloff lines from the bottom of the screen.
         //
         // But if the user jumps well past the end of the screen, rather than leaving
@@ -1510,7 +1510,7 @@ mod tests {
                 // Can scroll so end of file is in middle of screen
                 (Action::ScrollDown(1), 6, 8),
                 (Action::ScrollDown(4), 10, 12),
-                // Can scoll past scrolloff padding
+                // Can scroll past scrolloff padding
                 (Action::ScrollDown(1), 11, 12),
                 (Action::ScrollDown(1), 12, 12),
                 // Can't scroll past last line
