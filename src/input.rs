@@ -178,7 +178,7 @@ impl TuiInput {
         ];
         thread::spawn(move || {
             loop {
-                let result = match await_next_signal(&mut poll_fd_arr) {
+                let result = match Self::await_next_signal(&mut poll_fd_arr) {
                     Ok(_) => {
                         // Drain the stream. Just make this is big enough to absorb a bunch of
                         // unacknowledged SIGWINCHes.
