@@ -1,15 +1,12 @@
 use signal_hook::consts::SIGWINCH;
-use signal_hook::low_level::pipe;
 use termion::event::{parse_event, Event, Key, MouseEvent};
 
 use std::{io, thread};
 use std::io::{stdin, Read, Stdin};
-use std::os::unix::io::AsRawFd;
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc;
 use std::sync::mpsc::{Receiver, Sender};
+use signal_hook::iterator::Signals;
 
-const POLL_INFINITE_TIMEOUT: i32 = -1;
 const BUFFER_SIZE: usize = 1024;
 const ESCAPE: u8 = 0o33;
 
@@ -33,13 +30,7 @@ pub fn remap_dev_tty_to_stdin() {
 }
 
 pub fn get_input() -> impl Iterator<Item = io::Result<TuiEvent>> {
-    let (sigwinch_read, sigwinch_write) = UnixStream::pair().unwrap();
-    // NOTE: This overrides the SIGWINCH handler registered by rustyline.
-    // We should maybe get a reference to the existing signal handler
-    // and call it when appropriate, but it seems to only be used to handle
-    // line wrapping, and it seems to work fine without it.
-    pipe::register(SIGWINCH, sigwinch_write).unwrap();
-    TuiInput::new(stdin(), sigwinch_read)
+    TuiInput::new(stdin())
 }
 
 fn read_and_retry_on_interrupt(input: &mut Stdin, buf: &mut [u8]) -> io::Result<usize> {
@@ -144,10 +135,10 @@ struct TuiInput {
 }
 
 impl TuiInput {
-    fn new(input: Stdin, sigwinch_pipe: UnixStream) -> TuiInput {
+    fn new(input: Stdin) -> TuiInput {
         let (send, recv) = mpsc::channel();
         Self::spawn_thread_buffered_input(input, &send);
-        Self::spawn_thread_sigwinch_handler(sigwinch_pipe, &send);
+        Self::spawn_thread_sigwinch_handler(&send);
 
         TuiInput {
             events_channel_receiver: recv,
@@ -167,49 +158,25 @@ impl TuiInput {
         });
     }
 
-    fn spawn_thread_sigwinch_handler(mut signal_pipe: UnixStream, send: &Sender<io::Result<TuiEvent>>) {
+    fn spawn_thread_sigwinch_handler(send: &Sender<io::Result<TuiEvent>>) {
         let send = send.clone();
-        let mut poll_fd_arr: [libc::pollfd; 1] = [
-            libc::pollfd {
-                fd: signal_pipe.as_raw_fd(),
-                events: libc::POLLIN,
-                revents: 0,
-            },
-        ];
         thread::spawn(move || {
-            loop {
-                let result = match Self::await_next_signal(&mut poll_fd_arr) {
-                    Ok(_) => {
-                        // Drain the stream. Just make this is big enough to absorb a bunch of
-                        // unacknowledged SIGWINCHes.
-                        if poll_fd_arr[0].revents & libc::POLLIN != 0 {
-                            let mut buf = [0; 32];
-                            let _ = signal_pipe.read(&mut buf);
-                        }
-                        Ok(TuiEvent::WinChEvent)
-                    }
-                    Err(err) => Err(err),
-                };
-                send.send(result).unwrap();
+            // NOTE: This overrides the SIGWINCH handler registered by rustyline.
+            // We should maybe get a reference to the existing signal handler
+            // and call it when appropriate, but it seems to only be used to handle
+            // line wrapping, and it seems to work fine without it.
+            //
+            // The docs for Signals suggests grabbing a signals.handle(), but we only need that to
+            // shut down the iterator, which we don't do today (it just keeps going for the rest
+            // of the app's life, which is fine.)
+            let mut signals = Signals::new(&[SIGWINCH]).unwrap();
+            for signal in &mut signals {
+                match signal {
+                    SIGWINCH => send.send(Ok(TuiEvent::WinChEvent)).unwrap(),
+                    _ => continue,
+                }
             }
         });
-    }
-
-    fn await_next_signal<const N: usize>(signal_pipes: &mut [libc::pollfd; N]) -> io::Result<()> {
-        loop {
-            match unsafe { libc::poll(signal_pipes.as_mut_ptr(), N as libc::nfds_t, POLL_INFINITE_TIMEOUT) } {
-                -1 => {
-                    let err = io::Error::last_os_error();
-                    if err.kind() != io::ErrorKind::Interrupted {
-                        return Err(err);
-                    }
-                    // Try poll again.
-                }
-                _ => {
-                    return Ok(());
-                }
-            };
-        }
     }
 
     fn get_event_from_buffered_input<const N: usize>(input: &mut BufferedInput<N>) -> Option<io::Result<TuiEvent>> {
