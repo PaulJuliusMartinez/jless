@@ -30,6 +30,7 @@ You can install `jless` using various package managers:
 | macOS - [MacPorts](https://ports.macports.org/port/jless/) | `sudo port install jless` |
 | Linux - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
 | [Arch Linux](https://archlinux.org/packages/community/x86_64/jless/)     | `pacman -S jless`         |
+| [openSUSE Tumbleweed](https://software.opensuse.org/package/jless)     | `zypper install jless`         |
 | [Void Linux](https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless) | `sudo xbps-install jless` |
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
 | [FreeBSD](https://freshports.org/textproc/jless/)          | `pkg install jless`       |
