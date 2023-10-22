@@ -11,6 +11,7 @@ use std::fs::File;
 use std::io;
 use std::io::Read;
 use std::path::PathBuf;
+use std::io::IsTerminal;
 
 use clap::Parser;
 use termion::cursor::HideCursor;
@@ -51,7 +52,7 @@ fn main() {
 
     let data_format = determine_data_format(opt.data_format(), &input_filename);
 
-    if !isatty::stdout_isatty() {
+    if !std::io::stdout().is_terminal() {
         print_pretty_printed_input(input_string, data_format);
         std::process::exit(0);
     }
@@ -102,7 +103,7 @@ fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {
 
     match &opt.input {
         None => {
-            if isatty::stdin_isatty() {
+            if std::io::stdout().is_terminal() {
                 println!("Missing filename (\"jless --help\" for help)");
                 std::process::exit(1);
             }
