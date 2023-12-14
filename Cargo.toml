@@ -23,7 +23,6 @@ termion = "1.5.6"
 signal-hook = "0.3.8"
 libc = "0.2"
 clap = { version = "4.0", features = ["derive"] }
-isatty = "0.1"
 libc-stdhandle = "0.1.0"
 yaml-rust = "0.4"
 clipboard = "0.5"
