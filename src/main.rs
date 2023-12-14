@@ -12,6 +12,9 @@ use std::io;
 use std::io::Read;
 use std::path::PathBuf;
 
+#[cfg(feature = "clipboard")]
+use clipboard as sys_clipboard;
+
 use clap::Parser;
 use termion::cursor::HideCursor;
 use termion::input::MouseTerminal;
@@ -19,6 +22,7 @@ use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
 mod app;
+mod clip;
 mod flatjson;
 mod highlighting;
 mod input;
@@ -37,6 +41,7 @@ mod yamlparser;
 
 use app::App;
 use options::{DataFormat, Opt};
+use clip::{ClipProvider, ClipError};
 
 fn main() {
     let opt = Opt::parse();
@@ -67,7 +72,21 @@ fn main() {
     ))) as Box<dyn std::io::Write>;
     let raw_stdout = stdout.into_raw_mode().unwrap();
 
-    let mut app = match App::new(&opt, input_string, data_format, input_filename, raw_stdout) {
+    let clipboard_provider = match opt.clipboard_command {
+        Some(ref command) => {
+            Ok(ClipProvider::CommandClipboard(command.to_string()))
+        },
+        None => default_clip_provider(),
+    };
+
+    let mut app = match App::new(
+        &opt,
+        input_string,
+        data_format,
+        input_filename,
+        raw_stdout,
+        clipboard_provider,
+    ) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{err}");
@@ -76,6 +95,19 @@ fn main() {
     };
 
     app.run(Box::new(input::get_input()));
+}
+
+#[cfg(feature = "clipboard")]
+fn default_clip_provider() -> Result<ClipProvider, ClipError> {
+    match sys_clipboard::ClipboardProvider::new() {
+        Ok(clip) => Ok(ClipProvider::SystemClipboard(clip)),
+        Err(err) => Err(ClipError(err.to_string())),
+    }
+}
+
+#[cfg(not(feature = "clipboard"))]
+fn default_clip_provider() -> Result<ClipProvider, ClipError> {
+    Err(ClipError("No clipboard support, use --clipboard-cmd to set one".to_string()))
 }
 
 fn print_pretty_printed_input(input: String, data_format: DataFormat) {
