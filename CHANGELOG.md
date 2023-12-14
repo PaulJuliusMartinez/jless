@@ -1,7 +1,8 @@
 main
 ====
 
-No changes yet!
+Improvements:
+- [Issue #143]: `ctrl-z` will now send jless to the background
 
 v0.9.0 (2023-07-16)
 ==================

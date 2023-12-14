@@ -165,6 +165,28 @@ impl App {
                 continue;
             }
 
+            // If the user hits Ctrl-z, we don't modify state at all, just send SIGSTOP to
+            // ourself, then loop around and process the next input.
+            if matches!(event, KeyEvent(Key::Ctrl('z'))) {
+                // Restore terminal prior to suspending.
+                let _ = self.screen_writer.stdout.suspend_raw_mode();
+                let _ = write!(self.screen_writer.stdout, "{DISABLE_MOUSE_BUTTON_TRACKING}");
+                let _ = write!(self.screen_writer.stdout, "{ToMainScreen}");
+                let _ = write!(self.screen_writer.stdout, "{}", termion::cursor::Show);
+                let _ = self.screen_writer.stdout.flush();
+                unsafe {
+                    libc::kill(0, libc::SIGSTOP);
+                }
+                // Re-enable all the terminal settings.
+                let _ = write!(self.screen_writer.stdout, "{}", termion::cursor::Hide);
+                let _ = write!(self.screen_writer.stdout, "{ToAlternateScreen}");
+                let _ = write!(self.screen_writer.stdout, "{ENABLE_MOUSE_BUTTON_TRACKING}");
+                let _ = self.screen_writer.stdout.activate_raw_mode();
+                // I'm not exactly sure why we have to do this.
+                self.draw_screen();
+                continue;
+            }
+
             // When "actively" searching, we want to show highlighted search terms.
             // We consider someone "actively" searching immediately after the start
             // of a search, and while they navigate between matches using n/N.

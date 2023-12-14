@@ -14,6 +14,8 @@
 
   F1 :help         Show this help screen.
 
+  ^z               Suspend jless.
+
                                     [1mMOVING[0m
 
   j  DownArrow  *  Move focus down one line (or [4mN[0m lines).
