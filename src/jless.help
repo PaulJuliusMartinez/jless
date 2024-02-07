@@ -120,6 +120,15 @@
   yq pq   Copy/print a path that can be used by jq to filter the input JSON and
             return the currently focused value.
 
+                                     [1mHIDING[0m
+
+      jless supports hiding and unhiding nodes.
+
+  x       Hide the current node the cursor is on, and all other nodes with the
+            same JQ query.
+  u       Unhide the last hidden node.
+  U       Unhide all hidden nodes.
+
                                      [1mSEARCH[0m
 
       jless supports full-text search over the input JSON.

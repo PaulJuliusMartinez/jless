@@ -132,6 +132,10 @@ pub enum Action {
     ExpandNodeAndSiblings,
     DeepExpandNodeAndSiblings,
 
+    HideItem,
+    UndoHideItem,
+    UndoHideItemAll,
+
     ToggleMode,
 
     ResizeViewerDimensions(TTYDimensions),
@@ -182,6 +186,9 @@ impl JsonViewer {
             Action::DeepCollapseNodeAndSiblings => self.deep_collapse_node_and_siblings(),
             Action::ExpandNodeAndSiblings => self.expand_node_and_siblings(),
             Action::DeepExpandNodeAndSiblings => self.deep_expand_node_and_siblings(),
+            Action::HideItem => self.hide_item(),
+            Action::UndoHideItem => self.undo_hide_item(),
+            Action::UndoHideItemAll => self.undo_hide_item_all(),
             Action::ToggleMode => self.toggle_mode(),
             Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
         }
@@ -729,6 +736,36 @@ impl JsonViewer {
 
     fn deep_expand_node_and_siblings(&mut self) {
         self.set_deep_collapse_state_on_node_and_siblings(false);
+    }
+
+    fn hide_item(&mut self) {
+        if self.focused_row == 0 || self.focused_row == self.flatjson.0.len() - 1 { return }
+
+        // Add new filter query
+        let filter_query = self.flatjson
+            .build_path_to_node(crate::flatjson::PathType::Query, self.focused_row);
+        if filter_query.is_err() { return }
+        self.flatjson.3.push(filter_query.unwrap());
+
+        // Adjust focused_row
+        let next_visible_row = match self.mode {
+            Mode::Line => self.flatjson.next_visible_row(self.focused_row - 1 as Index),
+            Mode::Data => self.flatjson.next_item(self.focused_row - 1 as Index),
+        };
+            
+        if let OptionIndex::Index(i) = next_visible_row {
+            self.focused_row = i;
+        } else {
+            self.focused_row = 0;
+        }
+    }
+
+    fn undo_hide_item(&mut self) {
+        self.flatjson.3.pop();
+    }
+
+    fn undo_hide_item_all(&mut self) {
+        self.flatjson.3.clear();
     }
 
     fn switch_focus_to_opening_of_container_if_on_closing(&mut self) {
