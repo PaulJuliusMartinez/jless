@@ -59,6 +59,9 @@ pub struct FlatJson(
     pub String,
     // Max nesting depth.
     pub usize,
+    // List of queries for which any matching items will be hidden, constructed
+    // using `build_path_to_node`.
+    pub Vec<String>,
 );
 
 impl FlatJson {
@@ -80,6 +83,15 @@ impl FlatJson {
         loop {
             let row = &self.0[last_index];
 
+            if self.is_row_hidden(last_index) {
+                if row.is_closing_of_container() {
+                    last_index = row.pair_index().unwrap() - 1;
+                } else {
+                    last_index -= 1;
+                }
+                continue;
+            }
+
             if row.is_primitive() {
                 return last_index;
             }
@@ -93,31 +105,65 @@ impl FlatJson {
     }
 
     pub fn prev_visible_row(&self, index: Index) -> OptionIndex {
-        if index == 0 {
-            return OptionIndex::Nil;
-        }
+        if index == 0 { return OptionIndex::Nil }
 
-        let row = &self.0[index - 1];
+        let mut prev_index = index - 1;
+        loop {
+            let prev_row = &self.0[prev_index];
+            if prev_row.is_closing_of_container() && prev_row.is_collapsed() {
+                prev_index = prev_row.pair_index().unwrap();
+            }
 
-        if row.is_closing_of_container() && row.is_collapsed() {
-            row.pair_index()
-        } else {
-            OptionIndex::Index(index - 1)
+            // If the prev item is hidden and is a container, we skip to 1 before
+            // the opening of the container, otherwise we simply skip 1.
+            //
+            // If the prev item is not hidden, we break out the loop to return 
+            // the item.
+            if self.is_row_hidden(prev_index) {
+                if prev_row.is_closing_of_container() {
+                    prev_index = prev_row.pair_index().unwrap() - 1;
+                } else {
+                    prev_index -= 1;
+                }
+            } else {
+                break;
+            }
         }
+        OptionIndex::Index(prev_index)
     }
 
-    pub fn next_visible_row(&self, mut index: Index) -> OptionIndex {
-        // If row is collapsed container, jump to closing char and move past there.
-        if self.0[index].is_opening_of_container() && self.0[index].is_collapsed() {
-            index = self.0[index].pair_index().unwrap();
-        }
+    pub fn next_visible_row(&self, index: Index) -> OptionIndex {
+        let curr_row = &self.0[index];
+        let is_collapsed_container =
+            curr_row.is_opening_of_container() && curr_row.is_collapsed();
+        let mut next_index = if is_collapsed_container {
+            curr_row.pair_index().unwrap() + 1
+        } else {
+            index + 1
+        };
 
-        // We can always go to the next row, unless we're at the end of the file.
-        if index == self.0.len() - 1 {
-            return OptionIndex::Nil;
-        }
+        loop {
+            // We have reached passed the last item, meaning there is no next
+            // item, so we return Nil.
+            if next_index == self.0.len() { return OptionIndex::Nil };
 
-        OptionIndex::Index(index + 1)
+            // If the next item is hidden and is a container, we skip to 1 past
+            // the closing of the container, otherwise we simply skip 1.
+            //
+            // If the next item is not hidden, we break out the loop to return 
+            // the item.
+            if self.is_row_hidden(next_index) {
+                let next_row = &self.0[next_index];
+                if next_row.is_opening_of_container() {
+                    next_index = next_row.pair_index().unwrap() + 1;
+                } else {
+                    next_index += 1;
+                }
+            } else {
+                break;
+            }
+        }
+        OptionIndex::Index(next_index)
     }
 
     pub fn prev_item(&self, mut index: Index) -> OptionIndex {
@@ -142,6 +188,12 @@ impl FlatJson {
         }
 
         OptionIndex::Nil
+    }
+
+    pub fn is_row_hidden(&self, index: Index) -> bool {
+        let current_row_query = self.build_path_to_node(PathType::Query, index)
+            .unwrap_or_default();
+        self.3.contains(&current_row_query)
     }
 
     pub fn expand(&mut self, index: Index) {
@@ -609,12 +661,12 @@ impl Value {
 
 pub fn parse_top_level_json(json: String) -> Result<FlatJson, String> {
     let (rows, pretty, depth) = jsonparser::parse(json)?;
-    Ok(FlatJson(rows, pretty, depth))
+    Ok(FlatJson(rows, pretty, depth, vec![]))
 }
 
 pub fn parse_top_level_yaml(yaml: String) -> Result<FlatJson, String> {
     let (rows, pretty, depth) = yamlparser::parse(yaml)?;
-    Ok(FlatJson(rows, pretty, depth))
+    Ok(FlatJson(rows, pretty, depth, vec![]))
 }
 
 #[cfg(test)]
