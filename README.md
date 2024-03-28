@@ -34,6 +34,7 @@ You can install `jless` using various package managers:
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
 | [FreeBSD](https://freshports.org/textproc/jless/)          | `pkg install jless`       |
 | From source (Requires [Rust toolchain](https://www.rust-lang.org/tools/install))       | `cargo install jless`       |
+| [conda](https://anaconda.org/conda-forge/jless)            | `conda install -c conda-forge jless` |
 
 The [releases](https://github.com/PaulJuliusMartinez/jless/releases)
 page also contains links to binaries for various architectures.
