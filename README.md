@@ -29,6 +29,7 @@ You can install `jless` using various package managers:
 | macOS - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
 | macOS - [MacPorts](https://ports.macports.org/port/jless/) | `sudo port install jless` |
 | Linux - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
+| [Alpine Linux](https://pkgs.alpinelinux.org/packages?name=jless)     | `apk add jless`         |
 | [Arch Linux](https://archlinux.org/packages/extra/x86_64/jless/)     | `pacman -S jless`         |
 | [Void Linux](https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless) | `sudo xbps-install jless` |
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
