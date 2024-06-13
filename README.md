@@ -47,6 +47,12 @@ building from source. On Ubuntu you can install these using:
 sudo apt-get install libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 ```
 
+On Fedora:
+
+```
+sudo dnf install libxcb-devel
+```
+
 ## Website
 
 [jless.io](https://jless.io) is the official website for `jless`. Code
