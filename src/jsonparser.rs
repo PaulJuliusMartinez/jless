@@ -495,5 +495,17 @@ mod tests {
         assert_eq!(rows[6].range, 40..44); // true
         assert_eq!(rows[7].range, 46..51); // false
         assert_eq!(rows[8].range, 51..52); // ]
+
+        //            01    6     12    18    24       33
+        let json = r#"[nan, +Nan, -NaN, -inf, +infinity]"#.to_owned();
+        let (rows, _, _) = parse(json).unwrap();
+
+        assert_eq!(rows[0].range, 0..34); // Array
+        assert_eq!(rows[1].range, 1..4); // nan
+        assert_eq!(rows[2].range, 6..10); // +Nan
+        assert_eq!(rows[3].range, 12..16); // +Nan
+        assert_eq!(rows[4].range, 18..22); // -inf
+        assert_eq!(rows[5].range, 24..33); // +infinity
+        assert_eq!(rows[6].range, 33..34); // ]
     }
 }
