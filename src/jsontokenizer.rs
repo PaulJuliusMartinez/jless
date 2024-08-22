@@ -34,7 +34,4 @@ pub enum JsonToken {
     Newline,
     #[regex("[ \t\r]+", logos::skip)]
     Whitespace,
-
-    #[error]
-    Error,
 }

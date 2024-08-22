@@ -29,9 +29,9 @@ pub fn parse(json: String) -> Result<(Vec<Row>, String, usize), String> {
 }
 
 impl<'a> JsonParser<'a> {
-    fn next_token(&mut self) -> Option<JsonToken> {
+    fn next_token(&mut self) -> Option<Result<JsonToken, <JsonToken as Logos>::Error>> {
         if self.peeked_token.is_some() {
-            self.peeked_token.take().unwrap()
+            self.peeked_token.take().unwrap().map(Ok)
         } else {
             self.tokenizer.next()
         }
@@ -48,7 +48,7 @@ impl<'a> JsonParser<'a> {
 
     fn peek_token_or_eof(&mut self) -> Option<JsonToken> {
         if self.peeked_token.is_none() {
-            self.peeked_token = Some(self.tokenizer.next());
+            self.peeked_token = Some(self.tokenizer.next().and_then(|r| r.ok()));
         }
 
         self.peeked_token.unwrap()
@@ -128,9 +128,6 @@ impl<'a> JsonParser<'a> {
                     panic!("Should have just consumed whitespace");
                 }
 
-                JsonToken::Error => {
-                    return Err("Parse error".to_string());
-                }
                 JsonToken::CloseCurly
                 | JsonToken::CloseSquare
                 | JsonToken::Colon

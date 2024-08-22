@@ -5,7 +5,6 @@
 #![allow(clippy::int_plus_one)]
 
 extern crate lazy_static;
-extern crate libc_stdhandle;
 
 use std::fs::File;
 use std::io;
@@ -13,6 +12,7 @@ use std::io::Read;
 use std::path::PathBuf;
 
 use clap::Parser;
+use is_terminal::IsTerminal;
 use termion::cursor::HideCursor;
 use termion::input::MouseTerminal;
 use termion::raw::IntoRawMode;
@@ -51,16 +51,10 @@ fn main() {
 
     let data_format = determine_data_format(opt.data_format(), &input_filename);
 
-    if !isatty::stdout_isatty() {
+    if !io::stdout().is_terminal() {
         print_pretty_printed_input(input_string, data_format);
         std::process::exit(0);
     }
-
-    // We use freopen to remap /dev/tty to STDIN so that rustyline works when
-    // JSON input is provided via STDIN. rustyline gets initialized when we
-    // create the App, so by putting this before creating the app, we make
-    // sure rustyline gets the /dev/tty input.
-    input::remap_dev_tty_to_stdin();
 
     let stdout = Box::new(MouseTerminal::from(HideCursor::from(
         AlternateScreen::from(io::stdout()),
@@ -102,7 +96,7 @@ fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {
 
     match &opt.input {
         None => {
-            if isatty::stdin_isatty() {
+            if io::stdin().is_terminal() {
                 println!("Missing filename (\"jless --help\" for help)");
                 std::process::exit(1);
             }

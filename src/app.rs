@@ -1,11 +1,8 @@
-use std::error::Error;
 use std::fs::File;
 use std::io;
 use std::io::Write;
 
-use clipboard::{ClipboardContext, ClipboardProvider};
 use rustyline::error::ReadlineError;
-use rustyline::Editor;
 use termion::event::Key;
 use termion::event::MouseButton::{Left, WheelDown, WheelUp};
 use termion::event::MouseEvent::Press;
@@ -31,7 +28,6 @@ pub struct App {
     input_filename: String,
     search_state: SearchState,
     message: Option<(String, MessageSeverity)>,
-    clipboard_context: Result<ClipboardContext, Box<dyn Error>>,
 }
 
 // State to determine how to process the next event input.
@@ -126,8 +122,14 @@ impl App {
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
         viewer.scrolloff_setting = opt.scrolloff;
 
+        let le_config = rustyline::Config::builder()
+            .behavior(rustyline::Behavior::PreferTerm)
+            .build();
+        let line_editor = rustyline::DefaultEditor::with_config(le_config)
+            .map_err(|e| format!("Failed to initialize line editor: {e}"))?;
+
         let screen_writer =
-            ScreenWriter::init(opt, stdout, Editor::<()>::new(), TTYDimensions::default());
+            ScreenWriter::init(opt, stdout, line_editor, TTYDimensions::default());
 
         Ok(App {
             viewer,
@@ -137,7 +139,6 @@ impl App {
             input_filename,
             search_state: SearchState::empty(),
             message: None,
-            clipboard_context: ClipboardProvider::new(),
         })
     }
 
@@ -318,18 +319,9 @@ impl App {
                     None
                 }
                 KeyEvent(Key::Char('y')) => {
-                    match &self.clipboard_context {
-                        Ok(_) => {
-                            self.input_state = InputState::PendingYCommand;
-                            self.input_buffer.clear();
-                            self.buffer_input(b'y');
-                        }
-                        Err(err) => {
-                            let msg = format!("Unable to access clipboard: {err}");
-                            self.set_error_message(msg);
-                        }
-                    }
-
+                    self.input_state = InputState::PendingYCommand;
+                    self.input_buffer.clear();
+                    self.buffer_input(b'y');
                     None
                 }
                 KeyEvent(Key::Char('z')) => {
@@ -887,9 +879,6 @@ impl App {
     fn copy_content(&mut self, content_target: ContentTarget) {
         match self.get_content_target_data(content_target) {
             Ok(content) => {
-                // Checked when the user first hits 'y'.
-                let clipboard = self.clipboard_context.as_mut().unwrap();
-
                 let focused_row = &self.viewer.flatjson[self.viewer.focused_row];
 
                 let content_type = match content_target {
@@ -904,7 +893,7 @@ impl App {
                     ContentTarget::QueryPath => "query path",
                 };
 
-                if let Err(err) = clipboard.set_contents(content) {
+                if let Err(err) = terminal_clipboard::set_string(content) {
                     self.set_error_message(format!(
                         "Unable to copy {content_type} to clipboard: {err}"
                     ));

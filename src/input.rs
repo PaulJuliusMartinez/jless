@@ -13,25 +13,6 @@ const BUFFER_SIZE: usize = 1024;
 
 const ESCAPE: u8 = 0o33;
 
-pub fn remap_dev_tty_to_stdin() {
-    // The readline library we use, rustyline, always gets its input from STDIN.
-    // If jless accepts its input from STDIN, then rustyline can't accept input.
-    // To fix this, we open up /dev/tty, and remap it to STDIN, as suggested in
-    // this StackOverflow post:
-    //
-    // https://stackoverflow.com/questions/29689034/piped-stdin-and-keyboard-same-time-in-c
-    //
-    // rustyline may add its own fix to support reading from /dev/tty:
-    //
-    // https://github.com/kkawakam/rustyline/issues/599
-    unsafe {
-        // freopen(3) docs: https://linux.die.net/man/3/freopen
-        let filename = std::ffi::CString::new("/dev/tty").unwrap();
-        let path = std::ffi::CString::new("r").unwrap();
-        let _ = libc::freopen(filename.as_ptr(), path.as_ptr(), libc_stdhandle::stdin());
-    }
-}
-
 pub fn get_input() -> impl Iterator<Item = io::Result<TuiEvent>> {
     let (sigwinch_read, sigwinch_write) = UnixStream::pair().unwrap();
     // NOTE: This overrides the SIGWINCH handler registered by rustyline.

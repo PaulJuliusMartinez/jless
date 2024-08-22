@@ -17,20 +17,19 @@ default = []
 sexp = []
 
 [dependencies]
-logos = "0.12.0"
+logos = "0.14.0"
 unicode-width = "0.1.5"
 unicode-segmentation = "1.7.1"
-rustyline = "9.0.0"
+rustyline = "13.0.0"
 regex = "1.5"
 lazy_static = "1.4.0"
 termion = "1.5.6"
 signal-hook = "0.3.8"
 libc = "0.2"
 clap = { version = "4.0", features = ["derive"] }
-isatty = "0.1"
-libc-stdhandle = "0.1.0"
+is-terminal = "0.4"
 yaml-rust = "0.4"
-clipboard = "0.5"
+terminal-clipboard = "0.4"
 
 [dev-dependencies]
-indoc = "1.0"
+indoc = "2.0"
