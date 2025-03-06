@@ -9,6 +9,13 @@ pub enum Mode {
     Data,
 }
 
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ValueEnum)]
+pub enum Preview {
+    Full,
+    Count,
+    None,
+}
+
 const DEFAULT_SCROLLOFF: u16 = 3;
 
 pub struct JsonViewer {
@@ -30,6 +37,9 @@ pub struct JsonViewer {
     // Access the functional value via .scrolloff().
     pub scrolloff_setting: u16,
     pub mode: Mode,
+
+    // Private because it has funny rules re: mode, see set_preview()
+    preview: Preview,
 }
 
 impl JsonViewer {
@@ -43,6 +53,7 @@ impl JsonViewer {
             dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
+            preview: Preview::Count,
         }
     }
 }
@@ -133,6 +144,7 @@ pub enum Action {
     DeepExpandNodeAndSiblings,
 
     ToggleMode,
+    TogglePreview,
 
     ResizeViewerDimensions(TTYDimensions),
 }
@@ -183,6 +195,7 @@ impl JsonViewer {
             Action::ExpandNodeAndSiblings => self.expand_node_and_siblings(),
             Action::DeepExpandNodeAndSiblings => self.deep_expand_node_and_siblings(),
             Action::ToggleMode => self.toggle_mode(),
+            Action::TogglePreview => self.toggle_preview(),
             Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
         }
 
@@ -232,6 +245,7 @@ impl JsonViewer {
             Action::ExpandNodeAndSiblings => false,
             Action::DeepExpandNodeAndSiblings => false,
             Action::ToggleMode => false,
+            Action::TogglePreview => false,
             Action::ResizeViewerDimensions(_) => true,
             _ => false,
         }
@@ -249,6 +263,7 @@ impl JsonViewer {
                 | Action::MoveFocusedLineToCenter
                 | Action::MoveFocusedLineToBottom
                 | Action::ToggleMode
+                | Action::TogglePreview
                 | Action::ResizeViewerDimensions(_)
         )
     }
@@ -807,6 +822,40 @@ impl JsonViewer {
             Mode::Line => Mode::Data,
             Mode::Data => Mode::Line,
         };
+
+        // Line mode doesn't use Preview::None
+        if self.mode == Mode::Line && self.preview == Preview::None {
+            self.preview = Preview::Count;
+        }
+    }
+
+    pub fn set_preview(&mut self, val: Preview) {
+        if val == Preview::None && self.mode == Mode::Line {
+            // Emit a warning....?
+            self.preview = Preview::Count;
+        } else {
+            self.preview = val;
+        }
+    }
+
+    pub fn get_preview(&self) -> Preview {
+        self.preview
+    }
+
+    fn toggle_preview(&mut self) {
+        if self.mode == Mode::Data {
+            self.preview = match self.preview {
+                Preview::Full => Preview::Count,
+                Preview::Count => Preview::None,
+                Preview::None => Preview::Full,
+            }
+        } else {
+            self.preview = match self.preview {
+                Preview::Full => Preview::Count,
+                Preview::Count => Preview::Full,
+                Preview::None => Preview::Count, // this shouldn't happen, see toggle_mode()
+            }
+        }
     }
 
     fn scrolloff(&self) -> u16 {

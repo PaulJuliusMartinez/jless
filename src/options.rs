@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use clap::{ArgAction, Parser, ValueEnum};
 
-use crate::viewer::Mode;
+use crate::viewer::{Mode, Preview};
 
 #[derive(PartialEq, Eq, Copy, Clone, Debug, ValueEnum)]
 pub enum DataFormat {
@@ -28,6 +28,15 @@ pub struct Opt {
     /// The active mode can be toggled by pressing 'm'.
     #[arg(short, long, value_enum, hide_possible_values = true, default_value_t = Mode::Data)]
     pub mode: Mode,
+
+    /// Initial preview of container nodes. In full mode (--preview full;
+    /// the default), containers will be rendered as much as they can be in
+    /// the width of the terminal. In count mode (--preview count), only
+    /// the child node count will be rendered. In none mode (--preview none),
+    /// no preview will be rendered at all. This can be toggled by pressing
+    /// 'p'.
+    #[arg(short, long, value_enum, hide_possible_values = true, default_value_t = Preview::Count)]
+    pub preview: Preview,
 
     // This godforsaken configuration to get both --line-numbers and --no-line-numbers to
     // work (with --line-numbers as the default) and --relative-line-numbers and
