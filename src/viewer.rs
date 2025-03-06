@@ -1,9 +1,9 @@
-use clap::ArgEnum;
+use clap::ValueEnum;
 
 use crate::flatjson::{FlatJson, Index, OptionIndex};
 use crate::types::TTYDimensions;
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ValueEnum)]
 pub enum Mode {
     Line,
     Data,
@@ -68,7 +68,6 @@ pub enum Action {
     MoveDown(usize),
     MoveLeft,
     MoveRight,
-    MoveTo(Index),
 
     // TODO: Come up with better names for these. Their behavior is
     // a little subtle. When moving down it'll move forward until
@@ -124,6 +123,11 @@ pub enum Action {
     JumpUp(Option<usize>),
     JumpDown(Option<usize>),
 
+    JumpTo {
+        line: Index,
+        make_visible: bool,
+    },
+
     PageUp(usize),
     PageDown(usize),
 
@@ -135,7 +139,9 @@ pub enum Action {
 
     ToggleCollapsed,
     CollapseNodeAndSiblings,
+    DeepCollapseNodeAndSiblings,
     ExpandNodeAndSiblings,
+    DeepExpandNodeAndSiblings,
 
     ToggleMode,
     TogglePreview,
@@ -145,7 +151,15 @@ pub enum Action {
 
 impl JsonViewer {
     pub fn perform_action(&mut self, action: Action) {
+        // TODO: These two functions should really be refactored into a single function
+        // that returns something like:
+        // enum WindowTrackingBehavior {
+        //   HandledByAction,
+        //   EnsureFocusedRowIsVisible,
+        //   KeepFocusedLineInSamePlaceOnScreen(u16)
+        // }
         let track_window = JsonViewer::should_refocus_window(&action);
+        let prev_index_of_focused_row = self.should_keep_focused_row_at_same_screen_index(&action);
         let reset_desired_depth = JsonViewer::should_reset_desired_depth(&action);
 
         match action {
@@ -154,7 +168,6 @@ impl JsonViewer {
             Action::MoveDown(n) => self.move_down(n),
             Action::MoveLeft => self.move_left(),
             Action::MoveRight => self.move_right(),
-            Action::MoveTo(index) => self.focused_row = index,
             Action::MoveUpUntilDepthChange => self.move_up_until_depth_change(),
             Action::MoveDownUntilDepthChange => self.move_down_until_depth_change(),
             Action::FocusParent => self.focus_parent(),
@@ -169,6 +182,7 @@ impl JsonViewer {
             Action::ScrollDown(n) => self.scroll_down(n),
             Action::JumpUp(option_n) => self.jump_up(option_n),
             Action::JumpDown(option_n) => self.jump_down(option_n),
+            Action::JumpTo { line, make_visible } => self.jump_to(line, make_visible),
             Action::PageUp(n) => self.scroll_up(self.dimensions.height as usize * n),
             Action::PageDown(n) => self.scroll_down(self.dimensions.height as usize * n),
             Action::MoveFocusedLineToTop => self.move_focused_line_to_top(),
@@ -177,7 +191,9 @@ impl JsonViewer {
             Action::Click(n) => self.click_row(n),
             Action::ToggleCollapsed => self.toggle_collapsed(),
             Action::CollapseNodeAndSiblings => self.collapse_node_and_siblings(),
+            Action::DeepCollapseNodeAndSiblings => self.deep_collapse_node_and_siblings(),
             Action::ExpandNodeAndSiblings => self.expand_node_and_siblings(),
+            Action::DeepExpandNodeAndSiblings => self.deep_expand_node_and_siblings(),
             Action::ToggleMode => self.toggle_mode(),
             Action::TogglePreview => self.toggle_preview(),
             Action::ResizeViewerDimensions(dims) => self.dimensions = dims,
@@ -189,6 +205,10 @@ impl JsonViewer {
 
         if track_window {
             self.ensure_focused_row_is_visible();
+        } else if let Some(screen_index) = prev_index_of_focused_row {
+            // Keep focused line in same place on the screen.
+            self.top_row =
+                self.count_n_lines_before(self.focused_row, screen_index as usize, self.mode);
         }
     }
 
@@ -199,7 +219,6 @@ impl JsonViewer {
             Action::MoveDown(_) => true,
             Action::MoveLeft => true,
             Action::MoveRight => true,
-            Action::MoveTo(_) => true,
             Action::MoveUpUntilDepthChange => true,
             Action::MoveDownUntilDepthChange => true,
             Action::FocusParent => true,
@@ -214,14 +233,17 @@ impl JsonViewer {
             Action::ScrollDown(_) => false,
             Action::JumpUp(_) => false,
             Action::JumpDown(_) => false,
+            Action::JumpTo { .. } => true,
             Action::PageUp(_) => false,
             Action::PageDown(_) => false,
             Action::MoveFocusedLineToTop => false,
             Action::MoveFocusedLineToCenter => false,
             Action::MoveFocusedLineToBottom => false,
             Action::Click(_) => true,
-            Action::CollapseNodeAndSiblings => true,
-            Action::ExpandNodeAndSiblings => true,
+            Action::CollapseNodeAndSiblings => false,
+            Action::DeepCollapseNodeAndSiblings => false,
+            Action::ExpandNodeAndSiblings => false,
+            Action::DeepExpandNodeAndSiblings => false,
             Action::ToggleMode => false,
             Action::TogglePreview => false,
             Action::ResizeViewerDimensions(_) => true,
@@ -244,6 +266,17 @@ impl JsonViewer {
                 | Action::TogglePreview
                 | Action::ResizeViewerDimensions(_)
         )
+    }
+
+    fn should_keep_focused_row_at_same_screen_index(&self, action: &Action) -> Option<u16> {
+        match action {
+            Action::ToggleMode
+            | Action::CollapseNodeAndSiblings
+            | Action::DeepCollapseNodeAndSiblings
+            | Action::ExpandNodeAndSiblings
+            | Action::DeepExpandNodeAndSiblings => Some(self.index_of_focused_row_on_screen()),
+            _ => None,
+        }
     }
 
     fn move_up(&mut self, rows: usize) {
@@ -602,7 +635,47 @@ impl JsonViewer {
         }
     }
 
-    // If the user provided a count to a jump command, sets that as the the new
+    // Focus on a specific line. If the line is the closing of a container (in Data mode),
+    // go to the last non-closing container line before it.
+    //
+    // If make_visible is true, this will ensure all of the parent containers are opened.
+    // If make_visible is false, then we'll focus the highest level closed parent.
+    fn jump_to(&mut self, line: Index, make_visible: bool) {
+        self.focused_row = line.min(self.flatjson.0.len() - 1);
+
+        match self.mode {
+            Mode::Data => {
+                // Back up to a non-closing of a container.
+                while self.flatjson[self.focused_row].is_closing_of_container() {
+                    self.focused_row -= 1;
+                }
+            }
+            Mode::Line => {
+                // If the line is the closing of a container, and it's collapsed, either
+                // make it visible by expanding it, or go to the opening instead.
+                let row = &self.flatjson[self.focused_row];
+                if row.is_closing_of_container() && row.is_collapsed() {
+                    if make_visible {
+                        self.flatjson.expand(self.focused_row);
+                    } else {
+                        self.focused_row = row.pair_index().unwrap();
+                    }
+                }
+            }
+        }
+
+        if make_visible {
+            let mut curr = self.focused_row;
+            while let OptionIndex::Index(parent) = self.flatjson[curr].parent {
+                self.flatjson.expand(parent);
+                curr = parent;
+            }
+        } else {
+            self.focused_row = self.flatjson.first_visible_ancestor(self.focused_row);
+        }
+    }
+
+    // If the user provided a count to a jump command, sets that as the new
     // jump distance. Otherwise, use the stored jump distance, or if none has
     // been set yet, use the default of half a window size.
     fn determine_jump_distance(&mut self, distance: Option<usize>) -> usize {
@@ -655,6 +728,25 @@ impl JsonViewer {
 
     fn collapse_node_and_siblings(&mut self) {
         // If we're collapsing a node, make sure we're focused on the open.
+        self.switch_focus_to_opening_of_container_if_on_closing();
+        self.set_collapse_state_on_node_and_siblings(true);
+    }
+
+    fn deep_collapse_node_and_siblings(&mut self) {
+        // If we're collapsing a node, make sure we're focused on the open.
+        self.switch_focus_to_opening_of_container_if_on_closing();
+        self.set_deep_collapse_state_on_node_and_siblings(true);
+    }
+
+    fn expand_node_and_siblings(&mut self) {
+        self.set_collapse_state_on_node_and_siblings(false);
+    }
+
+    fn deep_expand_node_and_siblings(&mut self) {
+        self.set_deep_collapse_state_on_node_and_siblings(false);
+    }
+
+    fn switch_focus_to_opening_of_container_if_on_closing(&mut self) {
         let focused_row = &mut self.flatjson[self.focused_row];
         if focused_row.is_closing_of_container() {
             debug_assert!(
@@ -663,12 +755,6 @@ impl JsonViewer {
             );
             self.focused_row = self.flatjson[self.focused_row].pair_index().unwrap();
         }
-
-        self.set_collapse_state_on_node_and_siblings(true);
-    }
-
-    fn expand_node_and_siblings(&mut self) {
-        self.set_collapse_state_on_node_and_siblings(false);
     }
 
     fn set_collapse_state_on_node_and_siblings(&mut self, collapsed: bool) {
@@ -693,11 +779,30 @@ impl JsonViewer {
         }
     }
 
-    fn toggle_mode(&mut self) {
-        let index_of_focused_row = self.index_of_focused_row_on_screen();
+    fn set_deep_collapse_state_on_node_and_siblings(&mut self, collapsed: bool) {
+        let (start, end) =
+            if let OptionIndex::Index(parent) = self.flatjson[self.focused_row].parent {
+                (parent + 1, self.flatjson[parent].pair_index().unwrap())
+            } else {
+                // If we don't have parent, that means we're at the top level, so the first
+                // sibling is the very first element.
+                (0, self.flatjson.0.len())
+            };
 
+        for i in start..end {
+            if self.flatjson[i].is_opening_of_container() {
+                if collapsed {
+                    self.flatjson.collapse(i);
+                } else {
+                    self.flatjson.expand(i);
+                }
+            }
+        }
+    }
+
+    fn toggle_mode(&mut self) {
         // If we're transitioning from line mode to focused mode, and we're focused on
-        // the closing of a container, we need to move the focuse.
+        // the closing of a container, we need to move the focus.
         if self.mode == Mode::Line && self.flatjson[self.focused_row].is_closing_of_container() {
             // We'll move focus to the next item, unless we're at the end of
             // the file and have to move focus backwards.
@@ -717,6 +822,7 @@ impl JsonViewer {
             Mode::Line => Mode::Data,
             Mode::Data => Mode::Line,
         };
+<<<<<<< HEAD
 
         // Ensure focused line stays in same place on the screen.
         self.top_row =
@@ -755,6 +861,13 @@ impl JsonViewer {
                 Preview::None => Preview::Count, // this shouldn't happen, see toggle_mode()
             }
         }
+||||||| f210baf
+
+        // Ensure focused line stays in same place on the screen.
+        self.top_row =
+            self.count_n_lines_before(self.focused_row, index_of_focused_row as usize, self.mode);
+=======
+>>>>>>> PaulJuliusMartinez/main
     }
 
     fn scrolloff(&self) -> u16 {
@@ -779,7 +892,7 @@ impl JsonViewer {
         // row and the top or bottom of the screen.
         let max_padding = self.dimensions.height - scrolloff - 1;
 
-        // Normally as the user moves down the the file we'll keep the focused line
+        // Normally as the user moves down the file we'll keep the focused line
         // scrolloff lines from the bottom of the screen.
         //
         // But if the user jumps well past the end of the screen, rather than leaving
@@ -946,7 +1059,7 @@ impl JsonViewer {
     }
 
     // Returns the index of the focused row within the actual viewing window.
-    fn index_of_focused_row_on_screen(&self) -> u16 {
+    pub fn index_of_focused_row_on_screen(&self) -> u16 {
         self.count_visible_rows_before(
             self.top_row,
             self.focused_row,
@@ -1458,7 +1571,7 @@ mod tests {
                 // Can scroll so end of file is in middle of screen
                 (Action::ScrollDown(1), 6, 8),
                 (Action::ScrollDown(4), 10, 12),
-                // Can scoll past scrolloff padding
+                // Can scroll past scrolloff padding
                 (Action::ScrollDown(1), 11, 12),
                 (Action::ScrollDown(1), 12, 12),
                 // Can't scroll past last line
@@ -1900,6 +2013,140 @@ mod tests {
     }"#;
 
     #[test]
+    fn test_jump_to_line_line_mode() {
+        let fj = parse_top_level_json(LOTS_OF_OBJECTS.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        // Jump past the last line
+        viewer.perform_action(Action::JumpTo {
+            line: 10000,
+            make_visible: false,
+        });
+        assert_eq!(15, viewer.focused_row);
+
+        // Jump to visible line
+        viewer.perform_action(Action::JumpTo {
+            line: 6,
+            make_visible: false,
+        });
+        assert_eq!(6, viewer.focused_row);
+
+        // Focus parent if parent is collapsed.
+        viewer.flatjson.collapse(5);
+        viewer.perform_action(Action::JumpTo {
+            line: 6,
+            make_visible: false,
+        });
+        assert_eq!(5, viewer.focused_row);
+        assert!(viewer.flatjson[5].is_collapsed());
+
+        // Focus open if collapsed and jumping to close
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: false,
+        });
+        assert_eq!(5, viewer.focused_row);
+        assert!(viewer.flatjson[5].is_collapsed());
+
+        // Focus first visible ancestor (even if parent is open).
+        viewer.flatjson.expand(5);
+        viewer.flatjson.collapse(4);
+        viewer.perform_action(Action::JumpTo {
+            line: 6,
+            make_visible: false,
+        });
+        assert_eq!(4, viewer.focused_row);
+
+        // Try focusing the close of a container inside a collapsed thing.
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: false,
+        });
+        assert_eq!(4, viewer.focused_row);
+
+        // Try focusing a closing thing inside
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: true,
+        });
+        assert_eq!(7, viewer.focused_row);
+        assert!(viewer.flatjson[4].is_expanded());
+        assert!(viewer.flatjson[5].is_expanded());
+
+        // Focus on a deeply nested thing.
+        viewer.flatjson.collapse(0);
+        viewer.flatjson.collapse(4);
+        viewer.flatjson.collapse(5);
+        viewer.perform_action(Action::JumpTo {
+            line: 6,
+            make_visible: true,
+        });
+        assert_eq!(6, viewer.focused_row);
+        assert!(viewer.flatjson[0].is_expanded());
+        assert!(viewer.flatjson[4].is_expanded());
+        assert!(viewer.flatjson[5].is_expanded());
+
+        // If focusing on the close of container, make sure the container is opened.
+        viewer.flatjson.collapse(5);
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: true,
+        });
+        assert_eq!(7, viewer.focused_row);
+        assert!(viewer.flatjson[5].is_expanded());
+    }
+
+    #[test]
+    fn test_jump_to_line_data_mode() {
+        let fj = parse_top_level_json(LOTS_OF_OBJECTS.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Data);
+
+        // Jump past the last line, back up to last visible item.
+        viewer.perform_action(Action::JumpTo {
+            line: 10000,
+            make_visible: false,
+        });
+        assert_eq!(13, viewer.focused_row);
+
+        // Jump to closing of container; go to previous line.
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: false,
+        });
+        assert_eq!(6, viewer.focused_row);
+
+        // Focus parent if parent is collapsed.
+        viewer.flatjson.collapse(5);
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: false,
+        });
+        assert_eq!(5, viewer.focused_row);
+
+        // Focus first visible ancestor (even if parent is open).
+        viewer.flatjson.expand(5);
+        viewer.flatjson.collapse(4);
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: false,
+        });
+        assert_eq!(4, viewer.focused_row);
+
+        // Focus on a deeply nested thing.
+        viewer.flatjson.collapse(0);
+        viewer.flatjson.collapse(4);
+        viewer.flatjson.collapse(5);
+        viewer.perform_action(Action::JumpTo {
+            line: 7,
+            make_visible: true,
+        });
+        assert_eq!(6, viewer.focused_row);
+        assert!(viewer.flatjson[0].is_expanded());
+        assert!(viewer.flatjson[4].is_expanded());
+        assert!(viewer.flatjson[5].is_expanded());
+    }
+
+    #[test]
     fn test_collapse_and_expand_node_and_siblings() {
         let fj = parse_top_level_json(LOTS_OF_OBJECTS.to_owned()).unwrap();
         let mut viewer = JsonViewer::new(fj, Mode::Line);
@@ -1907,39 +2154,137 @@ mod tests {
         viewer.dimensions.height = 8;
         viewer.scrolloff_setting = 1;
 
-        // This top_row will become invisible after collapsing.
-        viewer.top_row = 6;
         viewer.focused_row = 8;
+        viewer.flatjson.collapse(8);
 
         viewer.perform_action(Action::ExpandNodeAndSiblings);
         assert!(viewer.flatjson[5].is_expanded());
         assert!(viewer.flatjson[8].is_expanded());
 
-        viewer.focused_row = 10;
+        viewer.top_row = 8;
+        viewer.focused_row = 10; // Third line
         viewer.perform_action(Action::CollapseNodeAndSiblings);
-        // Make sure top_row gets updated to a visible row.
-        assert_eq!(5, viewer.top_row);
+        // Make sure focused row is in same place on screen
+        // (Though this is awkward when we switch to the opening of the container.)
+        assert_eq!(4, viewer.top_row);
         assert_eq!(8, viewer.focused_row);
         assert!(viewer.flatjson[5].is_collapsed());
         assert!(viewer.flatjson[8].is_collapsed());
 
         viewer.flatjson.collapse(12);
 
-        // This top_row is the closing brace of a node that is
-        // about to be collapsed.
-        viewer.top_row = 3;
+        viewer.flatjson.expand(8);
 
-        viewer.focused_row = 12;
+        viewer.top_row = 10;
+        viewer.focused_row = 12; // Third line
         viewer.perform_action(Action::CollapseNodeAndSiblings);
         assert_eq!(1, viewer.top_row);
         assert!(viewer.flatjson[1].is_collapsed());
         assert!(viewer.flatjson[4].is_collapsed());
+        assert!(viewer.flatjson[8].is_expanded()); // Only shallow collapse
         assert!(viewer.flatjson[12].is_collapsed());
+
+        viewer.flatjson.collapse(8);
 
         viewer.perform_action(Action::ExpandNodeAndSiblings);
         assert!(viewer.flatjson[1].is_expanded());
         assert!(viewer.flatjson[4].is_expanded());
+        assert!(viewer.flatjson[8].is_collapsed()); // Only shallow expand
         assert!(viewer.flatjson[12].is_expanded());
+
+        viewer.top_row = 0;
+        viewer.focused_row = 0;
+        viewer.perform_action(Action::ExpandNodeAndSiblings);
+        assert!(viewer.flatjson[0].is_expanded());
+        viewer.perform_action(Action::CollapseNodeAndSiblings);
+        assert!(viewer.flatjson[0].is_collapsed());
+    }
+
+    const LOTS_OF_TOP_LEVEL_OBJECTS: &str = r#"{
+        "1": {
+            "2": 2
+        },
+        "4": [
+            {
+                "6": 6
+            },
+            {
+                "9": 9
+            }
+        ],
+        "12": {
+            "13": 13
+        }
+    }
+    {
+        "17": [
+            18,
+        ],
+    }"#;
+
+    #[test]
+    fn test_deep_collapse_and_expand_node_and_siblings() {
+        let fj = parse_top_level_json(LOTS_OF_TOP_LEVEL_OBJECTS.to_owned()).unwrap();
+        let mut viewer = JsonViewer::new(fj, Mode::Line);
+
+        viewer.dimensions.height = 8;
+        viewer.scrolloff_setting = 1;
+
+        viewer.focused_row = 4;
+
+        viewer.flatjson.collapse(4);
+        viewer.flatjson.collapse(8);
+
+        viewer.perform_action(Action::DeepExpandNodeAndSiblings);
+        assert!(viewer.flatjson[1].is_expanded());
+        assert!(viewer.flatjson[4].is_expanded());
+        assert!(viewer.flatjson[5].is_expanded());
+        assert!(viewer.flatjson[8].is_expanded());
+        assert!(viewer.flatjson[12].is_expanded());
+
+        viewer.flatjson.expand(17);
+
+        viewer.top_row = 10;
+        viewer.focused_row = 11; // Second line
+        viewer.perform_action(Action::DeepCollapseNodeAndSiblings);
+        // Make sure top_row gets updated to a visible row.
+        assert_eq!(1, viewer.top_row);
+        assert_eq!(4, viewer.focused_row);
+        assert!(viewer.flatjson[1].is_collapsed());
+        assert!(viewer.flatjson[4].is_collapsed());
+        assert!(viewer.flatjson[5].is_collapsed());
+        assert!(viewer.flatjson[8].is_collapsed());
+        assert!(viewer.flatjson[12].is_collapsed());
+        // Cousin; not a sibling
+        assert!(viewer.flatjson[17].is_expanded());
+
+        viewer.flatjson.collapse(16);
+        viewer.flatjson.collapse(17);
+        viewer.top_row = 12;
+        viewer.focused_row = 15; // Second row
+        viewer.perform_action(Action::DeepExpandNodeAndSiblings);
+        assert_eq!(14, viewer.top_row);
+        assert_eq!(15, viewer.focused_row);
+        assert!(viewer.flatjson[0].is_expanded());
+        assert!(viewer.flatjson[1].is_expanded());
+        assert!(viewer.flatjson[4].is_expanded());
+        assert!(viewer.flatjson[5].is_expanded());
+        assert!(viewer.flatjson[8].is_expanded());
+        assert!(viewer.flatjson[12].is_expanded());
+        assert!(viewer.flatjson[16].is_expanded());
+        assert!(viewer.flatjson[17].is_expanded());
+
+        viewer.perform_action(Action::DeepCollapseNodeAndSiblings);
+        assert_eq!(0, viewer.top_row);
+        assert_eq!(0, viewer.focused_row);
+        assert!(viewer.flatjson[0].is_collapsed());
+        assert!(viewer.flatjson[1].is_collapsed());
+        assert!(viewer.flatjson[4].is_collapsed());
+        assert!(viewer.flatjson[5].is_collapsed());
+        assert!(viewer.flatjson[8].is_collapsed());
+        assert!(viewer.flatjson[12].is_collapsed());
+        assert!(viewer.flatjson[16].is_collapsed());
+        assert!(viewer.flatjson[17].is_collapsed());
     }
 
     #[test]

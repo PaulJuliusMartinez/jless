@@ -14,129 +14,78 @@ use crate::terminal::{Color, Style, Terminal};
 use crate::truncatedstrview::TruncatedStrView;
 use crate::viewer::{Mode, Preview};
 
-// # Printing out individual lines
+// This module is responsible for printing single lines of JSON to
+// the screen, complete with syntax highlighting and highlighting
+// of search matches.
 //
-// 1. Compute depth
-//   - Need to consider indentation_reduction
+// A single line is one of the following:
+// - The start of a non-empty object or array
+// - The end of a non-empty object or array
+// - A key/value pair of an object
+// - An element of an array
+// - Or a top-level primitive
 //
-// [LINE MODE ONLY]
-// 1.5. Print focus mode indicator
+// Objects and containers can be collapsed, and at certain times
+// we show previews next to containers.
 //
-// 2. Position cursor after indentation
+// The viewer can be in one of two modes: Line mode, or Data mode.
+// In Line mode, the goal is that the text on the screen is mostly
+// valid JSON. In Data mode, we try to present a "cleaner" version
+// of the data, by for example, not showing quotes around object keys
+// or trailing commas.
 //
-// [DATA MODE ONLY]
-// 2.5 Print expanded/collapsed icon for containers
+// Here's the main set of differences:
+//                                  Line Mode                 Data Mode
+// Quotes around object keys:         Yes         Only when not a valid JS identifier
+// Trailing commas:                   Yes                       No
+// Object and Array previews: Only when collapsed               Always
+// Array Indexes:                     No                        Yes
+// Open delimiters:                   Yes                       No
+// Line for closing delimiters:       Yes                       No
 //
-// 3. Print Object key, if it exists
+// In addition to the above behavior that depends on the current
+// viewer mode, when rendering a line we also apply syntax
+// highlighting and highlight search results. The currently focused
+// search result is also displayed slightly differently.
 //
-// [DATA MODE ONLY]
-// 3.5 Print array indices
-//
-// 4. Print actual object
-//   - Need to print previews of collapsed arrays/objects
-//
-// [LINE MODE ONLY]
-// 4.5 Print trailing comma
+// Great care is taken to highlight every character that is actually
+// part of a match, including quotes around keys and string values,
+// and even other syntax (colons, commas, and spaces). It is
+// difficult to keep track of everything as the text displayed on
+// the screen doesn't exactly match the source JSON. Beware of
+// off-by-one errors.
 //
 //
+// Naturally, there may be cases where an entire line does not fit
+// on the screen without wrapping. Rather than implement line
+// wrapping (which seems difficult), we truncate values and show
+// ellipses to indicate truncated content. When printing out multiple
+// values, such as the key and value of an Object entry, the index
+// and element of an array, or the many container elements in an
+// object preview, we fill in the available space from left to right
+// while keeping track of what still needs to be displayed so we
+// can show appropriate truncation indicators.
 //
-// Truncate long value first:
+// Here are some examples:
+//
 //     key: "long text her…" |
+//     medium_length_key: t… |
 //
-// Truncate long key so we can still show some of value
+// If something is totally off the screen we just show a '>':
 //
-//     really_rea…: "long …" |
-//
-// Should always show trailing '{' after long keys of objects
-//
-//     really_long_key_h…: { |
-//
-// If something is just totally off the screen, show >
-//
-//                   a: [    |
-//                     [38]:>|
-//                       d: >|
-//                         X:|
+//     really_long_key_h…: > |
+//                   [10…]: >|
+//                     "d": >|
 //                          >|
-//                          >|
-//                     […]: >|    Use ellipsis in array index?
-//                   abcd…: >|
-//
-//
-// Required characters:
-// '"' before and after key (0 or 2)
-// "[…]" Array index (>= 3)
-// ": " after key (== 2)
-// '{' / '[' opening brace (1)
-// ',' in line mode (1)
-//
-//
-// […]          :       "hello"
-// abc…         :        123        ,
-// "de…"                  {         ,
-// KEY/INDEX  <chars>  OBJECT   <chars>
-//
-// Don't abbreviate true/false/null ?
-//
-// v [1]: >
-// v a…: >
-//
-//                  abc: tr… |
-//                  a…: true |
-//
-// First truncate value down to 5 + ellipsis characters
-// - Then truncate key down to 3 + ellipsis characters
-//   - Or index down to just ellipsis
-// Then truncate value down to 1 + ellipsis
-// Then pop sections off, and slap " >" on it once it fits
-//
-//
-//
-//
-// Sections:
-//
-// Key { quoted: bool, key: &str }
-// Index { index: &str }
-//
-// KVColon
-//
-// OpenBraceValue(ch)
-// CloseBraceValue(ch)
-// Null
-// True,
-// False,
-// Number,
-// StringValue,
-//
-// TrailingComma
-//
-// Line {
-//   label: Option<Key { quoted: bool, key: &str } | Index { index: usize }>
-//   value:
-//     ContainerChar(ch) |
-//     Value {
-//       v: &str,
-//       ellipsis: bool,
-//       quotes: bool
-//     }
-//     Preview {} // Build these up starting at ...
-//   trailing_comma: bool
-// }
-//
-// truncate(value, min_length: 5)
-// truncate(label, min_length: 3)
-// truncate(value, min_length: 1)
-//
-// print label if available_space
-// print KVColon if available_space
-// print " >"
 
 const FOCUSED_LINE: &str = "▶ ";
+const NOT_FOCUSED_LINE: &str = "  ";
 const FOCUSED_COLLAPSED_CONTAINER: &str = "▶ ";
 const FOCUSED_EXPANDED_CONTAINER: &str = "▼ ";
 const COLLAPSED_CONTAINER: &str = "▷ ";
 const EXPANDED_CONTAINER: &str = "▽ ";
-const INDICATOR_WIDTH: usize = 2;
+const INDICATOR_WIDTH: isize = 2;
+const NO_FOCUSED_MATCH: Range<usize> = 0..0;
 
 lazy_static::lazy_static! {
     pub static ref JS_IDENTIFIER: Regex = Regex::new("^[_$a-zA-Z][_$a-zA-Z0-9]*$").unwrap();
@@ -179,6 +128,14 @@ impl DelimiterPair {
     }
 }
 
+// What line number should be displayed
+#[derive(Copy, Clone)]
+pub struct LineNumber {
+    pub absolute: Option<usize>,
+    pub relative: Option<usize>,
+    pub max_width: isize,
+}
+
 pub struct LinePrinter<'a, 'b> {
     pub mode: Mode,
     pub preview: Preview,
@@ -188,10 +145,11 @@ pub struct LinePrinter<'a, 'b> {
     // we're printing out.
     pub flatjson: &'a FlatJson,
     pub row: &'a Row,
+    pub line_number: LineNumber,
 
     // Width of the terminal and how much we should indent the line.
-    pub width: usize,
-    pub indentation: usize,
+    pub width: isize,
+    pub indentation: isize,
 
     // Line-by-line formatting options
     pub focused: bool,
@@ -202,6 +160,11 @@ pub struct LinePrinter<'a, 'b> {
     pub search_matches: Option<Peekable<MatchRangeIter<'b>>>,
     pub focused_search_match: &'a Range<usize>,
 
+    // It's unfortunate that this has to be exposed publicly; it's only
+    // used internally to disable the special syntax highlighting for
+    // the current focused match in container previews.
+    pub emphasize_focused_search_match: bool,
+
     // For remembering horizontal scroll positions of long lines.
     pub cached_truncated_value: Option<Entry<'a, usize, TruncatedStrView>>,
 }
@@ -210,75 +173,141 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
     pub fn print_line(&mut self) -> fmt::Result {
         self.terminal.reset_style()?;
 
-        self.print_focus_and_container_indicators()?;
+        let mut available_space = self.width;
 
-        let label_depth = INDICATOR_WIDTH + self.indentation;
+        let space_used_for_line_number = self.print_line_number(available_space)?;
+        available_space -= space_used_for_line_number;
 
-        // I don't know if there's standard behavior for setting the column
-        // past the width of the screen, so let's avoid doing that. There
-        // will still be cases where this condition is true, but we still end
-        // up printing the truncated indicator, but that's fine.
-        if label_depth < self.width {
-            self.terminal
-                .position_cursor_col((1 + label_depth) as u16)?;
-        }
+        let expected_space_used_for_indicators = INDICATOR_WIDTH + self.indentation;
+        let space_used_for_indicators =
+            self.print_focus_and_container_indicators(available_space)?;
 
-        let mut available_space = self.width as isize - label_depth as isize;
+        if space_used_for_indicators == expected_space_used_for_indicators {
+            available_space -= space_used_for_indicators;
 
-        let space_used_for_label = self.fill_in_label(available_space)?;
+            let space_used_for_label = self.fill_in_label(available_space)?;
+            available_space -= space_used_for_label;
 
-        available_space -= space_used_for_label;
-
-        if self.has_label() && space_used_for_label == 0 {
-            self.print_truncated_indicator()?;
-        } else {
-            let space_used_for_value = self.fill_in_value(available_space)?;
-
-            if space_used_for_value == 0 {
+            if self.has_label() && space_used_for_label == 0 {
                 self.print_truncated_indicator()?;
+            } else {
+                let space_used_for_value = self.fill_in_value(available_space)?;
+
+                if space_used_for_value == 0 {
+                    self.print_truncated_indicator()?;
+                }
             }
+        } else {
+            self.print_truncated_indicator()?;
         }
 
         Ok(())
     }
 
-    fn print_focus_and_container_indicators(&mut self) -> fmt::Result {
-        match self.mode {
-            Mode::Line => self.print_focused_line_indicator(),
-            Mode::Data => self.print_container_indicator(),
+    // Absolute | Relative | Focused | Format
+    // ---------+----------+---------+--------
+    //     N    |     N    |    -    | Nothing
+    //     Y    |     N    |    N    | Right aligned, dimmed
+    //     Y    |     N    |    Y    | Right aligned, yellow
+    //     N    |     Y    |    N    | Right aligned, dimmed
+    //     N    |     Y    |    Y    | Right aligned, yellow
+    //     Y    |     Y    |    N    | Relative, right aligned, dimmed
+    //     Y    |     Y    |    Y    | Absolute, left aligned, yellow
+    fn print_line_number(&mut self, available_space: isize) -> Result<isize, fmt::Error> {
+        let LineNumber {
+            absolute,
+            relative,
+            max_width,
+        } = self.line_number;
+
+        // If the line number is going to fill up all the available space (or overfill it)
+        // then don't print the line number.
+        if max_width + 1 >= available_space {
+            return Ok(0);
         }
+
+        let (n, style, right_aligned) = match (absolute, relative, self.focused) {
+            (None, None, _) => return Ok(0),
+            (Some(n), None, false) | (None, Some(n), false) | (Some(_), Some(n), false) => {
+                (n, &highlighting::DIMMED_STYLE, true)
+            }
+            (Some(n), None, true) | (None, Some(n), true) => {
+                (n, &highlighting::CURRENT_LINE_NUMBER, true)
+            }
+            (Some(n), Some(_), true) => (n, &highlighting::CURRENT_LINE_NUMBER, false),
+        };
+
+        self.terminal.set_style(style)?;
+
+        if right_aligned {
+            write!(self.terminal, "{: >1$}", n, max_width as usize)?;
+        } else {
+            write!(self.terminal, "{: <1$}", n, max_width as usize)?;
+        }
+        self.terminal.reset_style()?;
+        write!(self.terminal, " ")?;
+
+        Ok(max_width + 1)
     }
 
-    fn print_focused_line_indicator(&mut self) -> fmt::Result {
-        if self.focused {
-            self.terminal.position_cursor_col(1)?;
-            write!(self.terminal, "{}", FOCUSED_LINE)?;
+    fn print_focus_and_container_indicators(
+        &mut self,
+        mut available_space: isize,
+    ) -> Result<isize, fmt::Error> {
+        let mut used_space = 0;
+
+        match self.mode {
+            Mode::Line => {
+                if available_space >= INDICATOR_WIDTH + 1 {
+                    if self.focused {
+                        write!(self.terminal, "{FOCUSED_LINE}")?;
+                    } else {
+                        write!(self.terminal, "{NOT_FOCUSED_LINE}")?;
+                    }
+                    used_space += INDICATOR_WIDTH;
+                    available_space -= INDICATOR_WIDTH;
+
+                    let space_available_for_indentation = self.indentation.min(available_space - 1);
+                    used_space += space_available_for_indentation;
+                    self.print_n_spaces(space_available_for_indentation)?;
+                }
+            }
+            Mode::Data => {
+                let space_available_for_indentation =
+                    self.indentation.min(available_space - 1 - INDICATOR_WIDTH);
+                used_space += space_available_for_indentation;
+                self.print_n_spaces(space_available_for_indentation)?;
+
+                if space_available_for_indentation == self.indentation {
+                    if self.row.is_primitive() {
+                        if self.focused {
+                            write!(self.terminal, "{FOCUSED_LINE}")?;
+                        } else {
+                            write!(self.terminal, "{NOT_FOCUSED_LINE}")?;
+                        }
+                    } else {
+                        self.print_container_indicator()?;
+                    }
+                    used_space += 2;
+                }
+            }
+        }
+
+        Ok(used_space)
+    }
+
+    fn print_n_spaces(&mut self, n: isize) -> fmt::Result {
+        for _ in 0..n {
+            write!(self.terminal, " ")?;
         }
 
         Ok(())
     }
 
     fn print_container_indicator(&mut self) -> fmt::Result {
-        if self.row.is_primitive() {
-            // Print a focused indicator for top-level primitives.
-            if self.focused && self.row.depth == 0 {
-                self.terminal.position_cursor_col(0)?;
-                write!(self.terminal, "{}", FOCUSED_COLLAPSED_CONTAINER)?;
-            }
-            return Ok(());
-        }
-
         debug_assert!(self.row.is_opening_of_container());
 
         let collapsed = self.row.is_collapsed();
-
-        // Make sure there's enough room for the indicator
-        if self.width <= INDICATOR_WIDTH + self.indentation {
-            return Ok(());
-        }
-
-        let container_indicator_col = (1 + self.indentation) as u16;
-        self.terminal.position_cursor_col(container_indicator_col)?;
 
         let indicator = match (self.focused, collapsed) {
             (true, true) => FOCUSED_COLLAPSED_CONTAINER,
@@ -287,9 +316,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             (false, false) => EXPANDED_CONTAINER,
         };
 
-        write!(self.terminal, "{}", indicator)?;
-
-        Ok(())
+        write!(self.terminal, "{indicator}")
     }
 
     pub fn fill_in_label(&mut self, mut available_space: isize) -> Result<isize, fmt::Error> {
@@ -436,7 +463,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             let parent = self.row.parent.unwrap();
             debug_assert!(self.flatjson[parent].is_array());
 
-            write!(label, "{}", self.row.index).unwrap();
+            write!(label, "{}", self.row.index_in_parent).unwrap();
 
             (label.as_str(), None, DelimiterPair::Square)
         }
@@ -459,7 +486,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             }
             LabelType::Index => {
                 let style = if self.focused {
-                    &highlighting::BOLD_STYLE
+                    &highlighting::BOLD_INVERTED_STYLE
                 } else {
                     &highlighting::DIMMED_STYLE
                 };
@@ -681,7 +708,18 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             (LINE, OPEN, EXPANDED) => self.fill_in_container_open_char(available_space, row),
             (LINE, CLOSE, EXPANDED) => self.fill_in_container_close_char(available_space, row),
             (LINE, OPEN, COLLAPSED) | (DATA, OPEN, EXPANDED) | (DATA, OPEN, COLLAPSED) => {
-                self.fill_in_container_preview(available_space, row)
+                // Don't highlight the current focused match in the preview.
+                //
+                // When the container is expanded, it's confusing because two things are
+                // highlighted and you're not sure which is focused.
+                //
+                // When the container is collapsed, it's misleading because the first match
+                // isn't really "focused", and hitting 'n' won't jump to the next one in
+                // the preview (if more than one is visible).
+                self.emphasize_focused_search_match = false;
+                let result = self.fill_in_container_preview(available_space, row);
+                self.emphasize_focused_search_match = true;
+                result
             }
             // Impossible states
             (LINE, CLOSE, COLLAPSED) => panic!("Can't focus closing of collapsed container"),
@@ -759,6 +797,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             available_space -= 1;
         }
 
+<<<<<<< HEAD
         let mut used_space;
 
         if self.preview == Preview::Full {
@@ -769,6 +808,20 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
                 available_space,
                 always_quote_string_object_keys,
             )?;
+||||||| f210baf
+        let always_quote_string_object_keys = self.mode == Mode::Line;
+        let mut used_space =
+            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?;
+=======
+        let always_quote_string_object_keys = self.mode == Mode::Line;
+        let is_nested = false;
+        let mut used_space = self.generate_container_preview(
+            row,
+            available_space,
+            is_nested,
+            always_quote_string_object_keys,
+        )?;
+>>>>>>> PaulJuliusMartinez/main
 
             if self.trailing_comma {
                 used_space += 1;
@@ -800,22 +853,54 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         Ok(used_space)
     }
 
+    fn size_of_container_and_num_digits_required(&self, row: &Row) -> (isize, isize) {
+        let container_size = {
+            let close_container = &self.flatjson[row.pair_index().unwrap()];
+            let last_child_index = close_container.last_child().unwrap();
+            (self.flatjson[last_child_index].index_in_parent as isize) + 1
+        };
+
+        // We are assuming container_size is never 0.
+        let space_needed_for_size = (isize::ilog10(container_size) as isize) + 1;
+
+        (container_size, space_needed_for_size)
+    }
+
     fn generate_container_preview(
         &mut self,
         row: &Row,
         mut available_space: isize,
+        is_nested: bool,
         always_quote_string_object_keys: bool,
     ) -> Result<isize, fmt::Error> {
         debug_assert!(row.is_opening_of_container());
 
-        // Minimum amount of space required == 3: […]
-        if available_space < 3 {
+        let (container_size, space_needed_for_container_size) =
+            self.size_of_container_and_num_digits_required(row);
+
+        // Minimum amount of space required:
+        // - top level: (123) […]
+        // - nested: […]
+        let mut min_space_needed = 3;
+        if !is_nested {
+            min_space_needed += 3 + space_needed_for_container_size;
+        }
+
+        if available_space < min_space_needed {
             return Ok(0);
+        }
+
+        let mut num_printed = 0;
+
+        if !is_nested {
+            self.terminal.set_fg(terminal::LIGHT_BLACK)?;
+            write!(self.terminal, "({container_size}) ")?;
+            available_space -= 3 + space_needed_for_container_size;
+            num_printed += 3 + space_needed_for_container_size;
         }
 
         let container_type = row.value.container_type().unwrap();
         available_space -= 2;
-        let mut num_printed = 0;
 
         // Create a copy of self.search_matches
         let original_search_matches = self.search_matches.clone();
@@ -996,7 +1081,13 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         }
 
         let space_used_for_value = if is_only_child && row.value.is_container() {
-            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?
+            let is_nested = true;
+            self.generate_container_preview(
+                row,
+                available_space,
+                is_nested,
+                always_quote_string_object_keys,
+            )?
         } else {
             self.fill_in_value_preview(row, available_space)?
         };
@@ -1067,6 +1158,12 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             )?;
         }
 
+        let focused_search_match = if self.emphasize_focused_search_match {
+            self.focused_search_match
+        } else {
+            &NO_FOCUSED_MATCH
+        };
+
         highlighting::highlight_truncated_str_view(
             self.terminal,
             value_ref,
@@ -1081,7 +1178,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             &highlighting::DIMMED_STYLE,
             &highlighting::GRAY_INVERTED_STYLE,
             &mut self.search_matches.as_mut(),
-            self.focused_search_match,
+            focused_search_match,
         )?;
 
         if quoted {
@@ -1131,6 +1228,12 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
 
         self.highlight_str(delimiter.left(), str_open_delimiter_range_start, styles)?;
 
+        let focused_search_match = if self.emphasize_focused_search_match {
+            self.focused_search_match
+        } else {
+            &NO_FOCUSED_MATCH
+        };
+
         highlighting::highlight_truncated_str_view(
             self.terminal,
             s,
@@ -1139,7 +1242,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             styles.0,
             styles.1,
             &mut self.search_matches.as_mut(),
-            self.focused_search_match,
+            focused_search_match,
         )?;
 
         self.highlight_str(delimiter.right(), str_close_delimiter_range_start, styles)?;
@@ -1154,6 +1257,12 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
         str_range_start: Option<usize>,
         styles: (&Style, &Style),
     ) -> fmt::Result {
+        let focused_search_match = if self.emphasize_focused_search_match {
+            self.focused_search_match
+        } else {
+            &NO_FOCUSED_MATCH
+        };
+
         highlighting::highlight_matches(
             self.terminal,
             s,
@@ -1161,7 +1270,7 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             styles.0,
             styles.1,
             &mut self.search_matches.as_mut(),
-            self.focused_search_match,
+            focused_search_match,
         )
     }
 }
@@ -1189,6 +1298,11 @@ mod tests {
             terminal,
             flatjson,
             row: &flatjson[index],
+            line_number: LineNumber {
+                absolute: None,
+                relative: None,
+                max_width: 4,
+            },
             indentation: 0,
             width: 100,
             focused: false,
@@ -1196,8 +1310,135 @@ mod tests {
             trailing_comma: false,
             search_matches: None,
             focused_search_match: &DUMMY_RANGE,
+            emphasize_focused_search_match: true,
             cached_truncated_value: None,
         }
+    }
+
+    #[test]
+    fn test_line_numbers() -> std::fmt::Result {
+        const JSON: &str = r#"{
+            "hello": 1,
+            "2": [
+                3,
+            ],
+        }"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+
+        let mut term = VisibleEscapesTerminal::new(true, false);
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 3);
+        line.indentation = 4;
+
+        let abs = Some(14);
+        let rel = Some(6);
+        let f_line = FOCUSED_LINE;
+        let n_line = NOT_FOCUSED_LINE;
+
+        for (absolute, relative, focused, expected) in vec![
+            (None, None, false, format!("    {n_line}[0]: 3")),
+            (None, None, true, format!("    {f_line}[0]: 3")),
+            (abs, None, false, format!("  14     {n_line}[0]: 3")),
+            (abs, None, true, format!("  14     {f_line}[0]: 3")),
+            (None, rel, false, format!("   6     {n_line}[0]: 3")),
+            (None, rel, true, format!("   6     {f_line}[0]: 3")),
+            (abs, rel, false, format!("   6     {n_line}[0]: 3")),
+            (abs, rel, true, format!("14       {f_line}[0]: 3")),
+        ]
+        .into_iter()
+        {
+            line.terminal.clear_output();
+            line.line_number.absolute = absolute;
+            line.line_number.relative = relative;
+            line.focused = focused;
+
+            line.print_line()?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected output for abs: {absolute:?}, rel: {relative:?}, focused: {focused} in data mode",
+            );
+        }
+
+        line.mode = Mode::Line;
+        for (absolute, relative, focused, expected) in vec![
+            (None, None, false, format!("{n_line}    3")),
+            (None, None, true, format!("{f_line}    3")),
+            (abs, None, false, format!("  14 {n_line}    3")),
+            (abs, None, true, format!("  14 {f_line}    3")),
+            (None, rel, false, format!("   6 {n_line}    3")),
+            (None, rel, true, format!("   6 {f_line}    3")),
+            (abs, rel, false, format!("   6 {n_line}    3")),
+            (abs, rel, true, format!("14   {f_line}    3")),
+        ]
+        .into_iter()
+        {
+            line.terminal.clear_output();
+            line.line_number.absolute = absolute;
+            line.line_number.relative = relative;
+            line.focused = focused;
+
+            line.print_line()?;
+            assert_eq!(
+                expected,
+                line.terminal.output(),
+                "expected output for abs: {absolute:?}, rel: {relative:?}, focused: {focused} in line mode",
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_print_line_tracks_available_space() -> std::fmt::Result {
+        const JSON: &str = r#"{
+            "hello": 1,
+            "key_2": {
+                "key_3": "value",
+                "key_4": "value2",
+            },
+        }"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+
+        let mut term = VisibleEscapesTerminal::new(true, false);
+        // ### __> key_2: (2) {key_3: "value", key_4: "value2"}
+        // 1234567890123456789012345678901234567890123456789012
+        let mut line: LinePrinter = default_line_printer(&mut term, &fj, 2);
+        line.indentation = 2;
+        line.line_number.max_width = 3;
+
+        line.width = 48;
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "value2"}}"#),
+            line.terminal.output(),
+        );
+        line.terminal.clear_output();
+
+        line.width = 47;
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "valu…"}}"#),
+            line.terminal.output(),
+        );
+        line.terminal.clear_output();
+
+        line.width = 52;
+        line.line_number.absolute = Some(2);
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  2   {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "value2"}}"#),
+            line.terminal.output(),
+        );
+        line.terminal.clear_output();
+
+        line.width = 51;
+        line.print_line()?;
+        assert_eq!(
+            format!(r#"  2   {EXPANDED_CONTAINER}key_2: (2) {{key_3: "value", key_4: "valu…"}}"#),
+            line.terminal.output(),
+        );
+
+        Ok(())
     }
 
     #[test]
@@ -1209,19 +1450,28 @@ mod tests {
         let mut term = VisibleEscapesTerminal::new(true, false);
         let mut line: LinePrinter = LinePrinter {
             mode: Mode::Line,
-            indentation: 10,
+            indentation: 4,
             ..default_line_printer(&mut term, &fj, 1)
         };
 
         // Not focused; no indicator.
-        line.print_focus_and_container_indicators()?;
-        assert_eq!("", line.terminal.output());
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!("      ", line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = true;
 
-        line.print_focus_and_container_indicators()?;
-        assert_eq!(format!("_C(1)_{}", FOCUSED_LINE), line.terminal.output());
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("{FOCUSED_LINE}    "), line.terminal.output());
+        line.terminal.clear_output();
+
+        line.print_focus_and_container_indicators(3)?;
+        assert_eq!(format!("{FOCUSED_LINE}"), line.terminal.output());
+        line.terminal.clear_output();
+
+        line.print_focus_and_container_indicators(2)?;
+        assert_eq!("", line.terminal.output());
+        line.terminal.clear_output();
 
         Ok(())
     }
@@ -1244,39 +1494,44 @@ mod tests {
             ..default_line_printer(&mut term, &fj, 0)
         };
 
-        line.print_focus_and_container_indicators()?;
-        assert_eq!(
-            format!("_C(1)_{}", EXPANDED_CONTAINER),
-            line.terminal.output()
-        );
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("{EXPANDED_CONTAINER}"), line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = true;
 
-        line.print_focus_and_container_indicators()?;
+        line.print_focus_and_container_indicators(100)?;
         assert_eq!(
-            format!("_C(1)_{}", FOCUSED_EXPANDED_CONTAINER),
+            format!("{FOCUSED_EXPANDED_CONTAINER}"),
             line.terminal.output()
         );
         line.terminal.clear_output();
 
-        line.row = &line.flatjson[5];
+        line.row = &line.flatjson[3];
         line.indentation = 2;
 
-        line.print_focus_and_container_indicators()?;
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("  {FOCUSED_LINE}"), line.terminal.output());
+        line.terminal.clear_output();
+
+        line.row = &line.flatjson[5];
+        line.indentation = 4;
+
+        line.print_focus_and_container_indicators(7)?;
         assert_eq!(
-            format!("_C(3)_{}", FOCUSED_COLLAPSED_CONTAINER),
+            format!("    {FOCUSED_COLLAPSED_CONTAINER}"),
             line.terminal.output()
         );
+        line.terminal.clear_output();
+
+        line.print_focus_and_container_indicators(6)?;
+        assert_eq!("   ", line.terminal.output());
         line.terminal.clear_output();
 
         line.focused = false;
 
-        line.print_focus_and_container_indicators()?;
-        assert_eq!(
-            format!("_C(3)_{}", COLLAPSED_CONTAINER),
-            line.terminal.output()
-        );
+        line.print_focus_and_container_indicators(100)?;
+        assert_eq!(format!("    {COLLAPSED_CONTAINER}"), line.terminal.output());
 
         Ok(())
     }
@@ -1299,7 +1554,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"hello\"_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_\"hello\"_FG(Default)_: "),
             line.terminal.output()
         );
         assert_eq!(9, used_space);
@@ -1310,7 +1565,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_hello_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_hello_FG(Default)_: "),
             line.terminal.output()
         );
         assert_eq!(7, used_space);
@@ -1321,7 +1576,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_BG({})__INV__B_hello_BG(Default)__!INV__!B_: ", BLUE),
+            format!("_BG({BLUE})__INV__B_hello_BG(Default)__!INV__!B_: "),
             line.terminal.output(),
         );
         assert_eq!(7, used_space);
@@ -1335,7 +1590,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"french fry\"_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_\"french fry\"_FG(Default)_: "),
             line.terminal.output(),
         );
         assert_eq!(14, used_space);
@@ -1347,7 +1602,7 @@ mod tests {
         let used_space = line.fill_in_label(100)?;
 
         assert_eq!(
-            format!("_FG({})_\"\"_FG(Default)_: ", LIGHT_BLUE),
+            format!("_FG({LIGHT_BLUE})_\"\"_FG(Default)_: "),
             line.terminal.output(),
         );
         assert_eq!(4, used_space);
@@ -1418,7 +1673,7 @@ mod tests {
             8,
         ]"#;
         let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
-        fj[1].index = 12345;
+        fj[1].index_in_parent = 12345;
 
         let mut term = VisibleEscapesTerminal::new(false, true);
         let mut line: LinePrinter = LinePrinter {
@@ -1433,7 +1688,7 @@ mod tests {
         line.terminal.clear_output();
         let used_space = line.fill_in_label(100)?;
 
-        assert_eq!("_B_[12345]_!B_: ", line.terminal.output());
+        assert_eq!("_INV__B_[12345]_!INV__!B_: ", line.terminal.output());
         assert_eq!(9, used_space);
 
         Ok(())
@@ -1448,7 +1703,7 @@ mod tests {
             ],
         }"#;
         let mut fj = parse_top_level_json(JSON.to_owned()).unwrap();
-        fj[3].index = 12345;
+        fj[3].index_in_parent = 12345;
 
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 1);
@@ -1645,23 +1900,25 @@ mod tests {
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         for (available_space, used_space, always_quote_string_object_keys, expected) in vec![
-            (50, 31, true, r#"{"a": 1, "d": {…}, "b c": null}"#),
-            (50, 27, false, r#"{a: 1, d: {…}, "b c": null}"#),
-            (26, 26, false, r#"{a: 1, d: {…}, "b c": nu…}"#),
-            (25, 25, false, r#"{a: 1, d: {…}, "b c": n…}"#),
-            (24, 24, false, r#"{a: 1, d: {…}, "b c": …}"#),
-            (23, 23, false, r#"{a: 1, d: {…}, "b…": …}"#),
-            (22, 17, false, r#"{a: 1, d: {…}, …}"#),
-            (16, 15, false, r#"{a: 1, d: …, …}"#),
-            (14, 9, false, r#"{a: 1, …}"#),
-            (8, 3, false, r#"{…}"#),
-            (2, 0, false, r#""#),
+            (54, 35, true, r#"(3) {"a": 1, "d": {…}, "b c": null}"#),
+            (54, 31, false, r#"(3) {a: 1, d: {…}, "b c": null}"#),
+            (30, 30, false, r#"(3) {a: 1, d: {…}, "b c": nu…}"#),
+            (29, 29, false, r#"(3) {a: 1, d: {…}, "b c": n…}"#),
+            (28, 28, false, r#"(3) {a: 1, d: {…}, "b c": …}"#),
+            (27, 27, false, r#"(3) {a: 1, d: {…}, "b…": …}"#),
+            (26, 21, false, r#"(3) {a: 1, d: {…}, …}"#),
+            (20, 19, false, r#"(3) {a: 1, d: …, …}"#),
+            (18, 13, false, r#"(3) {a: 1, …}"#),
+            (12, 7, false, r#"(3) {…}"#),
+            (6, 0, false, r#""#),
         ]
         .into_iter()
         {
+            let is_nested = false;
             let used = line.generate_container_preview(
                 &line.flatjson[0],
                 available_space,
+                is_nested,
                 always_quote_string_object_keys,
             )?;
             assert_eq!(
@@ -1765,27 +2022,29 @@ mod tests {
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
         for (available_space, used_space, expected) in vec![
-            (50, 29, r#"[1, {…}, null, "hello", true]"#),
-            (28, 28, r#"[1, {…}, null, "hello", tr…]"#),
-            (27, 27, r#"[1, {…}, null, "hello", t…]"#),
-            (26, 26, r#"[1, {…}, null, "hello", …]"#),
-            (25, 25, r#"[1, {…}, null, "hel…", …]"#),
-            (24, 24, r#"[1, {…}, null, "he…", …]"#),
-            (23, 23, r#"[1, {…}, null, "h…", …]"#),
-            (22, 17, r#"[1, {…}, null, …]"#),
-            (16, 16, r#"[1, {…}, nu…, …]"#),
-            (15, 15, r#"[1, {…}, n…, …]"#),
-            (14, 11, r#"[1, {…}, …]"#),
-            (10, 6, r#"[1, …]"#),
-            (5, 3, r#"[…]"#),
-            (2, 0, r#""#),
+            (54, 33, r#"(5) [1, {…}, null, "hello", true]"#),
+            (32, 32, r#"(5) [1, {…}, null, "hello", tr…]"#),
+            (31, 31, r#"(5) [1, {…}, null, "hello", t…]"#),
+            (30, 30, r#"(5) [1, {…}, null, "hello", …]"#),
+            (29, 29, r#"(5) [1, {…}, null, "hel…", …]"#),
+            (28, 28, r#"(5) [1, {…}, null, "he…", …]"#),
+            (27, 27, r#"(5) [1, {…}, null, "h…", …]"#),
+            (26, 21, r#"(5) [1, {…}, null, …]"#),
+            (20, 20, r#"(5) [1, {…}, nu…, …]"#),
+            (19, 19, r#"(5) [1, {…}, n…, …]"#),
+            (18, 15, r#"(5) [1, {…}, …]"#),
+            (14, 10, r#"(5) [1, …]"#),
+            (9, 7, r#"(5) […]"#),
+            (6, 0, r#""#),
         ]
         .into_iter()
         {
+            let is_nested = false;
             let always_quote_string_object_keys = false;
             let used = line.generate_container_preview(
                 &line.flatjson[0],
                 available_space,
+                is_nested,
                 always_quote_string_object_keys,
             )?;
             assert_eq!(
@@ -1813,20 +2072,20 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
-        let used = line.generate_container_preview(&line.flatjson[0], 34, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 38, false, false)?;
         assert_eq!(
-            r#"{a: [1, {…}, null, "hello", true]}"#,
+            r#"(1) {a: [1, {…}, null, "hello", true]}"#,
             line.terminal.output()
         );
-        assert_eq!(34, used);
+        assert_eq!(38, used);
 
         line.terminal.clear_output();
-        let used = line.generate_container_preview(&line.flatjson[0], 33, false)?;
+        let used = line.generate_container_preview(&line.flatjson[0], 37, false, false)?;
         assert_eq!(
-            r#"{a: [1, {…}, null, "hello", tr…]}"#,
+            r#"(1) {a: [1, {…}, null, "hello", tr…]}"#,
             line.terminal.output()
         );
-        assert_eq!(33, used);
+        assert_eq!(37, used);
 
         let json = r#"[{"a": 1, "d": {"x": true}, "b c": null}]"#;
         //            [{a: 1, d: {…}, "b c": null}]
@@ -1836,14 +2095,20 @@ mod tests {
         let mut term = TextOnlyTerminal::new();
         let mut line: LinePrinter = default_line_printer(&mut term, &fj, 0);
 
-        let used = line.generate_container_preview(&line.flatjson[0], 29, false)?;
-        assert_eq!(r#"[{a: 1, d: {…}, "b c": null}]"#, line.terminal.output());
-        assert_eq!(29, used);
+        let used = line.generate_container_preview(&line.flatjson[0], 33, false, false)?;
+        assert_eq!(
+            r#"(1) [{a: 1, d: {…}, "b c": null}]"#,
+            line.terminal.output()
+        );
+        assert_eq!(33, used);
 
         line.terminal.clear_output();
-        let used = line.generate_container_preview(&line.flatjson[0], 28, false)?;
-        assert_eq!(r#"[{a: 1, d: {…}, "b c": nu…}]"#, line.terminal.output());
-        assert_eq!(28, used);
+        let used = line.generate_container_preview(&line.flatjson[0], 32, false, false)?;
+        assert_eq!(
+            r#"(1) [{a: 1, d: {…}, "b c": nu…}]"#,
+            line.terminal.output()
+        );
+        assert_eq!(32, used);
 
         Ok(())
     }
@@ -1863,11 +2128,11 @@ mod tests {
 
         let expected = r#"{[true]: 1, [["t", "w", "o"]]: 2, [3]: 3, [null]: 4}"#;
 
-        let _ = line.generate_container_preview(&line.flatjson[0], 100, true)?;
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, true, true)?;
         assert_eq!(expected, line.terminal.output());
 
         line.terminal.clear_output();
-        let _ = line.generate_container_preview(&line.flatjson[0], 100, false)?;
+        let _ = line.generate_container_preview(&line.flatjson[0], 100, true, false)?;
         assert_eq!(expected, line.terminal.output());
 
         Ok(())

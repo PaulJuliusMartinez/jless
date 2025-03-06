@@ -5,9 +5,6 @@ replacement for whatever combination of `less`, `jq`, `cat` and your
 editor you currently use for viewing JSON files. It is written in Rust
 and can be installed as a single standalone binary.
 
-`jless` is under active development. I often stream development live on
-[Twitch](https://twitch.tv/CodeIsTheEnd).
-
 [![ci](https://github.com/PaulJuliusMartinez/jless/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/PaulJuliusMartinez/jless/actions/workflows/ci.yml)
 
 ### Features
@@ -32,15 +29,23 @@ You can install `jless` using various package managers:
 | macOS - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
 | macOS - [MacPorts](https://ports.macports.org/port/jless/) | `sudo port install jless` |
 | Linux - [HomeBrew](https://formulae.brew.sh/formula/jless) | `brew install jless`      |
-| [Arch Linux](https://archlinux.org/packages/community/x86_64/jless/)     | `pacman -U jless`         |
+| [Arch Linux](https://archlinux.org/packages/extra/x86_64/jless/)     | `pacman -S jless`         |
+| [Void Linux](https://github.com/void-linux/void-packages/tree/master/srcpkgs/jless) | `sudo xbps-install jless` |
 | [NetBSD](https://pkgsrc.se/textproc/jless/)                | `pkgin install jless`     |
 | [FreeBSD](https://freshports.org/textproc/jless/)          | `pkg install jless`       |
-
-If you have a Rust toolchain installed, you can install `jless` from
-source by running `cargo install jless`.
+| From source (Requires [Rust toolchain](https://www.rust-lang.org/tools/install))       | `cargo install jless`       |
 
 The [releases](https://github.com/PaulJuliusMartinez/jless/releases)
 page also contains links to binaries for various architectures.
+
+## Dependencies
+
+On Linux systems, X11 libraries are needed to build clipboard access if
+building from source. On Ubuntu you can install these using:
+
+```
+sudo apt-get install libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+```
 
 ## Website
 

@@ -1,8 +1,12 @@
-use std::fmt::Debug;
+use std::fmt::{Debug, Write};
 use std::ops::Range;
 
 use crate::jsonparser;
+use crate::lineprinter;
 use crate::yamlparser;
+
+#[cfg(feature = "sexp")]
+use crate::jsonstringunescaper::{unsafe_unescape_json_string, UnescapeError};
 
 pub type Index = usize;
 
@@ -39,6 +43,15 @@ impl From<usize> for OptionIndex {
             OptionIndex::Index(i)
         }
     }
+}
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum PathType {
+    Dot,
+    Bracket,
+    Query,
+    // Just used for the status bar.
+    DotWithTopLevelIndex,
 }
 
 #[derive(Debug)]
@@ -165,6 +178,310 @@ impl FlatJson {
         }
         visible_ancestor
     }
+
+    pub fn build_path_to_node(&self, path_type: PathType, index: Index) -> Result<String, String> {
+        let mut buf = String::new();
+
+        // Some special handling for top-level elements.
+        if self[index].parent.is_nil() {
+            match path_type {
+                PathType::Dot | PathType::Bracket => {
+                    return Err("Cannot build path to top-level element".to_string());
+                }
+                PathType::Query => {
+                    return Ok(".".to_string());
+                }
+                PathType::DotWithTopLevelIndex => { /* Handled in impl */ }
+            }
+        }
+
+        self.build_path_to_node_impl(path_type, index, &mut buf)?;
+        Ok(buf)
+    }
+
+    fn build_path_to_node_impl(
+        &self,
+        path_type: PathType,
+        index: Index,
+        buf: &mut String,
+    ) -> Result<(), String> {
+        let row = &self[index];
+
+        if row.is_closing_of_container() {
+            return self.build_path_to_node_impl(path_type, row.pair_index().unwrap(), buf);
+        }
+
+        if let OptionIndex::Index(parent_index) = row.parent {
+            self.build_path_to_node_impl(path_type, parent_index, buf)?;
+        }
+
+        let res = if let Some(key_range) = &row.key_range {
+            let key_open_delimiter = &self.1[key_range.start..key_range.start + 1];
+            let key = &self.1[key_range.start + 1..key_range.end - 1];
+
+            // For non-string keys in YAML.
+            if key_open_delimiter == "[" {
+                if path_type == PathType::Query {
+                    return Err(
+                        "Path to node contains non-string keys not supported in JSON".to_string(),
+                    );
+                }
+
+                write!(buf, "[{key}]")
+            } else {
+                if path_type != PathType::Bracket && lineprinter::JS_IDENTIFIER.is_match(key) {
+                    write!(buf, ".{key}")
+                } else {
+                    if path_type == PathType::Query && row.depth == 1 {
+                        // Handle square brackets as the first part of the path.
+                        write!(buf, ".[\"{key}\"]")
+                    } else {
+                        write!(buf, "[\"{key}\"]")
+                    }
+                }
+            }
+        } else {
+            if row.parent.is_nil() {
+                // We only print the top level index for this PathType,
+                // but we don't print it out if there's only a single
+                // top-level element.
+                if path_type == PathType::DotWithTopLevelIndex
+                    && (index != 0 || row.next_sibling.is_some())
+                {
+                    write!(buf, "[{}]", row.index_in_parent)
+                } else {
+                    Ok(())
+                }
+            } else {
+                match path_type {
+                    PathType::Query => {
+                        if row.depth == 1 {
+                            // Handle square brackets as the first part of the path.
+                            write!(buf, ".[]")
+                        } else {
+                            write!(buf, "[]")
+                        }
+                    }
+                    _ => write!(buf, "[{}]", row.index_in_parent),
+                }
+            }
+        };
+
+        res.map_err(|e| e.to_string())
+    }
+
+    pub fn pretty_printed(&self) -> String {
+        let mut buf = String::new();
+
+        for row in self.0.iter() {
+            for _ in 0..row.depth {
+                buf.push_str("  ");
+            }
+            if let Some(ref key_range) = row.key_range {
+                buf.push_str(&self.1[key_range.clone()]);
+                buf.push_str(": ");
+            }
+            let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
+            if let Some(container_type) = row.value.container_type() {
+                if row.value.is_opening_of_container() {
+                    buf.push_str(container_type.open_str());
+                    // Don't print trailing commas after { or [.
+                    trailing_comma = false;
+                } else {
+                    buf.push_str(container_type.close_str());
+                    // Check container opening to see if we have a next sibling.
+                    trailing_comma = row.parent.is_some()
+                        && self[row.pair_index().unwrap()].next_sibling.is_some();
+                }
+            } else {
+                buf.push_str(&self.1[row.range.clone()]);
+            }
+            if trailing_comma {
+                buf.push(',');
+            }
+            buf.push('\n');
+        }
+
+        buf
+    }
+
+    #[cfg(feature = "sexp")]
+    fn sexp_atom_needs_escaping(s: &str) -> bool {
+        // See: https://github.com/janestreet/sexplib0/blob/master/src/sexp.ml#L58
+        if s.len() == 0 {
+            return true;
+        }
+
+        let bytes = s.as_bytes();
+        let last_ch_index = bytes.len() - 1;
+        for (i, ch) in bytes.iter().enumerate() {
+            match ch {
+                // sexp syntactical characters must be escaped
+                b' ' | b'"' | b'(' | b')' | b';' | b'\\' => return true,
+                // The start or end of a multiline comment "#| comment |#" must be escaped
+                b'|' => {
+                    if i < last_ch_index && bytes[i + 1] == b'#' {
+                        return true;
+                    }
+                }
+                b'#' => {
+                    if i < last_ch_index && bytes[i + 1] == b'|' {
+                        return true;
+                    }
+                }
+                // sexplib0 source matches [0 .. 32]. 32 is space, and I included
+                // that above more explicitly.
+                0..=31 | 127..=255 => return true,
+                _ => (),
+            }
+        }
+
+        false
+    }
+
+    #[cfg(feature = "sexp")]
+    fn escape_and_write_sexp_atom(buf: &mut String, atom: &str) {
+        // https://github.com/janestreet/sexplib0/blob/master/src/sexp.ml#L81-L132
+        buf.push('"');
+        for ch in atom.bytes() {
+            match ch {
+                // Double quote and backslashes are escaped
+                b'"' => buf.push_str(r#"\""#),
+                b'\\' => buf.push_str(r#"\\"#),
+                // White space get special escape codes
+                b'\n' => buf.push_str(r#"\n"#),
+                b'\t' => buf.push_str(r#"\t"#),
+                b'\r' => buf.push_str(r#"\r"#),
+                8 /* backspace */ => buf.push_str(r#"\b"#),
+                32..=126 => buf.push(ch as char),
+                _ => {
+                    buf.push('\\');
+                    let zero = b'0';
+                    buf.push((zero + (ch / 100)) as char);
+                    buf.push((zero + ((ch / 10) % 10)) as char);
+                    buf.push((zero + (ch % 10)) as char);
+                }
+            }
+        }
+        buf.push('"');
+    }
+
+    #[cfg(feature = "sexp")]
+    fn write_sexp_atom(&self, buf: &mut String, range: Range<usize>) -> Result<(), UnescapeError> {
+        let quoteless_range = (range.start + 1)..(range.end - 1);
+        let string_value = &self.1[quoteless_range];
+
+        match unsafe_unescape_json_string(string_value) {
+            Ok(unescaped) => {
+                if Self::sexp_atom_needs_escaping(&unescaped) {
+                    Self::escape_and_write_sexp_atom(buf, &unescaped);
+                } else {
+                    buf.push_str(&unescaped);
+                }
+                Ok(())
+            }
+            Err(err) => Err(err),
+        }
+    }
+
+    #[cfg(feature = "sexp")]
+    pub fn sexp_string(&self) -> Result<String, UnescapeError> {
+        let mut buf = String::new();
+
+        for row in self.0.iter() {
+            // Write a space between elements
+            if row.parent.is_some() && row.prev_sibling.is_some() {
+                buf.push(' ');
+            }
+
+            // Write start of key-value tuple
+            if let Some(ref key_range) = row.key_range {
+                buf.push('(');
+                self.write_sexp_atom(&mut buf, key_range.clone())?;
+                buf.push(' ');
+            }
+
+            match &row.value {
+                Value::Null | Value::EmptyObject | Value::EmptyArray => buf.push_str("()"),
+                Value::Boolean | Value::Number => buf.push_str(&self.1[row.range.clone()]),
+                Value::String => self.write_sexp_atom(&mut buf, row.range.clone())?,
+                Value::OpenContainer { .. } => buf.push('('),
+                Value::CloseContainer { .. } => buf.push(')'),
+            }
+
+            // Close key-value tuple if we wrote a primitive. If we wrote the closing of a
+            // container, check if the opening had a key, and close it.
+            if row.is_primitive() && row.key_range.is_some() {
+                buf.push(')');
+            } else if row.is_closing_of_container() {
+                let opening_of_container_row = &self.0[row.pair_index().unwrap()];
+                if opening_of_container_row.key_range.is_some() {
+                    buf.push(')');
+                }
+            }
+
+            // Write newline after every top-level sexp.
+            if row.value.is_closing_of_container() && row.parent.is_nil() {
+                buf.push('\n');
+            }
+        }
+
+        Ok(buf)
+    }
+
+    // A lot of the code here is almost identical to pretty_printed, but
+    // there are some subtle enough differences, and the code isn't that
+    // complicated, that I don't think it's worth it to try to have them
+    // share an implementation.
+    pub fn pretty_printed_value(&self, value_index: Index) -> Result<String, std::fmt::Error> {
+        if self[value_index].is_primitive() {
+            return Ok(self.1[self[value_index].range.clone()].to_string());
+        }
+
+        let mut buf = String::new();
+
+        let container_type = self[value_index].value.container_type().unwrap();
+        let depth_offset = self[value_index].depth;
+        let pair_index = self[value_index].pair_index().unwrap();
+
+        let start_index = value_index.min(pair_index);
+        let end_index = value_index.max(pair_index);
+
+        writeln!(buf, "{}", container_type.open_str())?;
+
+        for index in start_index + 1..end_index {
+            let row = &self[index];
+            for _ in 0..(row.depth - depth_offset) {
+                write!(buf, "  ")?;
+            }
+            if let Some(ref key_range) = row.key_range {
+                write!(buf, "{}: ", &self.1[key_range.clone()])?;
+            }
+            let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
+            if let Some(container_type) = row.value.container_type() {
+                if row.value.is_opening_of_container() {
+                    write!(buf, "{}", container_type.open_str())?;
+                    // Don't print trailing commas after { or [.
+                    trailing_comma = false;
+                } else {
+                    write!(buf, "{}", container_type.close_str())?;
+                    // Check container opening to see if we have a next sibling.
+                    trailing_comma = row.parent.is_some()
+                        && self[row.pair_index().unwrap()].next_sibling.is_some();
+                }
+            } else {
+                write!(buf, "{}", &self.1[row.range.clone()])?;
+            }
+            if trailing_comma {
+                write!(buf, ",")?;
+            }
+            writeln!(buf)?;
+        }
+
+        writeln!(buf, "{}", container_type.close_str())?;
+
+        Ok(buf)
+    }
 }
 
 impl std::ops::Index<usize> for FlatJson {
@@ -189,7 +506,7 @@ pub struct Row {
     pub next_sibling: OptionIndex,
 
     pub depth: usize,
-    pub index: Index,
+    pub index_in_parent: usize,
     pub range: Range<usize>,
     pub key_range: Option<Range<usize>>,
     pub value: Value,
@@ -241,11 +558,25 @@ impl Row {
         self.value.pair_index()
     }
 
-    pub fn full_range(&self) -> Range<usize> {
-        match &self.key_range {
-            Some(key_range) => key_range.start..self.range.end,
-            None => self.range.clone(),
-        }
+    // The range of what the row represents on the screen. If the row is
+    // a container, and it is collapsed, this includes the entire range
+    // of the container, but if it is expanded, it just represents the
+    // single opening character.
+    //
+    // This also includes the key range for objects.
+    pub fn range_represented_by_row(&self) -> Range<usize> {
+        let start = match &self.key_range {
+            Some(key_range) => key_range.start,
+            None => self.range.start,
+        };
+
+        let end = if self.is_container() && self.is_expanded() {
+            self.range.start + 1
+        } else {
+            self.range.end
+        };
+
+        start..end
     }
 }
 
@@ -513,9 +844,7 @@ mod tests {
             assert_eq!(
                 accessor_fn(elem),
                 Into::<OptionIndex>::into(*expected_value),
-                "incorrect {} at index {}",
-                field,
-                i,
+                "incorrect {field} at index {i}",
             );
         }
     }
@@ -671,5 +1000,243 @@ mod tests {
 
     fn assert_prev_visited_items(fj: &FlatJson, start_index: Index, expected: &Vec<usize>) {
         assert_row_iter("prev_item", fj, start_index, expected, FlatJson::prev_item);
+    }
+
+    #[test]
+    fn test_root_object_build_path_to_node() {
+        use PathType::*;
+
+        const ROOT_OBJECT: &str = r#"{
+            "non js key": 1,
+            "plain_key": [
+                {},
+                {
+                    "nested": 5,
+                },
+            ],
+        }"#;
+
+        let fj = parse_top_level_json(ROOT_OBJECT.to_owned()).unwrap();
+
+        assert!(fj.build_path_to_node(Dot, 0).is_err());
+        assert!(fj.build_path_to_node(Bracket, 0).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 0).unwrap());
+        assert_eq!("", fj.build_path_to_node(DotWithTopLevelIndex, 0).unwrap());
+
+        let path = r#"["non js key"]"#;
+        let paths = (path, path, r#".["non js key"]"#, path);
+        assert_paths_to_node(&fj, 1, paths);
+
+        let nested_paths = (
+            ".plain_key[1].nested",
+            r#"["plain_key"][1]["nested"]"#,
+            ".plain_key[].nested",
+            ".plain_key[1].nested",
+        );
+        assert_paths_to_node(&fj, 5, nested_paths);
+    }
+
+    #[test]
+    fn test_root_array_build_path_to_node() {
+        use PathType::*;
+
+        const ROOT_ARRAY: &str = r#"[
+            1,
+            {
+                "nested": {
+                    "more nested": 4,
+                },
+            },
+        ]"#;
+
+        let fj = parse_top_level_json(ROOT_ARRAY.to_owned()).unwrap();
+
+        assert!(fj.build_path_to_node(Dot, 0).is_err());
+        assert!(fj.build_path_to_node(Bracket, 0).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 0).unwrap());
+        assert_eq!("", fj.build_path_to_node(DotWithTopLevelIndex, 0).unwrap());
+
+        let paths = ("[0]", "[0]", ".[]", "[0]");
+        assert_paths_to_node(&fj, 1, paths);
+
+        let nested_paths = (
+            r#"[1].nested["more nested"]"#,
+            r#"[1]["nested"]["more nested"]"#,
+            r#".[].nested["more nested"]"#,
+            r#"[1].nested["more nested"]"#,
+        );
+        assert_paths_to_node(&fj, 4, nested_paths);
+    }
+
+    #[test]
+    fn test_multi_top_level_build_path_to_node() {
+        use PathType::*;
+
+        const MULTI_TOP_LEVEL: &str = r#"[
+            {
+                "nested": [
+                    3,
+                ],
+            },
+        ]
+        {
+            "plain_key": [
+                {
+                    "nested": 10,
+                },
+            ],
+        }"#;
+
+        let fj = parse_top_level_json(MULTI_TOP_LEVEL.to_owned()).unwrap();
+
+        assert!(fj.build_path_to_node(Dot, 0).is_err());
+        assert!(fj.build_path_to_node(Bracket, 0).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 0).unwrap());
+        assert_eq!(
+            "[0]",
+            fj.build_path_to_node(DotWithTopLevelIndex, 0).unwrap()
+        );
+
+        assert!(fj.build_path_to_node(Dot, 7).is_err());
+        assert!(fj.build_path_to_node(Bracket, 7).is_err());
+        assert_eq!(".", fj.build_path_to_node(Query, 7).unwrap());
+        assert_eq!(
+            "[1]",
+            fj.build_path_to_node(DotWithTopLevelIndex, 7).unwrap()
+        );
+
+        let paths = (
+            "[0].nested[0]",
+            r#"[0]["nested"][0]"#,
+            ".[].nested[]",
+            "[0][0].nested[0]",
+        );
+        assert_paths_to_node(&fj, 3, paths);
+
+        let paths = (
+            ".plain_key[0].nested",
+            r#"["plain_key"][0]["nested"]"#,
+            ".plain_key[].nested",
+            "[1].plain_key[0].nested",
+        );
+        assert_paths_to_node(&fj, 10, paths);
+    }
+
+    #[test]
+    fn test_build_path_to_node_yaml_non_string_key() {
+        use PathType::*;
+
+        const YAML: &str = r#"{
+            [1, 1]: 1,
+        }"#;
+        let fj = parse_top_level_yaml(YAML.to_owned()).unwrap();
+        assert_eq!("[[1, 1]]", fj.build_path_to_node(Dot, 1).unwrap());
+        assert_eq!("[[1, 1]]", fj.build_path_to_node(Bracket, 1).unwrap());
+        assert!(fj.build_path_to_node(Query, 1).is_err());
+    }
+
+    #[track_caller]
+    fn assert_paths_to_node(fj: &FlatJson, index: Index, paths: (&str, &str, &str, &str)) {
+        use PathType::*;
+
+        let dot = fj.build_path_to_node(Dot, index).unwrap();
+        let bracket = fj.build_path_to_node(Bracket, index).unwrap();
+        let query = fj.build_path_to_node(Query, index).unwrap();
+        let dot_top_level = fj.build_path_to_node(DotWithTopLevelIndex, index).unwrap();
+
+        assert_eq!(
+            paths,
+            (
+                dot.as_str(),
+                bracket.as_str(),
+                query.as_str(),
+                dot_top_level.as_str()
+            )
+        );
+    }
+
+    #[test]
+    fn test_pretty_print() {
+        const JSON: &str = r#"{"a":1,"b":[2,{},[],false],"c":null}
+            [ "d"   , [1,{      "e" :   7 }]   ]"#;
+        const PRETTY: &str = r#"{
+  "a": 1,
+  "b": [
+    2,
+    {},
+    [],
+    false
+  ],
+  "c": null
+}
+[
+  "d",
+  [
+    1,
+    {
+      "e": 7
+    }
+  ]
+]
+"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        assert_eq!(PRETTY, fj.pretty_printed());
+    }
+
+    #[test]
+    #[cfg(feature = "sexp")]
+    fn test_sexp_string() {
+        const JSON: &str = r#"{"a":1,"b":[2,{},[],false],"c":null}
+            [ "d"   , [1,{      "e" :   7 }]   ]"#;
+        const PRETTY: &str = r#"((a 1) (b (2 () () false)) (c ()))
+(d (1 ((e 7))))
+"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        assert_eq!(PRETTY, fj.sexp_string().unwrap());
+    }
+
+    #[test]
+    #[cfg(feature = "sexp")]
+    fn test_sexp_string_escaping() {
+        const JSON: &str = r#"["", "a b", "a\"b", "a\\b", "a#|b", "a|#b", "a;b", {"a(b": "a)b"}]
+            ["\n\t\r\b", "\u0000\u001f\u007f"]"#;
+        const PRETTY: &str = r#"("" "a b" "a\"b" "a\\b" "a#|b" "a|#b" "a;b" (("a(b" "a)b")))
+("\n\t\r\b" "\000\031\127")
+"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        assert_eq!(PRETTY, fj.sexp_string().unwrap());
+    }
+
+    #[test]
+    fn test_pretty_printed_value() {
+        const JSON: &str = r#"[[{"3":3,"4":[5, 6, {"8": false}]}]]"#;
+        let fj = parse_top_level_json(JSON.to_owned()).unwrap();
+        const PRETTY_INNER_OBJ: &str = r#"{
+  "3": 3,
+  "4": [
+    5,
+    6,
+    {
+      "8": false
+    }
+  ]
+}
+"#;
+        assert_eq!(PRETTY_INNER_OBJ, fj.pretty_printed_value(2).unwrap());
+        assert_eq!("3", fj.pretty_printed_value(3).unwrap());
+
+        const PRETTY_ARRAY: &str = r#"[
+  5,
+  6,
+  {
+    "8": false
+  }
+]
+"#;
+        assert_eq!(PRETTY_ARRAY, fj.pretty_printed_value(4).unwrap());
+        assert_eq!("6", fj.pretty_printed_value(6).unwrap());
+
+        const PRETTY_NESTED_OBJ: &str = "{\n  \"8\": false\n}\n";
+        assert_eq!(PRETTY_NESTED_OBJ, fj.pretty_printed_value(7).unwrap());
     }
 }

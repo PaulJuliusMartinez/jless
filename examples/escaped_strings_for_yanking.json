@@ -1,0 +1,18 @@
+{
+  "description": "This file contains string values with escaped characters to test yanking escaping values.",
+  "tests": {
+    "simple": "abc",
+    "escaped_slashes": "abc \\ / \/ def",
+    "escaped_quote": "middle \"words in\" quotes",
+    "escaped_spaces": "tab:\t; newline:\n; carriage return:\r; end",
+    "escaped_backspace": "easy as 1, 2, 4\b3",
+    "ascii_control_characters": "NUL \\u0000, ESC \\u001B, DEL \\u007F",
+    "unicode_control_characters": "0x80: \\u0080, 0x90: \\u0090, 0x9F: \\u009F",
+    "unicode_euro_sign": "€ \u20AC",
+    "unicode_euro_sign_casing": "€ \u20ac \u20aC",
+    "unicode_supplemental_plane": "𐐷 \uD801\uDC37",
+    "unicode_unmatched_high_surrogate": "no low surrogate: \u0024 \uD801",
+    "unicode_unexpected_low_surrogate": "no high surrogate: \u0024 \uDC37",
+    "control_characters_red_text": "\u001B[0;31mRED TEXT\u001B[0m"
+  }
+}

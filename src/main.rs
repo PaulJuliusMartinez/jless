@@ -1,6 +1,8 @@
 // I don't like this rule because it changes the semantic
 // structure of the code.
 #![allow(clippy::collapsible_else_if)]
+// Sometimes "x >= y + 1" is semantically clearer than "x > y"
+#![allow(clippy::int_plus_one)]
 
 extern crate lazy_static;
 extern crate libc_stdhandle;
@@ -21,6 +23,7 @@ mod flatjson;
 mod highlighting;
 mod input;
 mod jsonparser;
+mod jsonstringunescaper;
 mod jsontokenizer;
 mod lineprinter;
 mod options;
@@ -41,7 +44,7 @@ fn main() {
     let (input_string, input_filename) = match get_input_and_filename(&opt) {
         Ok(input_and_filename) => input_and_filename,
         Err(err) => {
-            eprintln!("Unable to get input: {}", err);
+            eprintln!("Unable to get input: {err}");
             std::process::exit(1);
         }
     };
@@ -53,75 +56,44 @@ fn main() {
         std::process::exit(0);
     }
 
-    // Create our input *before* constructing the App. When we get the input,
-    // we use freopen to remap /dev/tty to STDIN so that rustyline works when
+    // We use freopen to remap /dev/tty to STDIN so that rustyline works when
     // JSON input is provided via STDIN. rustyline gets initialized when we
-    // create the App, so by putting this before, we make sure rustyline gets
-    // the /dev/tty input.
-    let input = Box::new(input::get_input());
-    let stdout = MouseTerminal::from(HideCursor::from(AlternateScreen::from(
-        io::stdout().into_raw_mode().unwrap(),
-    )));
+    // create the App, so by putting this before creating the app, we make
+    // sure rustyline gets the /dev/tty input.
+    input::remap_dev_tty_to_stdin();
 
-    let mut app = match App::new(
-        &opt,
-        input_string,
-        data_format,
-        input_filename,
-        Box::new(stdout),
-    ) {
+    let stdout = Box::new(MouseTerminal::from(HideCursor::from(
+        AlternateScreen::from(io::stdout()),
+    ))) as Box<dyn std::io::Write>;
+    let raw_stdout = stdout.into_raw_mode().unwrap();
+
+    let mut app = match App::new(&opt, input_string, data_format, input_filename, raw_stdout) {
         Ok(jl) => jl,
         Err(err) => {
-            eprintln!("{}", err);
-            return;
+            eprintln!("{err}");
+            std::process::exit(1);
         }
     };
 
-    app.run(input);
+    app.run(Box::new(input::get_input()));
 }
 
 fn print_pretty_printed_input(input: String, data_format: DataFormat) {
     // Don't try to pretty print YAML input; just pass it through.
     if data_format == DataFormat::Yaml {
-        print!("{}", input);
+        print!("{input}");
         return;
     }
 
     let flatjson = match flatjson::parse_top_level_json(input) {
         Ok(flatjson) => flatjson,
         Err(err) => {
-            eprintln!("Unable to parse input: {:?}", err);
+            eprintln!("Unable to parse input: {err:?}");
             std::process::exit(1);
         }
     };
 
-    for row in flatjson.0.iter() {
-        for _ in 0..row.depth {
-            print!("  ");
-        }
-        if let Some(ref key_range) = row.key_range {
-            print!("{}: ", &flatjson.1[key_range.clone()]);
-        }
-        let mut trailing_comma = row.parent.is_some() && row.next_sibling.is_some();
-        if let Some(container_type) = row.value.container_type() {
-            if row.value.is_opening_of_container() {
-                print!("{}", container_type.open_str());
-                // Don't print trailing commas after { or [.
-                trailing_comma = false;
-            } else {
-                print!("{}", container_type.close_str());
-                // Check container opening to see if we have a next sibling.
-                trailing_comma = row.parent.is_some()
-                    && flatjson.0[row.pair_index().unwrap()].next_sibling.is_some();
-            }
-        } else {
-            print!("{}", &flatjson.1[row.range.clone()]);
-        }
-        if trailing_comma {
-            print!(",");
-        }
-        println!();
-    }
+    print!("{}", flatjson.pretty_printed());
 }
 
 fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {

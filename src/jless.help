@@ -7,9 +7,14 @@
        repeatedly perform a command the given number of times. A key
        preceded by a caret indicates the Ctrl key; thus ^E is ctrl-E.
 
-  q  ^c            Exit jless.
+       Commands requiring multiple key-presses may be cancelled with the
+       Escape key.
 
-  F1 :help         Show this help screen.
+  q  :q[uit] ^c    Exit jless.
+
+  F1 :h[elp]       Show this help screen.
+
+  ^z               Suspend jless.
 
                                     [1mMOVING[0m
 
@@ -37,17 +42,26 @@
   w         *  Move forward   until the next change in depth 1 or [4mN[0m times.
   b         *  Move backwards until the next change in depth 1 or [4mN[0m times.
 
-  PageDown  *  Move down by one window (or [4mN[0m windows).
-  PageUp    *  Move up   by one window (or [4mN[0m windows).
+  PageDown  ^f  *  Move down by one window (or [4mN[0m windows).
+  PageUp    ^b  *  Move up   by one window (or [4mN[0m windows).
 
   0  ^         Move to the first sibling of the focused node's parent.
   $            Move to the last  sibling of the focused node's parent.
 
-  g  Home      Focus the first line in the input.
-  G  End       Focus the last  line in the input.
+  Home         Focus the first line in the input.
+  End          Focus the last  line in the input.
 
-  c            Collapse the focused node and all its siblings.
-  e            Expand   the focused node and all its siblings.
+  g         *  Focus the first line in the input if no count is given. If a
+                 count is given, focus that line number. If the line isn't
+                 visible, focus the last visible line before it.
+  G         *  Focus the last  line in the input if no count is given. If a
+                 count is given, focus that line number, expanding any of its
+                 parent nodes if necessary.
+
+  c            Shallow collapse the focused node and all its siblings.
+  C            Deeply  collapse the focused node and all its siblings.
+  e            Shallow expand   the focused node and all its siblings.
+  E            Deeply  expand   the focused node and all its siblings.
 
   Space        Toggle the collapsed state of the currently focused node.
 
@@ -80,6 +94,44 @@
   <            Decrease the indentation of every line by one (or [4mN[0m) tabs.
   >            Increase the indentation of every line by one (or [4mN[0m) tabs.
 
+                              [1mCOPYING AND PRINTING[0m
+
+      You can copy various parts of the JSON file to your clipboard using
+      any one of a set of commands starting with 'y'.
+
+      Alternatively, you can print out values using 'p'. This is useful for
+      viewing long string values all at once, or if the clipboard functionality
+      is not working; mouse-tracking will be temporarily disabled, allowing you
+      to use your terminal's native clipboard capabilities to select and copy
+      the desired text.
+
+  yy pp   Copy/print the currently focused value, pretty printed. When focused
+            on the key/value pair of an object, this will [4mnot[0m include the key.
+  yv pv   Copy/print the currently focused value, like yy/pp, but "nicely"
+             printed on one line with spaces instead of pretty printed.
+  ys ps   When the currently focused value is a string, copy/print the contents
+            of the string, with all escape sequences, except control characters,
+            unescaped.
+
+  yk pk   Copy/print the object key on the currently focused line. When in data
+            mode this will not include quotes around the key if the key is a
+            valid JavaScript identifier.
+
+  yp pP   Copy/print the path from the top level JSON root to the currently
+            focused value. Object keys will be accessed using ".key" unless they
+            are not valid JavaScript identifiers.
+  yb pb   Same as yp, but use square brackets for all object key accesses.
+            Useful if getting the path for use in an environment that doesn't
+            support the ".key" syntax, e.g. Python.
+  yq pq   Copy/print a path that can be used by jq to filter the input JSON and
+            return the currently focused value.
+
+                                    [1mWRITING[0m
+
+  :w[rite]  <name>   Write the input JSON to a file.
+  :w[rite]! <name>   Write the input JSON to a file, even if the file already
+                       exists.
+
                                      [1mSEARCH[0m
 
       jless supports full-text search over the input JSON.
@@ -94,8 +146,8 @@
 
   n         *  Move in the search direction to the next match (or forward
                  [4mN[0m matches).
-  N         *  Move in the opposite of the search direction to the previous match
-                 (or previous [4mN[0m matches).
+  N         *  Move in the opposite of the search direction to the previous
+                 match (or previous [4mN[0m matches).
 
       Searching uses "smart case" by default. If the input pattern doesn't
       contain any capital letters, a case insensitive search will be
@@ -119,7 +171,7 @@
         /[1, 2, 3]      matches an array: [1, 2, 3]
         /\[bch\]at      matches "bat", "cat" or "hat"
         /{}             matches an empty object
-        /(ha)\{2,3}     matches "haha" or "hahaha"
+        /(ha)\{2,3\}    matches "haha" or "hahaha"
 
       For exhaustive documentation of the supported regular expression syntax,
       see the following documentation of the underlying regex engine:
@@ -129,7 +181,7 @@
                                   [1mSEARCH INPUT[0m
 
       The search is *not* performed over the original input, but over a
-      single-line pretty formatted version of the input JSON. Consider the
+      single-line "nicely" formatted version of the input JSON. Consider the
       following two ways to format an equivalent JSON blob:
 
         {"a":1,"b":true,"c":[null,{},[],"hello"]}
@@ -177,4 +229,37 @@
       In line mode you can press '%' when focused on an open or close
       delimiter of an object or array to jump to its matching pair.
 
+                                  [1mLINE NUMBERS[0m
 
+      jless supports displaying line numbers, and does so by default. The line
+      numbers do not reflect the position of a node in the original input, but
+      rather what line the node would appear on if the original input were
+      pretty printed.
+
+      jless also supports relative line numbers. When this is enabled, the
+      number displayed next to each line will indicate how many lines away it
+      is from the currently focused line. This makes it easier to use the j
+      and k commands with specified counts.
+
+      The appearance of line numbers can be configured via command line flags:
+
+  -n, --line-numbers              Show absolute line numbers.
+  -N, --no-line-numbers           Don't show absolute line numbers.
+
+  -r, --relative-line-numbers     Show relative line numbers.
+  -R, --no-relative-line-numbers  Don't show relative line numbers.
+
+      As well as at runtime:
+
+  :set number             Show absolute line numbers.
+  :set nonumber           Don't show absolute line numbers.
+  :set number!            Toggle whether showing absolute line numbers.
+
+  :set relativenumber     Show relative line numbers.
+  :set norelativenumber   Don't show relative line numbers.
+  :set relativenumber!    Toggle whether showing relative line numbers.
+
+      When just using relative line numbers, "0" will be displayed next to the
+      currently focused line. When both flags are set, the absolute line
+      number will be displayed next to the focused lines, and all other line
+      numbers will be relative. This matches vim's behavior.

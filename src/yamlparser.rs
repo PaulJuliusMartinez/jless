@@ -20,7 +20,7 @@ pub fn parse(yaml: String) -> Result<(Vec<Row>, String, usize), String> {
 
     let docs = match YamlLoader::load_from_str(&yaml) {
         Ok(yaml_docs) => yaml_docs,
-        Err(err) => return Err(format!("{}", err)),
+        Err(err) => return Err(format!("{err}")),
     };
 
     let mut prev_sibling = OptionIndex::Nil;
@@ -32,7 +32,7 @@ pub fn parse(yaml: String) -> Result<(Vec<Row>, String, usize), String> {
         let index = parser.parse_yaml_item(doc)?;
 
         parser.rows[index].prev_sibling = prev_sibling;
-        parser.rows[index].index = i;
+        parser.rows[index].index_in_parent = i;
         if let OptionIndex::Index(prev) = prev_sibling {
             parser.rows[prev].next_sibling = OptionIndex::Index(index);
         }
@@ -95,7 +95,7 @@ impl YamlParser {
         let row_index = self.create_row(Value::String);
 
         // Escape newlines.
-        let s = s.replace("\n", "\\n");
+        let s = s.replace('\n', "\\n");
 
         self.pretty_printed.push('"');
         self.pretty_printed.push_str(&s);
@@ -148,7 +148,7 @@ impl YamlParser {
             }
 
             self.rows[child_index].prev_sibling = prev_sibling;
-            self.rows[child_index].index = i;
+            self.rows[child_index].index_in_parent = i;
             if let OptionIndex::Index(prev) = prev_sibling {
                 self.rows[prev].next_sibling = OptionIndex::Index(child_index);
             }
@@ -247,7 +247,7 @@ impl YamlParser {
             }
 
             self.rows[child_index].prev_sibling = prev_sibling;
-            self.rows[child_index].index = i;
+            self.rows[child_index].index_in_parent = i;
             if let OptionIndex::Index(prev) = prev_sibling {
                 self.rows[prev].next_sibling = OptionIndex::Index(child_index);
             }
@@ -290,7 +290,7 @@ impl YamlParser {
     fn pretty_print_key_item(&mut self, item: Yaml, is_key: bool) -> Result<(), String> {
         if let Yaml::String(s) = item {
             // Replace newlines.
-            let s = s.replace("\n", "\\n");
+            let s = s.replace('\n', "\\n");
             self.pretty_printed.push('"');
             self.pretty_printed.push_str(&s);
             self.pretty_printed.push('"');
@@ -383,7 +383,7 @@ impl YamlParser {
             // To be filled in by caller
             prev_sibling: OptionIndex::Nil,
             next_sibling: OptionIndex::Nil,
-            index: 0,
+            index_in_parent: 0,
             key_range: None,
         });
 
