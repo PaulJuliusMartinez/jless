@@ -35,7 +35,7 @@ pub struct Opt {
     /// the child node count will be rendered. In none mode (--preview none),
     /// no preview will be rendered at all. This can be toggled by pressing
     /// 'p'.
-    #[arg(short, long, value_enum, hide_possible_values = true, default_value_t = Preview::Full)]
+    #[arg(short, long, value_enum, hide_possible_values = true, default_value_t = Preview::Count)]
     pub preview: Preview,
 
     // This godforsaken configuration to get both --line-numbers and --no-line-numbers to

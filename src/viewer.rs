@@ -53,7 +53,7 @@ impl JsonViewer {
             dimensions: TTYDimensions::default(),
             scrolloff_setting: DEFAULT_SCROLLOFF,
             mode,
-            preview: Preview::Full,
+            preview: Preview::Count,
         }
     }
 }
