@@ -9,7 +9,7 @@ pub enum Mode {
     Data,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone, Debug, ArgEnum)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug, ValueEnum)]
 pub enum Preview {
     Full,
     Count,
