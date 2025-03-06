@@ -312,12 +312,6 @@ impl App {
                         None
                     }
                 }
-                KeyEvent(Key::Char('p')) => {
-                    self.input_state = InputState::PendingPCommand;
-                    self.input_buffer.clear();
-                    self.buffer_input(b'p');
-                    None
-                }
                 KeyEvent(Key::Char('y')) => {
                     match &self.clipboard_context {
                         Ok(_) => {
