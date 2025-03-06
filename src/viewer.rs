@@ -822,11 +822,6 @@ impl JsonViewer {
             Mode::Line => Mode::Data,
             Mode::Data => Mode::Line,
         };
-<<<<<<< HEAD
-
-        // Ensure focused line stays in same place on the screen.
-        self.top_row =
-            self.count_n_lines_before(self.focused_row, index_of_focused_row as usize, self.mode);
 
         // Line mode doesn't use Preview::None
         if self.mode == Mode::Line && self.preview == Preview::None {
@@ -861,13 +856,6 @@ impl JsonViewer {
                 Preview::None => Preview::Count, // this shouldn't happen, see toggle_mode()
             }
         }
-||||||| f210baf
-
-        // Ensure focused line stays in same place on the screen.
-        self.top_row =
-            self.count_n_lines_before(self.focused_row, index_of_focused_row as usize, self.mode);
-=======
->>>>>>> PaulJuliusMartinez/main
     }
 
     fn scrolloff(&self) -> u16 {

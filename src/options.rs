@@ -29,7 +29,6 @@ pub struct Opt {
     #[arg(short, long, value_enum, hide_possible_values = true, default_value_t = Mode::Data)]
     pub mode: Mode,
 
-<<<<<<< HEAD
     /// Initial preview of container nodes. In full mode (--preview full;
     /// the default), containers will be rendered as much as they can be in
     /// the width of the terminal. In count mode (--preview count), only
@@ -39,8 +38,6 @@ pub struct Opt {
     #[clap(short, long, arg_enum, hide_possible_values = true, default_value_t = Preview::Full)]
     pub preview: Preview,
 
-||||||| f210baf
-=======
     // This godforsaken configuration to get both --line-numbers and --no-line-numbers to
     // work (with --line-numbers as the default) and --relative-line-numbers and
     // --no-relative-line-numbers to work (with --no-relative-line-numbers as the default)
@@ -76,7 +73,6 @@ pub struct Opt {
     #[arg(short = 'R', long = "no-relative-line-numbers")]
     _show_relative_line_numbers_hidden: bool,
 
->>>>>>> PaulJuliusMartinez/main
     /// Number of lines to maintain as padding between the currently
     /// focused row and the top or bottom of the screen. Setting this to
     /// a large value will keep the focused in the middle of the screen

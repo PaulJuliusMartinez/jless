@@ -797,31 +797,18 @@ impl<'a, 'b> LinePrinter<'a, 'b> {
             available_space -= 1;
         }
 
-<<<<<<< HEAD
-        let mut used_space;
+        let mut used_space = 0;
 
         if self.preview == Preview::Full {
             let always_quote_string_object_keys = self.mode == Mode::Line;
-
-            used_space = self.generate_container_preview(
+            let is_nested = false;
+            let mut used_space = self.generate_container_preview(
                 row,
                 available_space,
+                is_nested,
                 always_quote_string_object_keys,
             )?;
-||||||| f210baf
-        let always_quote_string_object_keys = self.mode == Mode::Line;
-        let mut used_space =
-            self.generate_container_preview(row, available_space, always_quote_string_object_keys)?;
-=======
-        let always_quote_string_object_keys = self.mode == Mode::Line;
-        let is_nested = false;
-        let mut used_space = self.generate_container_preview(
-            row,
-            available_space,
-            is_nested,
-            always_quote_string_object_keys,
-        )?;
->>>>>>> PaulJuliusMartinez/main
+            let always_quote_string_object_keys = self.mode == Mode::Line;
 
             if self.trailing_comma {
                 used_space += 1;
