@@ -8,6 +8,7 @@ use crate::viewer::Mode;
 pub enum DataFormat {
     Json,
     Yaml,
+    Bson,
 }
 
 /// A pager for JSON (or YAML) data
@@ -78,6 +79,10 @@ pub struct Opt {
     /// Parse input as YAML, regardless of file extension.
     #[arg(long = "yaml", group = "data-format", display_order = 1000)]
     pub yaml: bool,
+
+    /// Parse input as BSON, regardless of file extension.
+    #[arg(long = "bson", group = "data-format", display_order = 1000)]
+    pub bson: bool,
 }
 
 impl Opt {
@@ -86,6 +91,8 @@ impl Opt {
             Some(DataFormat::Json)
         } else if self.yaml {
             Some(DataFormat::Yaml)
+        } else if self.bson {
+            Some(DataFormat::Bson)
         } else {
             None
         }

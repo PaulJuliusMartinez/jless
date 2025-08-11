@@ -145,6 +145,7 @@ impl App {
         match data_format {
             DataFormat::Json => flatjson::parse_top_level_json(data),
             DataFormat::Yaml => flatjson::parse_top_level_yaml(data),
+            DataFormat::Bson => unreachable!("BSON should be converted to JSON before this point"),
         }
     }
 

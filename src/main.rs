@@ -19,6 +19,7 @@ use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
 
 mod app;
+mod bsonparser;
 mod flatjson;
 mod highlighting;
 mod input;
@@ -41,7 +42,7 @@ use options::{DataFormat, Opt};
 fn main() {
     let opt = Opt::parse();
 
-    let (input_string, input_filename) = match get_input_and_filename(&opt) {
+    let (input_bytes, input_filename) = match get_input_bytes_and_filename(&opt) {
         Ok(input_and_filename) => input_and_filename,
         Err(err) => {
             eprintln!("Unable to get input: {err}");
@@ -50,6 +51,20 @@ fn main() {
     };
 
     let data_format = determine_data_format(opt.data_format(), &input_filename);
+
+    let input_string = match data_format {
+        DataFormat::Bson => match bsonparser::parse(&input_bytes) {
+            Ok(json_string) => json_string,
+            Err(e) => {
+                eprintln!("Unable to parse BSON input: {e}");
+                std::process::exit(1);
+            }
+        },
+        _ => String::from_utf8(input_bytes).unwrap_or_else(|e| {
+            eprintln!("Input is not valid UTF-8: {e}");
+            std::process::exit(1);
+        }),
+    };
 
     if !isatty::stdout_isatty() {
         print_pretty_printed_input(input_string, data_format);
@@ -67,7 +82,19 @@ fn main() {
     ))) as Box<dyn std::io::Write>;
     let raw_stdout = stdout.into_raw_mode().unwrap();
 
-    let mut app = match App::new(&opt, input_string, data_format, input_filename, raw_stdout) {
+    let app_data_format = if data_format == DataFormat::Bson {
+        DataFormat::Json
+    } else {
+        data_format
+    };
+
+    let mut app = match App::new(
+        &opt,
+        input_string,
+        app_data_format,
+        input_filename,
+        raw_stdout,
+    ) {
         Ok(jl) => jl,
         Err(err) => {
             eprintln!("{err}");
@@ -80,7 +107,7 @@ fn main() {
 
 fn print_pretty_printed_input(input: String, data_format: DataFormat) {
     // Don't try to pretty print YAML input; just pass it through.
-    if data_format == DataFormat::Yaml {
+    if data_format == DataFormat::Yaml || data_format == DataFormat::Bson {
         print!("{input}");
         return;
     }
@@ -96,8 +123,8 @@ fn print_pretty_printed_input(input: String, data_format: DataFormat) {
     print!("{}", flatjson.pretty_printed());
 }
 
-fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {
-    let mut input_string = String::new();
+fn get_input_bytes_and_filename(opt: &Opt) -> io::Result<(Vec<u8>, String)> {
+    let mut input_bytes = Vec::new();
     let filename;
 
     match &opt.input {
@@ -107,20 +134,19 @@ fn get_input_and_filename(opt: &Opt) -> io::Result<(String, String)> {
                 std::process::exit(1);
             }
             filename = "STDIN".to_string();
-            io::stdin().read_to_string(&mut input_string)?;
+            io::stdin().read_to_end(&mut input_bytes)?;
         }
         Some(path) => {
             if *path == PathBuf::from("-") {
                 filename = "STDIN".to_string();
-                io::stdin().read_to_string(&mut input_string)?;
+                io::stdin().read_to_end(&mut input_bytes)?;
             } else {
-                File::open(path)?.read_to_string(&mut input_string)?;
+                File::open(path)?.read_to_end(&mut input_bytes)?;
                 filename = String::from(path.file_name().unwrap().to_string_lossy());
             }
         }
     }
-
-    Ok((input_string, filename))
+    Ok((input_bytes, filename))
 }
 
 fn determine_data_format(format: Option<DataFormat>, filename: &str) -> DataFormat {
@@ -130,6 +156,7 @@ fn determine_data_format(format: Option<DataFormat>, filename: &str) -> DataForm
             .and_then(std::ffi::OsStr::to_str)
         {
             Some("yml") | Some("yaml") => DataFormat::Yaml,
+            Some("bson") => DataFormat::Bson,
             _ => DataFormat::Json,
         }
     })
