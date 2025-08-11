@@ -31,6 +31,8 @@ isatty = "0.1"
 libc-stdhandle = "0.1.0"
 yaml-rust = "0.4"
 clipboard = "0.5"
+bson = { version = "2.15.0", features = ["serde_with"] }
+serde_json = "1.0"
 
 [dev-dependencies]
 indoc = "1.0"
