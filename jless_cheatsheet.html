@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Interactive Cheat Sheet (jless)</title>
+    <style>
+        :root {
+            --bg-color: #fff;
+            --text-color: #000;
+            --c-motion: #90ee90;   /* Green */
+            --c-command: #ffff99;  /* Yellow */
+            --c-operator: #ffcc66; /* Orange */
+            --c-extra: #e0e0e0;    /* Grey */
+            --c-white: #fff;
+            --border-color: #000;
+            --font-main: "Georgia", "Times New Roman", serif;
+        }
+
+        body {
+            font-family: var(--font-main);
+            background: var(--bg-color);
+            margin: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            user-select: none;
+        }
+
+        /* --- Main Layout --- */
+        .sheet-container {
+            position: relative;
+            width: 998px; /* Fixed width to match image aspect */
+            border: 2px solid #333;
+            padding: 20px;
+            background: white;
+            border-radius: 15px;
+        }
+
+        /* --- Header --- */
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .title-box {
+            display: inline-block;
+            border: 4px solid #000;
+            padding: 10px 40px;
+            background: #fffbe0;
+            font-size: 2.5rem;
+            font-weight: bold;
+            box-shadow: 3px 3px 0px rgba(0,0,0,0.2);
+        }
+
+        /* --- The Keyboard Grid --- */
+        .keyboard {
+            position: relative;
+            display: flex;
+            flex-direction: column;
+
+            gap: 5px;
+            margin-bottom: 20px;
+            padding-left: 20px; /* Indent for Esc key area */
+        }
+
+        .row {
+            display: flex;
+            gap: 4px;
+        }
+
+        /* Staggering for visual keyboard effect */
+        .row-2 { margin-left: 20px; }
+        .row-3 { margin-left: 40px; }
+        .row-4 { margin-left: 60px; }
+
+        /* --- Individual Key Styling --- */
+        .key {
+            width: 66px;
+            height: 66px;
+            border: 2px solid #000;
+            display: flex;
+            flex-direction: column;
+            font-size: 10px;
+            position: relative;
+            background: white;
+        }
+
+        .key.wide { width: 100px; } /* For some special keys */
+
+        .half {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            padding: 0 2px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .half.top {
+            border-bottom: 1px solid #000;
+        }
+
+        /* Full key (no split) styling */
+        .key.full-key .half {
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .key.full-key .half.top {
+            display: none;
+        }
+
+        .key.full-key .half.bottom {
+            border-top: none;
+        }
+
+        .key.full-key .char {
+            align-self: center;
+            padding-top: 0;
+            width: auto;
+            margin-bottom: 4px;
+        }
+
+        .key.full-key .desc {
+            align-self: center;
+            margin-left: 0;
+            text-align: center;
+        }
+
+        .char {
+            font-size: 1.4rem;
+            font-weight: bold;
+            width: 20px;
+            flex-shrink: 0;
+            line-height: 1;
+            padding-top: 2px;
+        }
+        
+        /* Adjust char position for top half */
+        .top .char { align-self: flex-start; }
+        /* Adjust char position for bottom half */
+        .bottom .char { align-self: flex-start; }
+
+        .desc {
+            font-size: 9px;
+            line-height: 0.9;
+            margin-left: 2px;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        /* --- Special Floating Keys --- */
+        .esc-key {
+            position: absolute;
+            top: 27px;
+            left: 99px;
+            width: 66px;
+            height: 66px;
+            border: 2px solid #000;
+            background: var(--c-command);
+            
+            padding: 2px;
+        }
+        .esc-key strong { font-size: 1.5rem; display: block; }
+        .esc-key span { font-size: 0.7rem; line-height: 1; display: block; }
+
+        /* --- Colors --- */
+        .bg-motion { background-color: var(--c-motion); }
+        .bg-command { background-color: var(--c-command); }
+        .bg-operator { background-color: var(--c-operator); }
+        .bg-extra { background-color: var(--c-extra); }
+        .bg-white { background-color: var(--c-white); }
+        .bg-none { background-color: #fff; }
+
+        /* --- Legend & Notes Area --- */
+        .info-area {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            margin-top: 20px;
+            gap: 15px;
+        }
+
+        .legend {
+            grid-column: 1 / 2;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 4px;
+        }
+        .legend-box {
+            width: 75px;
+            border: 2px solid #000;
+            text-align: center;
+            font-weight: bold;
+            font-size: 0.75rem;
+            margin-right: 8px;
+            flex-shrink: 0;
+            padding: 2px;
+        }
+        .legend-text {
+            font-size: 0.7rem;
+            line-height: 1.1;
+        }
+
+        .column {
+            font-size: 0.7rem;
+            line-height: 1.2;
+        }
+        .column h3 {
+            margin-top: 0;
+            margin-bottom: 4px;
+            font-size: 0.85rem;
+            border-bottom: 1px solid #333;
+            padding-bottom: 2px;
+        }
+        .column p { margin: 3px 0; }
+        .column ul {
+            margin: 3px 0;
+            padding-left: 15px;
+        }
+        .column li { margin: 2px 0; }
+        .red-text { color: #c00; font-weight: bold; }
+
+    </style>
+</head>
+<body>
+
+
+    <!-- Main Cheat Sheet Wrapper -->
+    <div id="sheet" class="sheet-container">
+        <!-- Floating ESC Key -->
+        <div class="esc-key">
+          <strong>Esc</strong>
+          <span>clear input / stop hl</span>
+        </div>
+
+        <!-- Header -->
+        <div class="header">
+            <div class="title-box">jless graphical cheat sheet</div>
+        </div>
+
+        <!-- Keyboard -->
+        <div class="keyboard" id="keyboard-container">
+            <!-- Rows generated by JS -->
+        </div>
+
+        <!-- Bottom Info Area -->
+        <div class="info-area">
+            <!-- Left Column -->
+            <div class="column">
+                <!-- Legend -->
+                <div class="legend">
+                    <div class="legend-item">
+                        <div class="legend-box bg-motion">motion</div>
+                        <div class="legend-text">moves the cursor, or defines the range for an operator</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-box bg-command">command</div>
+                        <div class="legend-text">direct action command</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-box bg-operator">operator</div>
+                        <div class="legend-text">requires a motion afterwards, operates between cursor & destination</div>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-box bg-extra">extra</div>
+                        <div class="legend-text">special functions, requires extra input</div>
+                    </div>
+                </div>
+
+                <h3>Basic Commands</h3>
+                <div id="basic-commands">
+                    <!-- Generated by JS -->
+                </div>
+
+                <h3>Scrolling & View</h3>
+                <div id="scrolling-commands">
+                    <!-- Generated by JS -->
+                </div>
+            </div>
+
+            <!-- Right Column -->
+            <div class="column">
+                <h3>Search</h3>
+                <div id="search-commands">
+                    <!-- Generated by JS -->
+                </div>
+
+                <h3>Copy/Print Commands</h3>
+                <div id="copy-commands">
+                    <!-- Generated by JS -->
+                </div>
+
+                <h3>Additional Notes</h3>
+                <div id="notes-content">
+                    <!-- Generated by JS -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- Data Definitions ---
+
+        // Colors mapping
+        const C = {
+            M: 'bg-motion',
+            C: 'bg-command',
+            O: 'bg-operator',
+            E: 'bg-extra',
+            W: 'bg-white',
+            N: 'bg-none' // No background/white
+        };
+
+        /*
+           Data Structure:
+           key: The main key label (bottom left usually)
+           shift: The shifted key label (top left usually)
+           tC: top color, bC: bottom color
+           tT: top text, bT: bottom text
+        */
+
+        const keyData = [
+            // --- ROW 1 ---
+            [
+                { k:'`', s:'~', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'1', s:'!', tC:C.N, bC:C.E, tT:'', bT:'' },
+                { k:'2', s:'@', tC:C.N, bC:C.E, tT:'', bT:'' },
+                { k:'3', s:'#', tC:C.M, bC:C.E, tT:'prev occur of key', bT:'' },
+                { k:'4', s:'$', tC:C.M, bC:C.E, tT:'end of sibling', bT:'' },
+                { k:'5', s:'%', tC:C.M, bC:C.E, tT:'match bracket', bT:'' },
+                { k:'6', s:'^', tC:C.M, bC:C.E, tT:'first sibling', bT:'' },
+                { k:'7', s:'&', tC:C.N, bC:C.E, tT:'', bT:'' },
+                { k:'8', s:'*', tC:C.M, bC:C.E, tT:'next occur of key', bT:'' },
+                { k:'9', s:'(', tC:C.N, bC:C.E, tT:'', bT:'' },
+                { k:'0', s:')', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'-', s:'_', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'=', s:'+', tC:C.N, bC:C.N, tT:'', bT:'' },
+            ],
+            // --- ROW 2 ---
+            [
+                { k:'q', s:'', tC:C.C, bC:C.O, tT:'', bT:'quit/ jq-style path (y|q)' },
+                { k:'w', s:'', tC:C.N, bC:C.M, tT:'', bT:'move fwd until depth change' },
+                { k:'e', s:'E', tC:C.M, bC:C.M, tT:'deep expand', bT:'shallow expand' },
+                { k:'r', s:'R', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'t', s:'T', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'y', s:'', tC:C.C, bC:C.O, tT:'', bT:'copy prefix (yy)' },
+                { k:'u', s:'U', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'i', s:'I', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'o', s:'O', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'p', s:'', tC:C.O, bC:C.O, tT:'', bT:'print path (y|p)/print cmds' },
+                { k:'[', s:'{', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:']', s:'}', tC:C.N, bC:C.N, tT:'', bT:'' },
+            ],
+            // --- ROW 3 ---
+            [
+                { k:'a', s:'A', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'s', s:'', tC:C.N, bC:C.O, tT:'', bT:'string unescaped (y|p)' },
+                { k:'d', s:'D', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'f', s:'F', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'g', s:'G', tC:C.M, bC:C.E, tT:'jump to line', bT:'jump to line' },
+                { k:'h', s:'H', tC:C.M, bC:C.M, tT:'focus parent', bT:'collapse or parent' },
+                { k:'j', s:'J', tC:C.M, bC:C.M, tT:'next sibling', bT:'move down' },
+                { k:'k', s:'K', tC:C.M, bC:C.O, tT:'prev sibling', bT:'up /key name (y|k)' },
+                { k:'l', s:'L', tC:C.M, bC:C.M, tT:'', bT:'expand or first child' },
+                { k:';', s:':', tC:C.C, bC:C.M, tT:'command line', bT:'scroll truncated to end' },
+                { k:'\'', s:'"', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'\\', s:'|', tC:C.N, bC:C.N, tT:'', bT:'' },
+            ],
+            // --- ROW 4 ---
+            [
+                { k:'z', s:'Z', tC:C.N, bC:C.E, tT:'', bT:'used in zz, zt, zb' },
+                { k:'x', s:'X', tC:C.N, bC:C.N, tT:'', bT:'' },
+                { k:'c', s:'C', tC:C.M, bC:C.M, tT:'deep collapse focused', bT:'shallow collapse focused' },
+                { k:'v', s:'', tC:C.N, bC:C.O, tT:'', bT:'value one-line (y|p)v' },
+                { k:'b', s:'', tC:C.N, bC:C.O, tT:'', bT:'bracket path (y|b)/move bwd until depth change' },
+                { k:'n', s:'N', tC:C.M, bC:C.M, tT:'prev search match', bT:'next search match' },
+                { k:'m', s:'M', tC:C.N, bC:C.C, tT:'', bT:'toggle data mode' },
+                { k:',', s:'<', tC:C.M, bC:C.M, tT:'decrease indent', bT:'scroll truncated left' },
+                { k:'.', s:'>', tC:C.M, bC:C.M, tT:'increase indent', bT:'scroll truncated right' },
+                { k:'/', s:'?', tC:C.M, bC:C.M, tT:'start backward search', bT:'start forward search' },
+            ]
+        ];
+
+        const basicCommands = `
+            <p><strong>Count Prefix:</strong> Type number N before command to repeat N times (e.g., 3j, 5n, 10k)</p>
+            <p><strong>Exit:</strong> q, Ctrl-C, :quit, :exit</p>
+            <p><strong>Help:</strong> F1 or :help</p>
+            <p><strong>Data/Line Mode:</strong> m toggles between data mode (streamlined) and line mode (pretty JSON)</p>
+            <p><strong>Match Bracket:</strong> % (in line mode) jumps to matching bracket</p>
+            <p><strong>Special Keys:</strong> Home (first line), End (last line), Arrow keys (navigation), Enter (down), Backspace (up), Space (toggle collapse/expand)</p>
+        `;
+
+        const scrollingCommands = `
+            <p><strong>Page Navigation:</strong> Ctrl-f/b (page down/up), Ctrl-d/u (half-page down/up)</p>
+            <p><strong>Line Scroll:</strong> Ctrl-e/y (scroll line down/up), Ctrl-n/p (down/up like j/k)</p>
+            <p><strong>Center View:</strong> zz (center), zt (top), zb (bottom)</p>
+            <p><strong>Horizontal Scroll:</strong> . and , (scroll truncated value right/left), ; (toggle to end/start)</p>
+            <p><strong>Indent:</strong> &lt; and &gt; (decrease/increase indentation)</p>
+        `;
+
+        const searchCommands = `
+            <p><strong>/pattern:</strong> Search forward (count N for Nth occurrence)</p>
+            <p><strong>?pattern:</strong> Search backward</p>
+            <p><strong>*:</strong> Next occurrence of focused key (# for previous)</p>
+            <p><strong>n/N:</strong> Next/previous match in search direction</p>
+            <p><strong>Smart Case:</strong> Case-insensitive unless pattern has capitals. Add /s for case-sensitive.</p>
+            <p><strong>Brackets:</strong> In patterns, [] {} are literal. Escape with \\\\ for character classes/repetition.</p>
+            <p><strong>Examples:</strong> /[1, 2, 3] matches array; /\\[bch\\]at matches bat/cat/hat</p>
+        `;
+
+        const copyCommands = `
+            <p><strong>y/p prefix:</strong> y copies to clipboard, p prints (disables mouse tracking for terminal copy)</p>
+            <p><strong>yy/pp:</strong> Value pretty printed</p>
+            <p><strong>yv/pv:</strong> Value one-line format</p>
+            <p><strong>ys/ps:</strong> String contents unescaped</p>
+            <p><strong>yk/pk:</strong> Key name only</p>
+            <p><strong>yp/pP:</strong> Path (.foo[3].bar)</p>
+            <p><strong>yb/pb:</strong> Bracket path (["foo"][3]["bar"])</p>
+            <p><strong>yq/pq:</strong> jq-style path (.foo[].bar)</p>
+        `;
+
+        const notes = `
+            <p><strong>Line Numbers:</strong> :set number (absolute), :set relativenumber (relative), :set number! (toggle)</p>
+            <p><strong>CLI flags:</strong> -n/--line-numbers, -r/--relative-line-numbers, --yaml (for YAML files)</p>
+            <p><strong>Input:</strong> jless file.json or cat file.json | jless (handles newline-delimited JSON)</p>
+            <p><strong>Esc:</strong> Clear input buffer / stop highlighting search matches</p>
+        `;
+
+        // --- Logic ---
+
+        function renderKeyboard() {
+            const container = document.getElementById('keyboard-container');
+            container.innerHTML = '';
+
+            keyData.forEach((rowKeys, rowIndex) => {
+                const rowDiv = document.createElement('div');
+                rowDiv.className = `row row-${rowIndex + 1}`;
+
+                rowKeys.forEach(kObj => {
+                    // Build HTML for key
+                    const keyDiv = document.createElement('div');
+                    keyDiv.className = 'key';
+
+                    // Add spacebar class if this is the spacebar
+                    if (kObj.k === 'Space') {
+                        keyDiv.className += ' spacebar';
+                    }
+
+                    // Check if this key only has one function (top is empty)
+                    const topIsEmpty = (!kObj.s || kObj.s === '') && (!kObj.tT || kObj.tT === '');
+                    if (topIsEmpty) {
+                        keyDiv.className += ' full-key';
+                    }
+
+                    // Top Half
+                    const topDiv = document.createElement('div');
+                    topDiv.className = `half top ${kObj.tC}`;
+                    topDiv.innerHTML = `<div class="char">${kObj.s}</div><div class="desc">${kObj.tT || ''}</div>`;
+
+                    // Bottom Half
+                    const botDiv = document.createElement('div');
+                    botDiv.className = `half bottom ${kObj.bC}`;
+                    botDiv.innerHTML = `<div class="char">${kObj.k}</div><div class="desc">${kObj.bT || ''}</div>`;
+
+                    keyDiv.appendChild(topDiv);
+                    keyDiv.appendChild(botDiv);
+                    rowDiv.appendChild(keyDiv);
+                });
+
+                container.appendChild(rowDiv);
+            });
+        }
+
+        // Initialize
+        window.onload = () => {
+            document.getElementById('basic-commands').innerHTML = basicCommands;
+            document.getElementById('scrolling-commands').innerHTML = scrollingCommands;
+            document.getElementById('search-commands').innerHTML = searchCommands;
+            document.getElementById('copy-commands').innerHTML = copyCommands;
+            document.getElementById('notes-content').innerHTML = notes;
+            renderKeyboard();
+        };
+
+    </script>
+</body>
+</html>
