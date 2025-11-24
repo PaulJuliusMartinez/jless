@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Interactive Cheat Sheet (jless)</title>
     <style>
+        @page {
+            size: landscape;
+            margin: 0.7cm;
+        }
+
         :root {
             --bg-color: #fff;
             --text-color: #000;
@@ -20,11 +25,13 @@
         body {
             font-family: var(--font-main);
             background: var(--bg-color);
-            margin: 20px;
+            margin: 5px 20px 0px 20px;
             display: flex;
             flex-direction: column;
             align-items: center;
             user-select: none;
+            transform: scale(0.96);
+            transform-origin: top center;
         }
 
         /* --- Main Layout --- */
@@ -32,7 +39,7 @@
             position: relative;
             width: 998px; /* Fixed width to match image aspect */
             border: 2px solid #333;
-            padding: 20px;
+            padding: 5px;
             background: white;
             border-radius: 15px;
         }
@@ -40,7 +47,7 @@
         /* --- Header --- */
         .header {
             text-align: center;
-            margin-bottom: 20px;
+            margin-bottom: 10px;
         }
         .title-box {
             display: inline-block;
@@ -153,8 +160,8 @@
         /* --- Special Floating Keys --- */
         .esc-key {
             position: absolute;
-            top: 27px;
-            left: 99px;
+            top: 10px;
+            left: 32px;
             width: 66px;
             height: 66px;
             border: 2px solid #000;
@@ -206,13 +213,13 @@
         }
 
         .column {
-            font-size: 0.7rem;
+            font-size: 0.665rem;
             line-height: 1.2;
         }
         .column h3 {
             margin-top: 0;
             margin-bottom: 4px;
-            font-size: 0.85rem;
+            font-size: 0.81rem;
             border-bottom: 1px solid #333;
             padding-bottom: 2px;
         }
@@ -223,6 +230,11 @@
         }
         .column li { margin: 2px 0; }
         .red-text { color: #c00; font-weight: bold; }
+
+        #copy-commands {
+            column-count: 2;
+            column-gap: 15px;
+        }
 
     </style>
 </head>
