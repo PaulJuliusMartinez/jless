@@ -39,7 +39,7 @@ use app::App;
 use options::{DataFormat, Opt};
 
 fn main() {
-    let opt = Opt::parse();
+    let opt = Opt::parse_with_default();
 
     let (input_string, input_filename) = match get_input_and_filename(&opt) {
         Ok(input_and_filename) => input_and_filename,

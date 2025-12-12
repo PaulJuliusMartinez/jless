@@ -90,4 +90,23 @@ impl Opt {
             None
         }
     }
+
+    fn default_opts_iter() -> impl Iterator<Item = String> {
+        std::env::var("JLESS_DEFAULT_OPTS")
+            .unwrap_or("".to_string())
+            .split(" ")
+            .filter(|v| v.trim_ascii().len() != 0)
+            .map(|v| v.to_string())
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    pub fn parse_with_default() -> Self {
+        Self::parse_from(
+            std::env::args()
+                .take(1)
+                .chain(Self::default_opts_iter())
+                .chain(std::env::args().skip(1)),
+        )
+    }
 }
