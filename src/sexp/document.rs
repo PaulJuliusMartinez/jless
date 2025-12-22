@@ -378,7 +378,41 @@ impl SexpDocument {
         }
     }
 
-    pub fn append_eof(&mut self) {}
+    pub fn append_eof(&mut self) {
+        // We just have to check for errors here, pending sexp comments and unterminated lists.
+        if self.num_pending_sexp_comments > 0 {
+            self.num_pending_sexp_comments = 0;
+
+            self.push_new_error_node(ErrorMetadata {
+                message: "Unexpected EOF after sexp comment \"#;\"".to_string(),
+            });
+        }
+
+        if self.starts_of_unterminated_lists.is_empty() {
+            return;
+        }
+
+        self.push_new_error_node(ErrorMetadata {
+            message: "Unexpected EOF while parsing list".to_string(),
+        });
+
+        // We'll put the first closing ')' on its own line, and then the rest the same line.
+        let mut is_first_unterminated_list = true;
+
+        while let Some(list_start_index) = self.starts_of_unterminated_lists.pop() {
+            let should_display_on_own_line = is_first_unterminated_list;
+            is_first_unterminated_list = false;
+
+            // We won't actually add the trailing ')' to the internal doc.
+            let should_append_to_pretty_printed = false;
+
+            self.complete_single_list(
+                list_start_index,
+                should_display_on_own_line,
+                should_append_to_pretty_printed,
+            );
+        }
+    }
 
     fn start_new_list(&mut self) {
         let list_metadata = ListMetadata {
@@ -441,9 +475,29 @@ impl SexpDocument {
             _ => false,
         };
 
+        let should_append_to_pretty_printed = true;
+        self.complete_single_list(
+            list_start_index,
+            should_display_on_own_line,
+            should_append_to_pretty_printed,
+        );
+    }
+
+    fn complete_single_list(
+        &mut self,
+        list_start_index: NodeIndex,
+        should_display_on_own_line: bool,
+        should_append_to_pretty_printed: bool,
+    ) {
+        let list_end_index = NodeIndex(self.all_nodes.len());
         let list_kind = self.analyze_list(list_start_index);
 
-        let data_range = self.pretty_printed.end_list();
+        let data_range = if should_append_to_pretty_printed {
+            self.pretty_printed.end_list()
+        } else {
+            let len = self.pretty_printed.len();
+            len..len
+        };
 
         let list_start_node = &mut self.all_nodes[list_start_index.0];
         let list_metadata = list_start_node.token.list_metadata_mut();
@@ -669,7 +723,32 @@ mod tests {
                 let _ = write!(output, "{:<9}", "");
             }
 
-            let token = match &node.token {
+            // Maybe print out parent/prev/next sibling node indexes? ←→
+            let DocumentNode {
+                parent_index,
+                prev_sibling,
+                next_sibling,
+                data_range,
+                data_index_in_parent,
+                token,
+            } = &node;
+
+            fn fmt_i(node_index: Option<usize>) -> String {
+                node_index
+                    .map(|i| i.to_string())
+                    .unwrap_or("--".to_string())
+            }
+
+            let _ = write!(output, "<{:<2} ", fmt_i(prev_sibling.map(|i| i.0)),);
+            let _ = write!(
+                output,
+                "^{:>2}[{:<2}] ",
+                fmt_i(parent_index.map(|i| i.0)),
+                fmt_i(*data_index_in_parent),
+            );
+            let _ = write!(output, "{:>2}> ", fmt_i(next_sibling.map(|i| i.0)),);
+
+            let token = match token {
                 DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => {
                     format!("StartOfList({:?})", list_kind)
                 }
@@ -689,7 +768,7 @@ mod tests {
             };
 
             let _ = write!(output, "{:<25}", token);
-            if let Some(data_range) = &node.data_range {
+            if let Some(data_range) = data_range {
                 let data = &doc.pretty_printed[data_range.clone()];
                 let _ = write!(output, ": {:?}", data.as_bstr());
             }
@@ -715,17 +794,17 @@ mod tests {
         Raw document:
         ("Atom Kinds:" Constructor record_key 123_456 7.89e10 true false 2021-07-20 22:42:32.000000000)
 
-        0   0..1     StartOfList(Plain)       : "("
-        1   1..14    Atom(Plain)              : "\"Atom Kinds:\""
-        2   15..26   Atom(Constructor)        : "Constructor"
-        3   27..37   Atom(RecordKey)          : "record_key"
-        4   38..45   Atom(Number)             : "123_456"
-        5   46..53   Atom(Number)             : "7.89e10"
-        6   54..58   Atom(Bool)               : "true"
-        7   59..64   Atom(Bool)               : "false"
-        8   65..75   Atom(Date)               : "2021-07-20"
-        9   76..94   Atom(Time)               : "22:42:32.000000000"
-        10  94..95   EndOfList                : ")"
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..14    <-- ^ 0[0 ]  2> Atom(Plain)              : "\"Atom Kinds:\""
+        2   15..26   <1  ^ 0[1 ]  3> Atom(Constructor)        : "Constructor"
+        3   27..37   <2  ^ 0[2 ]  4> Atom(RecordKey)          : "record_key"
+        4   38..45   <3  ^ 0[3 ]  5> Atom(Number)             : "123_456"
+        5   46..53   <4  ^ 0[4 ]  6> Atom(Number)             : "7.89e10"
+        6   54..58   <5  ^ 0[5 ]  7> Atom(Bool)               : "true"
+        7   59..64   <6  ^ 0[6 ]  8> Atom(Bool)               : "false"
+        8   65..75   <7  ^ 0[7 ]  9> Atom(Date)               : "2021-07-20"
+        9   76..94   <8  ^ 0[8 ] --> Atom(Time)               : "22:42:32.000000000"
+        10  94..95   <-- ^--[--] --> EndOfList                : ")"
         "#);
     }
 
@@ -736,16 +815,16 @@ mod tests {
         Raw document:
         ((key1 a) (key2 b))
 
-        0   0..1     StartOfList(Record)      : "("
-        1   1..2     StartOfList(RecordField) : "("
-        2   2..6     Atom(RecordKey)          : "key1"
-        3   7..8     Atom(RecordKey)          : "a"
-        4   8..9     EndOfList                : ")"
-        5   10..11   StartOfList(RecordField) : "("
-        6   11..15   Atom(RecordKey)          : "key2"
-        7   16..17   Atom(RecordKey)          : "b"
-        8   17..18   EndOfList                : ")"
-        9   18..19   EndOfList                : ")"
+        0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
+        1   1..2     <-- ^ 0[0 ]  5> StartOfList(RecordField) : "("
+        2   2..6     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "key1"
+        3   7..8     <2  ^ 1[1 ] --> Atom(RecordKey)          : "a"
+        4   8..9     <-- ^ 0[--] --> EndOfList                : ")"
+        5   10..11   <1  ^ 0[1 ] --> StartOfList(RecordField) : "("
+        6   11..15   <-- ^ 5[0 ]  7> Atom(RecordKey)          : "key2"
+        7   16..17   <6  ^ 5[1 ] --> Atom(RecordKey)          : "b"
+        8   17..18   <1  ^ 0[--] --> EndOfList                : ")"
+        9   18..19   <-- ^--[--] --> EndOfList                : ")"
         "#);
 
         let variant_record = dump(b"(Constructor (key1 a) (key2 b))");
@@ -753,17 +832,17 @@ mod tests {
         Raw document:
         (Constructor (key1 a) (key2 b))
 
-        0   0..1     StartOfList(VariantRecord): "("
-        1   1..12    Atom(Constructor)        : "Constructor"
-        2   13..14   StartOfList(RecordField) : "("
-        3   14..18   Atom(RecordKey)          : "key1"
-        4   19..20   Atom(RecordKey)          : "a"
-        5   20..21   EndOfList                : ")"
-        6   22..23   StartOfList(RecordField) : "("
-        7   23..27   Atom(RecordKey)          : "key2"
-        8   28..29   Atom(RecordKey)          : "b"
-        9   29..30   EndOfList                : ")"
-        10  30..31   EndOfList                : ")"
+        0   0..1     <-- ^--[0 ] --> StartOfList(VariantRecord): "("
+        1   1..12    <-- ^ 0[0 ]  2> Atom(Constructor)        : "Constructor"
+        2   13..14   <1  ^ 0[1 ]  6> StartOfList(RecordField) : "("
+        3   14..18   <-- ^ 2[0 ]  4> Atom(RecordKey)          : "key1"
+        4   19..20   <3  ^ 2[1 ] --> Atom(RecordKey)          : "a"
+        5   20..21   <1  ^ 0[--] --> EndOfList                : ")"
+        6   22..23   <2  ^ 0[2 ] --> StartOfList(RecordField) : "("
+        7   23..27   <-- ^ 6[0 ]  8> Atom(RecordKey)          : "key2"
+        8   28..29   <7  ^ 6[1 ] --> Atom(RecordKey)          : "b"
+        9   29..30   <2  ^ 0[--] --> EndOfList                : ")"
+        10  30..31   <-- ^--[--] --> EndOfList                : ")"
         "#);
 
         let variant_tuple = dump(b"(Constructor () 1 2 3)");
@@ -771,13 +850,13 @@ mod tests {
         Raw document:
         (Constructor () 1 2 3)
 
-        0   0..1     StartOfList(VariantTuple): "("
-        1   1..12    Atom(Constructor)        : "Constructor"
-        2   13..15   Unit                     : "()"
-        3   16..17   Atom(Number)             : "1"
-        4   18..19   Atom(Number)             : "2"
-        5   20..21   Atom(Number)             : "3"
-        6   21..22   EndOfList                : ")"
+        0   0..1     <-- ^--[0 ] --> StartOfList(VariantTuple): "("
+        1   1..12    <-- ^ 0[0 ]  2> Atom(Constructor)        : "Constructor"
+        2   13..15   <1  ^ 0[1 ]  3> Unit                     : "()"
+        3   16..17   <2  ^ 0[2 ]  4> Atom(Number)             : "1"
+        4   18..19   <3  ^ 0[3 ]  5> Atom(Number)             : "2"
+        5   20..21   <4  ^ 0[4 ] --> Atom(Number)             : "3"
+        6   21..22   <-- ^--[--] --> EndOfList                : ")"
         "#);
 
         let date_time = dump(b"(2025-07-20 22:42:32.000000000)");
@@ -785,10 +864,10 @@ mod tests {
         Raw document:
         (2025-07-20 22:42:32.000000000)
 
-        0   0..1     StartOfList(DateTime)    : "("
-        1   1..11    Atom(Date)               : "2025-07-20"
-        2   12..30   Atom(Time)               : "22:42:32.000000000"
-        3   30..31   EndOfList                : ")"
+        0   0..1     <-- ^--[0 ] --> StartOfList(DateTime)    : "("
+        1   1..11    <-- ^ 0[0 ]  2> Atom(Date)               : "2025-07-20"
+        2   12..30   <1  ^ 0[1 ] --> Atom(Time)               : "22:42:32.000000000"
+        3   30..31   <-- ^--[--] --> EndOfList                : ")"
         "#);
     }
 
@@ -799,8 +878,8 @@ mod tests {
         Raw document:
         one
 
-        0   0..3     Atom(RecordKey)          : "one"
-        1            Error: Saw unexpected ')' while parsing top-level sexp
+        0   0..3     <-- ^--[0 ]  1> Atom(RecordKey)          : "one"
+        1            <0  ^--[--] --> Error: Saw unexpected ')' while parsing top-level sexp
         "#);
 
         let pending_sexp_comment_at_end_of_list = dump(b"(1 #;)");
@@ -808,10 +887,10 @@ mod tests {
         Raw document:
         (1 #;)
 
-        0   0..1     StartOfList(Plain)       : "("
-        1   1..2     Atom(Number)             : "1"
-        2            Error: Saw unexpected ')' after sexp comment "#;"
-        3   5..6     EndOfList                : ")"
+        0   0..1     <-- ^--[0 ]  2> StartOfList(Plain)       : "("
+        1   1..2     <-- ^ 0[0 ] --> Atom(Number)             : "1"
+        2            <0  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
+        3   5..6     <-- ^--[--]  2> EndOfList                : ")"
         "##);
 
         let invalid_atom_escape = dump(br#""\xGG""#);
@@ -819,8 +898,22 @@ mod tests {
         Raw document:
         "\xGG"
 
-        0            Error: Unable to unescape atom: InvalidHexadecimalEscape
-        1   0..6     Atom(Plain)              : "\"\\xGG\""
+        0            <-- ^--[--]  1> Error: Unable to unescape atom: InvalidHexadecimalEscape
+        1   0..6     <0  ^--[0 ] --> Atom(Plain)              : "\"\\xGG\""
+        "#);
+
+        let eof_before_list_end = dump(b"((a z");
+        assert_snapshot!(&eof_before_list_end, @r#"
+        Raw document:
+        ((a z
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
+        1   1..2     <-- ^ 0[0 ] --> StartOfList(RecordField) : "("
+        2   2..3     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "a"
+        3   4..5     <2  ^ 1[1 ]  4> Atom(RecordKey)          : "z"
+        4            <3  ^ 1[--] --> Error: Unexpected EOF while parsing list
+        5   5..5     <-- ^ 0[--] --> EndOfList                : ""
+        6   5..5     <-- ^--[--] --> EndOfList                : ""
         "#);
     }
 }
