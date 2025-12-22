@@ -13,8 +13,9 @@ edition = "2018"
 rust-version = "1.70"
 
 [features]
-default = []
-sexp = []
+# Eventually [sexp] should be removed from the default.
+default = [ "sexp" ]
+sexp = [ "dep:ocaml-sexplib" ]
 
 [dependencies]
 # logos = "0.12.0"
@@ -24,6 +25,7 @@ unicode-segmentation = "1.11"
 # When using actual 14.0.0 version, it'll still work, except for not being able to detect single escapes.
 rustyline = { version = "14.0.0", git = "https://github.com/PaulJuliusMartinez/rustyline-with-macos-poll-fix", branch = "v14.0.0.bugfix" }
 regex = "1.10"
+lazy_static = "1.4.0"
 termion = "4.0"
 signal-hook = "0.3"
 libc = "0.2"
@@ -33,7 +35,11 @@ memchr = "2.7.5"
 # yaml-rust = "0.4"
 # clipboard = "0.5"
 
+# sexp dependencies
+ocaml-sexplib = { path = "/Users/paul/rust-sexp-libs/ocaml-sexplib", optional = true }
+
 [dev-dependencies]
 bstr = "1"
 insta = "1.43"
 # indoc = "1.0"
+serde = { version = "1.0", features = ["derive"] }

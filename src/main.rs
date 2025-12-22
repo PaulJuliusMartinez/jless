@@ -1,3 +1,5 @@
+extern crate lazy_static;
+
 use rustyline::history::MemHistory;
 use rustyline::Editor;
 use signal_hook::consts::SIGWINCH;
@@ -20,6 +22,9 @@ mod document_viewer;
 mod text_document;
 // Someday: This is temporary, will probably want to rewrite this.
 mod terminal;
+
+#[cfg(feature = "sexp")]
+mod sexp;
 
 #[cfg(test)]
 mod test_helpers;

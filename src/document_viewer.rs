@@ -195,7 +195,7 @@ impl<D: Document> DocumentViewer<D> {
             (PositionOfScreenLine::AboveTopLine, PositionOfScreenLine::BelowBottomLine) => {
                 PositionOfCursorInViewport::StartsAndEndsOutsideViewport
             }
-            (PositionOfScreenLine::AtScreenIndex(index), PositionOfScreenLine::AboveTopLine) => {
+            (PositionOfScreenLine::AtScreenIndex(_), PositionOfScreenLine::AboveTopLine) => {
                 panic!("start of cursor is in viewport, but bottom is above the top line");
             }
             (
@@ -782,10 +782,6 @@ impl<D: Document> DocumentViewer<D> {
                 let lines_above_top_of_screen = self
                     .doc
                     .diff_screen_lines(&self.top_line, &old_cursor_range.start);
-                let lines_below_bottom_of_screen = self
-                    .doc
-                    .diff_screen_lines(&old_cursor_range.end, &self.top_line)
-                    - self.dimensions.height;
 
                 self.update_dimensions_and_resize_doc(new_dimensions);
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
