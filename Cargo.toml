@@ -30,7 +30,7 @@ clap = { version = "4.0", features = ["derive"] }
 isatty = "0.1"
 libc-stdhandle = "0.1.0"
 yaml-rust = "0.4"
-clipboard = "0.5"
+base64 = "0.21"
 
 [dev-dependencies]
 indoc = "1.0"

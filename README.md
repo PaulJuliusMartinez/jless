@@ -7,6 +7,8 @@ and can be installed as a single standalone binary.
 
 [![ci](https://github.com/PaulJuliusMartinez/jless/actions/workflows/ci.yml/badge.svg?branch=master&event=push)](https://github.com/PaulJuliusMartinez/jless/actions/workflows/ci.yml)
 
+> **🔧 Fork Note:** This fork replaces the X11-based clipboard with [OSC 52](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h3-Operating-System-Commands) escape sequences, enabling clipboard functionality over SSH without X11 forwarding. Works with iTerm2, kitty, Alacritty, Windows Terminal, and tmux.
+
 ### Features
 
 - Clean syntax highlighted display of JSON data, omitting quotes around
@@ -40,12 +42,7 @@ page also contains links to binaries for various architectures.
 
 ## Dependencies
 
-On Linux systems, X11 libraries are needed to build clipboard access if
-building from source. On Ubuntu you can install these using:
-
-```
-sudo apt-get install libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-```
+This fork uses OSC 52 for clipboard access, so **no X11 libraries are required**. Just build with `cargo build --release`.
 
 ## Website
 
