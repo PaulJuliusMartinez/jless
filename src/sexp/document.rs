@@ -52,7 +52,7 @@ enum DocumentToken {
     StartOfList(ListMetadata),
     EndOfList(EndOfListMetadata),
     Atom(AtomMetadata),
-    Unit,
+    Unit { commented_out: bool },
     LineComment,
     BlockComment,
     Error(ErrorMetadata),
@@ -61,7 +61,18 @@ enum DocumentToken {
 impl DocumentToken {
     fn is_data_node(&self) -> bool {
         match self {
-            DocumentToken::StartOfList(_) | DocumentToken::Atom(_) | DocumentToken::Unit => true,
+            DocumentToken::StartOfList(_) | DocumentToken::Atom(_) | DocumentToken::Unit { .. } => {
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn is_commented_out(&self) -> bool {
+        match self {
+            DocumentToken::StartOfList(ListMetadata { commented_out, .. })
+            | DocumentToken::Atom(AtomMetadata { commented_out, .. })
+            | DocumentToken::Unit { commented_out } => *commented_out,
             _ => false,
         }
     }
@@ -89,7 +100,7 @@ impl DocumentToken {
     fn list_kind(&self) -> Option<ListKind> {
         match self {
             DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => Some(*list_kind),
-            DocumentToken::Unit => Some(ListKind::Unit),
+            DocumentToken::Unit { .. } => Some(ListKind::Unit),
             _ => None,
         }
     }
@@ -240,6 +251,8 @@ enum ListKind {
     /// A list of length two where the first element is an atom of kind `Date` and the
     /// second is an atom of kind `Time`.
     DateTime,
+    /// A list of exactly length 1, with no comments.
+    Singleton,
     /// Unit; a list with data length 0
     Unit,
     /// Anything else.
@@ -260,7 +273,10 @@ impl SexpDocument {
             scratch_buffer_for_unescaping_atoms: vec![],
         }
     }
+}
 
+// Implementation of parsing logic
+impl SexpDocument {
     // Creates a new `DocumentNode` for the given token, and updates all the bookkeeping
     // appropriately:
     // - On parent node (or document itself if top-level node):
@@ -296,7 +312,7 @@ impl SexpDocument {
                 prev_sibling = self.last_top_level_node_index;
                 self.last_top_level_node_index = Some(new_node_index);
 
-                data_index_in_parent = if token.is_data_node() {
+                data_index_in_parent = if token.is_data_node() && !token.is_commented_out() {
                     let index = self.num_top_level_data_nodes;
                     self.num_top_level_data_nodes += 1;
                     Some(index)
@@ -313,7 +329,7 @@ impl SexpDocument {
                 prev_sibling = parent_metadata.last_child_index;
                 parent_metadata.last_child_index = Some(new_node_index);
 
-                data_index_in_parent = if token.is_data_node() {
+                data_index_in_parent = if token.is_data_node() && !token.is_commented_out() {
                     let index = parent_metadata.data_length;
                     parent_metadata.data_length += 1;
                     Some(index)
@@ -452,16 +468,13 @@ impl SexpDocument {
             });
         }
 
-        let list_end_index = NodeIndex(self.all_nodes.len());
+        let list_metadata = self.all_nodes[list_start_index.0].token.list_metadata();
 
-        let Some(last_child_index) = self.all_nodes[list_start_index.0]
-            .token
-            .list_metadata()
-            .last_child_index
-        else {
+        let Some(last_child_index) = list_metadata.last_child_index else {
             // If no data in previous list, replace it with `Unit`, instead of an actual list.
+            let commented_out = list_metadata.commented_out;
             let curr_node = &mut self.all_nodes[list_start_index.0];
-            curr_node.token = DocumentToken::Unit;
+            curr_node.token = DocumentToken::Unit { commented_out };
 
             let unit_start = self.pretty_printed.len() - 1;
             let _end_list_range = self.pretty_printed.end_list();
@@ -534,6 +547,7 @@ impl SexpDocument {
 
         let mut next_child_index = Some(NodeIndex(list_start_index.0 + 1));
         let mut list_length = 0;
+        let mut uncommented_list_length = 0;
 
         while let Some(node_index) = next_child_index {
             let node = &self.all_nodes[node_index.0];
@@ -544,16 +558,24 @@ impl SexpDocument {
                 continue;
             }
 
-            if list_length == 0 {
-                first_elem_atom_kind = node.token.atom_kind();
-                first_elem_list_kind = node.token.list_kind();
-            }
+            // Don't consider commented out sexps for classification, so we don't say
+            // something like "( #; Variant_record (x 1) (x 3))" is a variant record.
+            if !node.token.is_commented_out() {
+                if list_length == 0 {
+                    first_elem_atom_kind = node.token.atom_kind();
+                    first_elem_list_kind = node.token.list_kind();
+                }
 
-            if list_length == 1 {
-                second_elem_atom_kind = node.token.atom_kind();
+                if list_length == 1 {
+                    second_elem_atom_kind = node.token.atom_kind();
+                }
+
+                uncommented_list_length += 1;
             }
 
             if list_length > 0 {
+                // We don't ignore commented out tokens here under the assumption that
+                // users will only comment out valid parts of data structures.
                 all_elems_after_first_are_record_fields = all_elems_after_first_are_record_fields
                     && matches!(node.token.list_kind(), Some(ListKind::RecordField));
             }
@@ -575,12 +597,14 @@ impl SexpDocument {
             ListKind::Record
         } else if first_elem_is_constructor && all_elems_after_first_are_record_fields {
             ListKind::VariantRecord
-        } else if first_elem_is_constructor && list_length > 1 {
+        } else if first_elem_is_constructor && uncommented_list_length > 1 {
             ListKind::VariantTuple
         } else if first_two_elems_are_date_time && list_length == 2 && !list_contains_non_data {
             ListKind::DateTime
-        } else if first_elem_is_record_key && list_length == 2 {
+        } else if first_elem_is_record_key && list_length == 2 && uncommented_list_length == 2 {
             ListKind::RecordField
+        } else if list_length == 1 && !list_contains_non_data {
+            ListKind::Singleton
         } else if list_length == 0 {
             ListKind::Unit
         } else {
@@ -667,6 +691,334 @@ impl SexpDocument {
     }
 }
 
+struct Formatter<'a> {
+    doc: &'a SexpDocument,
+    lines: Vec<(NodeIndex, NodeIndex, usize)>,
+    list_contents_indentation: Vec<usize>,
+    current_index: NodeIndex,
+    end_index_incl: NodeIndex,
+}
+
+impl<'a> Formatter<'a> {
+    fn new(doc: &'a SexpDocument, node_index: NodeIndex) -> Formatter {
+        let end_index_incl = match &doc.all_nodes[node_index.0].token {
+            DocumentToken::StartOfList(ListMetadata { list_end_index, .. }) => {
+                list_end_index.unwrap()
+            }
+            _ => node_index,
+        };
+
+        Formatter {
+            doc,
+            lines: vec![],
+            list_contents_indentation: vec![],
+            current_index: node_index,
+            end_index_incl,
+        }
+    }
+
+    fn current_indentation(&self) -> usize {
+        self.list_contents_indentation
+            .last()
+            .map(|x| *x)
+            .unwrap_or(0)
+    }
+
+    fn increase_current_indendation(&mut self, by: usize) {
+        *self.list_contents_indentation.last_mut().unwrap() += by;
+    }
+
+    fn incr_current_index(&mut self) {
+        self.current_index = NodeIndex(self.current_index.0 + 1);
+    }
+
+    fn consume_closing_parens(&mut self) {
+        while self.current_index.0 <= self.end_index_incl.0 {
+            if !matches!(
+                &self.doc.all_nodes[self.current_index.0].token,
+                DocumentToken::EndOfList(_),
+            ) {
+                break;
+            }
+            let popped_indentation = self.list_contents_indentation.pop();
+            assert!(popped_indentation.is_some());
+            self.incr_current_index();
+        }
+    }
+
+    fn current_token_is_data(&self) -> bool {
+        self.doc.all_nodes[self.current_index.0]
+            .token
+            .is_data_node()
+    }
+
+    fn current_token_is_atom(&self) -> bool {
+        match &self.doc.all_nodes[self.current_index.0].token {
+            DocumentToken::Atom(_) => true,
+            _ => false,
+        }
+    }
+
+    fn current_token_is_start_of_singleton(&self) -> bool {
+        match &self.doc.all_nodes[self.current_index.0].token {
+            DocumentToken::StartOfList(ListMetadata {
+                list_kind: ListKind::Singleton,
+                ..
+            }) => true,
+            _ => false,
+        }
+    }
+
+    fn push_line(&mut self, start_index: NodeIndex, indentation: usize) {
+        let end_index = NodeIndex(self.current_index.0 - 1);
+        self.lines.push((start_index, end_index, indentation));
+    }
+
+    fn layout_list(&mut self, list_metadata: &ListMetadata) {
+        let ListMetadata {
+            list_kind,
+            commented_out,
+            ..
+        } = list_metadata;
+
+        let line_start_index = self.current_index;
+        self.incr_current_index(); // StartOfList
+
+        let list_indentation = self.current_indentation();
+        let elem_indentation = if *commented_out {
+            list_indentation + 4
+        } else {
+            list_indentation + 1
+        };
+        self.list_contents_indentation.push(elem_indentation);
+
+        match list_kind {
+            ListKind::Plain | ListKind::Unit => {}
+            ListKind::Singleton => {}
+            ListKind::Unit => {}
+            ListKind::Record => {}
+            ListKind::RecordField => {
+                // We know the key will be the first non-comment token (and there won't be any
+                // commented out sexps before it). If there are comments before the key, we'll
+                // put those at no indentation, then we'll put key at no indentation. If there's
+                // nothing in between the key and the value, we'll maybe put just the "start" of
+                // the value on the same line as the key, if they are on separate lines, we'll
+                // layout the value like normal.
+                let mut key_line_start_index = line_start_index;
+                let mut key_line_indentation = list_indentation;
+
+                if !self.current_token_is_atom() {
+                    // Push first non-key at the list indentation level.
+                    self.incr_current_index(); // First comment
+                    self.push_line(line_start_index, list_indentation);
+
+                    // The key will be indented like a regular element.
+                    key_line_indentation = elem_indentation;
+
+                    // Layout additional non-keys at the elem level, one at a time.
+                    while !self.current_token_is_atom() {
+                        let comment_line_index = self.current_index;
+                        self.incr_current_index(); // Subsequent comment
+                        self.push_line(comment_line_index, elem_indentation);
+                    }
+
+                    key_line_start_index = self.current_index;
+                }
+
+                self.incr_current_index(); // key
+
+                if !self.current_token_is_data() {
+                    // The key is on its own line, because we have comments afterwards.
+                    // We'll lay those out separately, indented two spaces relative to the key.
+                    // (Two spaces, rather than the normal 1, to emphasize that it doesn't
+                    // represent a normal container.)
+                    self.push_line(key_line_start_index, key_line_indentation);
+                    self.increase_current_indendation(2);
+                } else {
+                    // The value is on the same line as the key. We'll just push the "start" of it.
+
+                    // Singletons coalesce
+                    while self.current_token_is_start_of_singleton() {
+                        self.incr_current_index(); // StartOfList
+
+                        // TODO: Does it matter what I put here? I think only if it goes:
+                        // <comment or error> EndOfList+ CorrespondingEndOfList <comment or error>
+                        // We'll just do this for now.
+                        self.list_contents_indentation.push(elem_indentation);
+                    }
+
+                    match &self.doc.all_nodes[self.current_index.0].token {
+                        DocumentToken::Atom(_) | DocumentToken::Unit { .. } => {
+                            self.incr_current_index(); // Atom or unit
+                            self.consume_closing_parens();
+                            self.push_line(key_line_start_index, key_line_indentation);
+                        }
+                        DocumentToken::StartOfList(list_metadata) => {
+                            match list_metadata.list_kind {
+                                // For regular lists and records, we'll just put the opening paren
+                                // on this line, and then indent the elements appropriately.
+                                // Technically a RecordField that's not inside a Record is meaningless,
+                                // but we won't try to do something like: ((key ((key2 nested_value))).
+                                // We'll just do:
+                                // ((key (
+                                //    key2
+                                //    nested_value)))
+                                ListKind::Plain
+                                | ListKind::Record
+                                | ListKind::Unit
+                                | ListKind::RecordField => {
+                                    self.incr_current_index(); // StartOfList
+
+                                    // TODO: What to put here???
+                                    self.list_contents_indentation.push(elem_indentation);
+
+                                    self.push_line(key_line_start_index, key_line_indentation);
+                                    // Indent elems by 1.
+                                    self.increase_current_indendation(1);
+                                }
+                                ListKind::VariantRecord | ListKind::VariantTuple => {
+                                    // Variants are tricky. By default, we just want to put the
+                                    // start of list and the Constructor on the same line. If
+                                    // there are comments between them we want to do...
+                                    //
+                                    // (foo (Variant
+                                    //   (a 1)
+                                    //   (b 2)))
+                                    //
+                                    // (foo (
+                                    //    ; why
+                                    //    Variant
+                                    //     (a 1)
+                                    self.incr_current_index(); // StartOfList
+
+                                    if self.current_token_is_atom() {
+                                        // Indent elems by 1 more than the key.
+                                        self.list_contents_indentation.push(elem_indentation + 1);
+
+                                        self.incr_current_index(); // Constructor
+                                        self.push_line(key_line_start_index, key_line_indentation);
+                                    } else {
+                                        // Line for key and opening paren
+                                        self.push_line(key_line_start_index, key_line_indentation);
+
+                                        while !self.current_token_is_atom() {
+                                            let comment_index = self.current_index;
+                                            self.incr_current_index();
+                                            self.push_line(comment_index, elem_indentation + 2)
+                                        }
+
+                                        // Push the constructor line
+                                        let constructor_index = self.current_index;
+                                        self.incr_current_index(); // Constructor
+                                        self.push_line(constructor_index, elem_indentation + 2);
+                                        self.list_contents_indentation.push(elem_indentation + 3);
+                                    }
+                                }
+                                // We treat this like an atom, and put it on the same line
+                                ListKind::DateTime => {
+                                    self.incr_current_index(); // StartOfList
+
+                                    // Value doesn't matter; we're about to pop it.
+                                    self.list_contents_indentation.push(0);
+
+                                    self.incr_current_index(); // Date
+                                    self.incr_current_index(); // Time
+                                    self.consume_closing_parens();
+                                    self.push_line(key_line_start_index, key_line_indentation);
+                                }
+                                ListKind::Singleton => {
+                                    panic!("We should have just skipped over all the singletons")
+                                }
+                            }
+                        }
+                        DocumentToken::EndOfList(_)
+                        | DocumentToken::BlockComment
+                        | DocumentToken::LineComment
+                        | DocumentToken::Error(_) => panic!("current token must be a data node"),
+                    }
+                }
+            }
+            ListKind::VariantRecord | ListKind::VariantTuple => {
+                // We know the constuctor will be the first non-comment token (and there won't be
+                // any commented out sexps before it). If there are any comments, before the
+                // constructor, we'll put them at no indentation, then everything after the
+                // constructor will have an extra level of indentation.
+                //
+                // (Variant
+                //   (key value)
+                //   elem)
+                //
+                // (; questionably located comment
+                //  #| mystery block comment |#
+                //  Constructor
+                //   value
+                let mut constructor_line_start_index = line_start_index;
+                let mut constructor_line_indentation = list_indentation;
+
+                if !self.current_token_is_atom() {
+                    // Push first non-constructor at the list indentation level.
+                    self.incr_current_index(); // First comment
+                    self.push_line(line_start_index, list_indentation);
+
+                    // The constructor will be indented like a regular element.
+                    constructor_line_indentation = elem_indentation;
+
+                    // Layout additional non-constructors at the elem level, one at
+                    // a time.
+                    while !self.current_token_is_atom() {
+                        let comment_line_index = self.current_index;
+                        self.incr_current_index(); // Subsequent comments
+                        self.push_line(comment_line_index, elem_indentation);
+                    }
+
+                    constructor_line_start_index = self.current_index;
+                }
+
+                // Finally layout the constructor:
+                self.incr_current_index(); // Constructor
+                self.push_line(constructor_line_start_index, constructor_line_indentation);
+
+                // And indent variant elements an extra space
+                self.increase_current_indendation(1);
+            }
+            ListKind::DateTime => {
+                // DateTimes can't have any non-data in them, so we just advance past everything
+                // and put it on the same line.
+                self.incr_current_index(); // Date
+                self.incr_current_index(); // Time
+                self.consume_closing_parens();
+                self.push_line(line_start_index, list_indentation);
+            }
+        }
+    }
+
+    fn layout(&mut self) {
+        while self.current_index.0 <= self.end_index_incl.0 {
+            let line_start_index = self.current_index;
+            let starting_indentation = self.current_indentation();
+
+            match &self.doc.all_nodes[self.current_index.0].token {
+                DocumentToken::EndOfList(_) => {
+                    self.consume_closing_parens();
+                    self.push_line(line_start_index, self.current_indentation());
+                }
+                DocumentToken::Atom(_)
+                | DocumentToken::Unit { .. }
+                | DocumentToken::BlockComment => {
+                    self.incr_current_index();
+                    self.consume_closing_parens();
+                    self.push_line(line_start_index, starting_indentation);
+                }
+                DocumentToken::LineComment | DocumentToken::Error(_) => {
+                    self.incr_current_index();
+                    self.push_line(line_start_index, starting_indentation);
+                }
+                DocumentToken::StartOfList(list_metadata) => self.layout_list(list_metadata),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -675,7 +1027,7 @@ mod tests {
 
     use std::fmt::Write;
 
-    use insta::{assert_debug_snapshot, assert_snapshot};
+    use insta::assert_snapshot;
     use ocaml_sexplib::input::{Input, SliceInput};
     use ocaml_sexplib::tokenizer::RawTokenizer;
 
@@ -723,7 +1075,6 @@ mod tests {
                 let _ = write!(output, "{:<9}", "");
             }
 
-            // Maybe print out parent/prev/next sibling node indexes? ←→
             let DocumentNode {
                 parent_index,
                 prev_sibling,
@@ -744,7 +1095,12 @@ mod tests {
                 output,
                 "^{:>2}[{:<2}] ",
                 fmt_i(parent_index.map(|i| i.0)),
-                fmt_i(*data_index_in_parent),
+                if token.is_commented_out() {
+                    assert!(data_index_in_parent.is_none());
+                    "#;".to_string()
+                } else {
+                    fmt_i(*data_index_in_parent)
+                },
             );
             let _ = write!(output, "{:>2}> ", fmt_i(next_sibling.map(|i| i.0)),);
 
@@ -758,7 +1114,7 @@ mod tests {
                 DocumentToken::Atom(AtomMetadata { atom_kind, .. }) => {
                     format!("Atom({:?})", atom_kind)
                 }
-                DocumentToken::Unit => format!("Unit"),
+                DocumentToken::Unit { .. } => format!("Unit"),
                 DocumentToken::LineComment => format!("LineComment"),
                 DocumentToken::BlockComment => format!("BlockComment"),
                 DocumentToken::Error(ErrorMetadata { message }) => {
@@ -887,7 +1243,7 @@ mod tests {
         Raw document:
         (1 #;)
 
-        0   0..1     <-- ^--[0 ]  2> StartOfList(Plain)       : "("
+        0   0..1     <-- ^--[0 ]  2> StartOfList(Singleton)   : "("
         1   1..2     <-- ^ 0[0 ] --> Atom(Number)             : "1"
         2            <0  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
         3   5..6     <-- ^--[--]  2> EndOfList                : ")"
@@ -915,5 +1271,130 @@ mod tests {
         5   5..5     <-- ^ 0[--] --> EndOfList                : ""
         6   5..5     <-- ^--[--] --> EndOfList                : ""
         "#);
+    }
+
+    fn layout(bytes: &'static [u8]) -> String {
+        let mut doc = SexpDocument::new();
+        let mut tokenizer = tokenizer(bytes);
+        feed_until_stop(&mut doc, &mut tokenizer);
+        doc.append_eof();
+
+        let mut formatter = Formatter::new(&mut doc, NodeIndex(0));
+        formatter.layout();
+
+        let mut output = String::new();
+
+        for (start_node_index, end_node_index, indentation) in formatter.lines.iter() {
+            let start_range = doc.all_nodes[start_node_index.0].data_range.clone();
+            let end_range = doc.all_nodes[end_node_index.0].data_range.clone();
+
+            let _ = write!(
+                output,
+                "{:>2}..={:<2} : ",
+                start_node_index.0, end_node_index.0,
+            );
+
+            let _ = write!(output, "{: <indentation$}", "");
+
+            let _ = match (start_range, end_range) {
+                (Some(start), Some(end)) => {
+                    writeln!(
+                        output,
+                        "{}",
+                        doc.pretty_printed[start.start..end.end].as_bstr()
+                    )
+                }
+                _ => writeln!(output, "<no range>"),
+            };
+        }
+
+        output
+    }
+
+    #[test]
+    fn layout_variants() {
+        let output = layout(b"(Constructor 1 2 () (Nested a b c))");
+        assert_snapshot!(&output, @r"
+        0..=1  : (Constructor
+        2..=2  :   1
+        3..=3  :   2
+        4..=4  :   ()
+        5..=6  :   (Nested
+        7..=7  :     a
+        8..=8  :     b
+        9..=11 :     c))
+        ");
+
+        let output = layout(
+            br"(#| Why is there a comment here? |# Constructor 1 2 () (#| Nobody |# ; knows
+               Nested a b c))",
+        );
+        assert_snapshot!(&output, @r"
+         0..=1  : (#| Why is there a comment here? |#
+         2..=2  :  Constructor
+         3..=3  :   1
+         4..=4  :   2
+         5..=5  :   ()
+         6..=7  :   (#| Nobody |#
+         8..=8  :    ; knows
+         9..=9  :    Nested
+        10..=10 :     a
+        11..=11 :     b
+        12..=14 :     c))
+        ");
+    }
+
+    #[test]
+    fn layout_record_fields() {
+        assert_snapshot!(layout(b"(key simple_value)"), @" 0..=3  : (key simple_value)");
+        assert_snapshot!(layout(b"(key (singleton_value))"), @" 0..=5  : (key (singleton_value))");
+        assert_snapshot!(layout(b"(key ((nested_singleton_value)))"), @" 0..=7  : (key ((nested_singleton_value)))");
+        assert_snapshot!(layout(b"(key ((very_nested_singleton_value)))"), @" 0..=7  : (key ((very_nested_singleton_value)))");
+
+        // DateTimes are treated like atoms
+        assert_snapshot!(layout(b"(key (2025-01-13 11:28:37.000000000))"), @" 0..=6  : (key (2025-01-13 11:28:37.000000000))");
+
+        assert_snapshot!(layout(b"(key (Variant value))"), @r"
+        0..=3  : (key (Variant
+        4..=6  :   value))
+        ");
+        assert_snapshot!(layout(b"(key ((Variant_in_singleton (a 1)(b 2))))"), @r"
+        0..=4  : (key ((Variant_in_singleton
+        5..=8  :   (a 1)
+        9..=15 :   (b 2))))
+        ");
+        assert_snapshot!(layout(b"(; comment before key\nkey value)"), @r"
+        0..=1  : (; comment before key
+        2..=4  :  key value)
+        ");
+        assert_snapshot!(layout(b"(key ; comment before value\nvalue)"), @r"
+        0..=1  : (key
+        2..=2  :    ; comment before value
+        3..=4  :    value)
+        ");
+        assert_snapshot!(layout(b"(key value ; comment after value\n)"), @r"
+        0..=2  : (key value
+        3..=3  :  ; comment after value
+        4..=4  : )
+        ");
+        assert_snapshot!(layout(b"(key (Variant 1) ; comment after value\n)"), @r"
+        0..=3  : (key (Variant
+        4..=5  :   1)
+        6..=6  :  ; comment after value
+        7..=7  : )
+        ");
+        assert_snapshot!(layout(b"(key ; comment before variant value\n(Variant value))"), @r"
+        0..=1  : (key
+        2..=2  :    ; comment before variant value
+        3..=4  :    (Variant
+        5..=7  :      value))
+        ");
+        assert_snapshot!(layout(b"(key (; comment breaking up constructor\nConstructor (a 1) (b 2)))"), @r"
+        0..=2  : (key (
+        3..=3  :    ; comment breaking up constructor
+        4..=4  :    Constructor
+        5..=8  :     (a 1)
+        9..=14 :     (b 2)))
+        ");
     }
 }
