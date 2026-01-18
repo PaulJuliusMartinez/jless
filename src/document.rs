@@ -124,10 +124,14 @@ pub trait Document {
 
     // Actions
 
-    fn move_cursor_down(&self, lines: usize, cursor: &Self::Cursor) -> Option<Self::Cursor>;
-    fn move_cursor_up(&self, lines: usize, cursor: &Self::Cursor) -> Option<Self::Cursor>;
-    fn expand_or_move_cursor_right_or_down(&self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
-    fn collapse_or_move_cursor_left_or_up(&self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
+    fn move_cursor_down(&mut self, lines: usize, cursor: &Self::Cursor) -> Option<Self::Cursor>;
+    fn move_cursor_up(&mut self, lines: usize, cursor: &Self::Cursor) -> Option<Self::Cursor>;
+    fn expand_or_move_cursor_right_or_down(
+        &mut self,
+        cursor: &Self::Cursor,
+    ) -> Option<Self::Cursor>;
+    fn collapse_or_move_cursor_left_or_up(&mut self, cursor: &Self::Cursor)
+        -> Option<Self::Cursor>;
 
     // Soon: Uncomment this.
     // #[cfg(test)]

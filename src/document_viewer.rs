@@ -222,25 +222,27 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     pub fn move_cursor_down(&mut self, lines: usize) {
-        self.update_so_new_cursor_is_visible(self.doc.move_cursor_down(lines, &self.current_focus));
+        let new_cursor = self.doc.move_cursor_down(lines, &self.current_focus);
+        self.update_so_new_cursor_is_visible(new_cursor);
     }
 
     pub fn move_cursor_up(&mut self, lines: usize) {
-        self.update_so_new_cursor_is_visible(self.doc.move_cursor_up(lines, &self.current_focus));
+        let new_cursor = self.doc.move_cursor_up(lines, &self.current_focus);
+        self.update_so_new_cursor_is_visible(new_cursor);
     }
 
     pub fn expand_or_move_cursor_right_or_down(&mut self) {
-        self.update_so_new_cursor_is_visible(
-            self.doc
-                .expand_or_move_cursor_right_or_down(&self.current_focus),
-        );
+        let new_cursor = self
+            .doc
+            .expand_or_move_cursor_right_or_down(&self.current_focus);
+        self.update_so_new_cursor_is_visible(new_cursor);
     }
 
     pub fn collapse_or_move_cursor_left_or_up(&mut self) {
-        self.update_so_new_cursor_is_visible(
-            self.doc
-                .collapse_or_move_cursor_left_or_up(&self.current_focus),
-        );
+        let new_cursor = self
+            .doc
+            .collapse_or_move_cursor_left_or_up(&self.current_focus);
+        self.update_so_new_cursor_is_visible(new_cursor);
     }
 
     pub fn focus_top(&mut self) {

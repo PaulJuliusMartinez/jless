@@ -432,7 +432,7 @@ impl Document for TextDocument {
 
     // Actions
 
-    fn move_cursor_down(&self, lines: usize, cursor: &Cursor) -> Option<Cursor> {
+    fn move_cursor_down(&mut self, lines: usize, cursor: &Cursor) -> Option<Cursor> {
         let max_line = self.num_lines() - 1;
         if *cursor == max_line {
             None
@@ -441,7 +441,7 @@ impl Document for TextDocument {
         }
     }
 
-    fn move_cursor_up(&self, lines: usize, cursor: &Cursor) -> Option<Cursor> {
+    fn move_cursor_up(&mut self, lines: usize, cursor: &Cursor) -> Option<Cursor> {
         if *cursor == 0 {
             None
         } else {
@@ -449,11 +449,11 @@ impl Document for TextDocument {
         }
     }
 
-    fn expand_or_move_cursor_right_or_down(&self, _cursor: &Cursor) -> Option<Cursor> {
+    fn expand_or_move_cursor_right_or_down(&mut self, _cursor: &Cursor) -> Option<Cursor> {
         None
     }
 
-    fn collapse_or_move_cursor_left_or_up(&self, _cursor: &Cursor) -> Option<Cursor> {
+    fn collapse_or_move_cursor_left_or_up(&mut self, _cursor: &Cursor) -> Option<Cursor> {
         None
     }
 

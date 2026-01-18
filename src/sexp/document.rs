@@ -212,7 +212,7 @@ impl Document for SexpDocument {
         logical_line.start_index
     }
 
-    fn move_cursor_down(&self, lines: usize, cursor: &NodeIndex) -> Option<NodeIndex> {
+    fn move_cursor_down(&mut self, lines: usize, cursor: &NodeIndex) -> Option<NodeIndex> {
         let mut logical_line = self.logical_line_of_node_index(*cursor).unwrap();
         let mut lines_moved = 0;
 
@@ -232,7 +232,7 @@ impl Document for SexpDocument {
         }
     }
 
-    fn move_cursor_up(&self, lines: usize, cursor: &NodeIndex) -> Option<NodeIndex> {
+    fn move_cursor_up(&mut self, lines: usize, cursor: &NodeIndex) -> Option<NodeIndex> {
         let mut logical_line = self.logical_line_of_node_index(*cursor).unwrap();
         let mut lines_moved = 0;
 
@@ -252,11 +252,11 @@ impl Document for SexpDocument {
         }
     }
 
-    fn expand_or_move_cursor_right_or_down(&self, _cursor: &NodeIndex) -> Option<NodeIndex> {
+    fn expand_or_move_cursor_right_or_down(&mut self, _cursor: &NodeIndex) -> Option<NodeIndex> {
         None
     }
 
-    fn collapse_or_move_cursor_left_or_up(&self, _cursor: &NodeIndex) -> Option<NodeIndex> {
+    fn collapse_or_move_cursor_left_or_up(&mut self, _cursor: &NodeIndex) -> Option<NodeIndex> {
         None
     }
 
