@@ -36,6 +36,7 @@ pub struct DocCore {
     // Pretty-printed data
     pub pretty_printed: PrettyPrinted,
     data_len_of_completed_sexps: usize,
+    pub node_index_of_last_completed_top_level_sexp: Option<NodeIndex>,
 
     // Structural data about the document
     all_nodes: Vec<DocumentNode>,
@@ -286,6 +287,7 @@ impl DocCore {
         DocCore {
             pretty_printed: PrettyPrinted::new(),
             data_len_of_completed_sexps: 0,
+            node_index_of_last_completed_top_level_sexp: None,
             all_nodes: vec![],
             last_top_level_node_index: None,
             num_top_level_data_nodes: 0,
@@ -442,6 +444,7 @@ impl DocCore {
         if self.starts_of_unterminated_lists.is_empty() && self.num_pending_sexp_comments == 0 {
             self.pretty_printed.complete_top_level_node();
             self.data_len_of_completed_sexps = self.pretty_printed.len();
+            self.node_index_of_last_completed_top_level_sexp = self.last_top_level_node_index
         }
     }
 

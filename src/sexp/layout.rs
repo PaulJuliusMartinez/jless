@@ -1,9 +1,10 @@
 use crate::sexp::core::{AtomKind, DocCore, DocumentToken, ListKind, ListMetadata, NodeIndex};
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LogicalLine {
-    indentation: usize,
-    start_index: NodeIndex,
-    end_index: NodeIndex,
+    pub start_index: NodeIndex,
+    pub end_index: NodeIndex,
+    pub indentation: usize,
 }
 
 pub fn layout_fully_expanded_node(doc: &DocCore, node_index: NodeIndex) -> Vec<LogicalLine> {

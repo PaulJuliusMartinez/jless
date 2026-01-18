@@ -228,6 +228,7 @@ impl<D: Document> App<D> {
                 let mut row = 1;
                 for screen_line in viewer.viewport_lines() {
                     let _ = terminal.position_cursor(1, row);
+                    let _ = terminal.clear_line();
                     let _ = terminal.reset_style();
                     match screen_line {
                         None => {
@@ -242,7 +243,7 @@ impl<D: Document> App<D> {
                             };
 
                             let line = viewer.doc.debug_text_content(&screen_line);
-                            let _ = match std::str::from_utf8(line) {
+                            let _ = match std::str::from_utf8(&line) {
                                 Ok(s) => write!(terminal, "{s}"),
                                 Err(_) => write!(terminal, "line is not valid UTF-8"),
                             };

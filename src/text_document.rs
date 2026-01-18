@@ -451,8 +451,8 @@ impl Document for TextDocument {
 
     // Soon: Uncomment this.
     // #[cfg(test)]
-    fn debug_text_content(&self, screen_line: &Self::ScreenLine) -> &[u8] {
-        self.screen_line_contents(screen_line)
+    fn debug_text_content(&self, screen_line: &Self::ScreenLine) -> Vec<u8> {
+        self.screen_line_contents(screen_line).to_vec()
     }
 }
 

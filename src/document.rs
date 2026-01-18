@@ -129,7 +129,7 @@ pub trait Document {
 
     // Soon: Uncomment this.
     // #[cfg(test)]
-    fn debug_text_content(&self, screen_line: &Self::ScreenLine) -> &[u8];
+    fn debug_text_content(&self, screen_line: &Self::ScreenLine) -> Vec<u8>;
 }
 
 /// Representation of a `Cursor` in "Screen" space, as a start and end `ScreenLine`, along with how

@@ -103,8 +103,8 @@ fn main() {
         );
 
         let dimensions = dimensions::current();
-        let text_document = text_document::TextDocument::new(dimensions.width);
-        let mut app = App::new(text_document, editor, dimensions, stdout);
+        let sexp_document = sexp::document::SexpDocument::new(dimensions.width);
+        let mut app = App::new(sexp_document, editor, dimensions, stdout);
 
         loop {
             let app_input_event = app_input_events_receiver.recv();
