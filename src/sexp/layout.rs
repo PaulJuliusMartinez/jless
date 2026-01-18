@@ -1,6 +1,4 @@
-use crate::sexp::document::{
-    AtomKind, DocumentToken, ListKind, ListMetadata, NodeIndex, SexpDocument,
-};
+use crate::sexp::core::{AtomKind, DocCore, DocumentToken, ListKind, ListMetadata, NodeIndex};
 
 pub struct LogicalLine {
     indentation: usize,
@@ -8,14 +6,14 @@ pub struct LogicalLine {
     end_index: NodeIndex,
 }
 
-pub fn layout_fully_expanded_node(doc: &SexpDocument, node_index: NodeIndex) -> Vec<LogicalLine> {
+pub fn layout_fully_expanded_node(doc: &DocCore, node_index: NodeIndex) -> Vec<LogicalLine> {
     let mut layout_engine = LayoutEngine::new(doc, node_index);
     layout_engine.run();
     layout_engine.lines
 }
 
 struct LayoutEngine<'a> {
-    doc: &'a SexpDocument,
+    doc: &'a DocCore,
     lines: Vec<LogicalLine>,
     list_contents_indentation: Vec<usize>,
     next_index: NodeIndex,
@@ -73,7 +71,7 @@ impl SemanticTokenKind {
 }
 
 impl<'a> LayoutEngine<'a> {
-    fn new(doc: &'a SexpDocument, node_index: NodeIndex) -> LayoutEngine {
+    fn new(doc: &'a DocCore, node_index: NodeIndex) -> LayoutEngine {
         let end_index_incl = match doc.token(node_index) {
             DocumentToken::StartOfList(list_metadata) => list_metadata.end_index().unwrap(),
             _ => node_index,
@@ -407,12 +405,12 @@ mod tests {
 
     use std::fmt::Write;
 
-    use crate::sexp::document::{NodeIndex, SexpDocument};
+    use crate::sexp::core::{DocCore, NodeIndex};
 
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
-    fn show_logical_lines(doc: &SexpDocument, lines: Vec<LogicalLine>) -> String {
+    fn show_logical_lines(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
         let mut output = String::new();
 
         for LogicalLine {
@@ -444,7 +442,7 @@ mod tests {
     }
 
     fn layout(bytes: &'static [u8]) -> String {
-        let doc = SexpDocument::from_bytes(bytes);
+        let doc = DocCore::from_bytes(bytes);
         let logical_lines = layout_fully_expanded_node(&doc, NodeIndex(0));
         show_logical_lines(&doc, logical_lines)
     }

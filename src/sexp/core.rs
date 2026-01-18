@@ -32,7 +32,7 @@ impl std::ops::Sub<usize> for NodeIndex {
 
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Debug)]
-pub struct SexpDocument {
+pub struct DocCore {
     // Pretty-printed data
     pub pretty_printed: PrettyPrinted,
     data_len_of_completed_sexps: usize,
@@ -281,9 +281,9 @@ pub enum ListKind {
     Plain,
 }
 
-impl SexpDocument {
-    pub fn new() -> SexpDocument {
-        SexpDocument {
+impl DocCore {
+    pub fn new() -> DocCore {
+        DocCore {
             pretty_printed: PrettyPrinted::new(),
             data_len_of_completed_sexps: 0,
             all_nodes: vec![],
@@ -301,7 +301,7 @@ impl SexpDocument {
         use ocaml_sexplib::input::SliceInput;
         use ocaml_sexplib::tokenizer::RawTokenizer;
 
-        let mut doc = SexpDocument::new();
+        let mut doc = DocCore::new();
         let mut tokenizer = RawTokenizer::new(SliceInput::new(bytes));
         while let Some(token) = tokenizer.next_raw_token().unwrap() {
             doc.append_raw_token(token);
@@ -763,7 +763,7 @@ mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
-    fn dump_doc(doc: &SexpDocument) -> String {
+    fn dump_doc(doc: &DocCore) -> String {
         let mut output = String::new();
 
         let _ = writeln!(output, "Raw document:");
@@ -840,7 +840,7 @@ mod tests {
     }
 
     fn dump(bytes: &'static [u8]) -> String {
-        let doc = SexpDocument::from_bytes(bytes);
+        let doc = DocCore::from_bytes(bytes);
         dump_doc(&doc)
     }
 

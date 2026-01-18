@@ -1,3 +1,3 @@
-pub mod document;
+pub mod core;
 mod layout;
 mod pretty;
