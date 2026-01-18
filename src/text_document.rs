@@ -449,6 +449,14 @@ impl Document for TextDocument {
         }
     }
 
+    fn expand_or_move_cursor_right_or_down(&self, _cursor: &Cursor) -> Option<Cursor> {
+        None
+    }
+
+    fn collapse_or_move_cursor_left_or_up(&self, _cursor: &Cursor) -> Option<Cursor> {
+        None
+    }
+
     // Soon: Uncomment this.
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &Self::ScreenLine) -> Vec<u8> {

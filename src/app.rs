@@ -94,8 +94,14 @@ impl<D: Document> App<D> {
                         let count_or_1 = count.unwrap_or(1);
 
                         let action = match key_event {
-                            Key::Char('j') => Some(Action::MoveCursorDown(count_or_1)),
-                            Key::Char('k') => Some(Action::MoveCursorUp(count_or_1)),
+                            Key::Down | Key::Char('j') => Some(Action::MoveCursorDown(count_or_1)),
+                            Key::Up | Key::Char('k') => Some(Action::MoveCursorUp(count_or_1)),
+                            Key::Right | Key::Char('l') => {
+                                Some(Action::ExpandOrMoveCursorRightOrDown)
+                            }
+                            Key::Left | Key::Char('h') => {
+                                Some(Action::CollapseOrMoveCursorLeftOrUp)
+                            }
                             Key::Char('g') => Some(Action::FocusTop),
                             Key::Char('G') => Some(Action::FocusBottom),
                             Key::Ctrl('e') => Some(Action::ScrollViewportDown(count_or_1)),

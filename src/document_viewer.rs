@@ -229,6 +229,20 @@ impl<D: Document> DocumentViewer<D> {
         self.update_so_new_cursor_is_visible(self.doc.move_cursor_up(lines, &self.current_focus));
     }
 
+    pub fn expand_or_move_cursor_right_or_down(&mut self) {
+        self.update_so_new_cursor_is_visible(
+            self.doc
+                .expand_or_move_cursor_right_or_down(&self.current_focus),
+        );
+    }
+
+    pub fn collapse_or_move_cursor_left_or_up(&mut self) {
+        self.update_so_new_cursor_is_visible(
+            self.doc
+                .collapse_or_move_cursor_left_or_up(&self.current_focus),
+        );
+    }
+
     pub fn focus_top(&mut self) {
         let (top_screen_line, cursor) = self
             .doc
@@ -988,6 +1002,8 @@ impl<D: Document> DocumentViewer<D> {
             Action::NoOp => (),
             Action::MoveCursorDown(n) => self.move_cursor_down(n),
             Action::MoveCursorUp(n) => self.move_cursor_up(n),
+            Action::ExpandOrMoveCursorRightOrDown => self.expand_or_move_cursor_right_or_down(),
+            Action::CollapseOrMoveCursorLeftOrUp => self.collapse_or_move_cursor_left_or_up(),
             Action::ScrollViewportDown(n) => self.scroll_viewport_down(n),
             Action::ScrollViewportUp(n) => self.scroll_viewport_up(n),
             Action::JumpDown(n) => self.jump_down(n),

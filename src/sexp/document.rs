@@ -252,6 +252,14 @@ impl Document for SexpDocument {
         }
     }
 
+    fn expand_or_move_cursor_right_or_down(&self, _cursor: &NodeIndex) -> Option<NodeIndex> {
+        None
+    }
+
+    fn collapse_or_move_cursor_left_or_up(&self, _cursor: &NodeIndex) -> Option<NodeIndex> {
+        None
+    }
+
     fn debug_text_content(&self, logical_line: &LogicalLine) -> Vec<u8> {
         use std::fmt::Write;
 
