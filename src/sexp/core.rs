@@ -114,6 +114,22 @@ impl DocumentToken {
         }
     }
 
+    pub fn list_end_index(&self) -> Option<NodeIndex> {
+        match self {
+            DocumentToken::StartOfList(ListMetadata { list_end_index, .. }) => *list_end_index,
+            _ => None,
+        }
+    }
+
+    pub fn list_start_index(&self) -> Option<NodeIndex> {
+        match self {
+            DocumentToken::EndOfList(EndOfListMetadata {
+                list_start_index, ..
+            }) => Some(*list_start_index),
+            _ => None,
+        }
+    }
+
     pub fn list_kind(&self) -> Option<ListKind> {
         match self {
             DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => Some(*list_kind),

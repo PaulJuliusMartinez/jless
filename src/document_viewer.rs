@@ -93,7 +93,7 @@ impl<D: Document> DocumentViewer<D> {
             current_focus: initial_cursor,
             dimensions,
             scrolloff_setting: scrolloff,
-            tailing_end_of_document: true,
+            tailing_end_of_document: false,
             jump_distance: None,
         }
     }

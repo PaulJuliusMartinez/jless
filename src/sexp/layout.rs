@@ -1,3 +1,5 @@
+use std::iter::DoubleEndedIterator;
+
 use crate::sexp::core::{AtomKind, DocCore, DocumentToken, ListKind, ListMetadata, NodeIndex};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -5,6 +7,12 @@ pub struct LogicalLine {
     pub start_index: NodeIndex,
     pub end_index: NodeIndex,
     pub indentation: usize,
+}
+
+impl LogicalLine {
+    pub fn node_indexes(&self) -> impl DoubleEndedIterator<Item = NodeIndex> {
+        ((self.start_index.0)..=(self.end_index.0)).map(NodeIndex)
+    }
 }
 
 pub fn layout_fully_expanded_node(doc: &DocCore, node_index: NodeIndex) -> Vec<LogicalLine> {
