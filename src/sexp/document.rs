@@ -338,10 +338,7 @@ impl SexpDocument {
         self.maybe_logical_line_of_node_index(logical_line.end_index + 1)
     }
 
-    fn prev_visible_logical_line(&self, logical_line: &LogicalLine) -> Option<LogicalLine> {
-        if logical_line.start_index == NodeIndex(0) {
-            return None;
-        }
+    fn first_visible_line_at_or_above(&self, logical_line: LogicalLine) -> LogicalLine {
         // Imagine we are on 'h' in the below sexp, and we want the previous logical line.
         // It may be easier to think about it if we explode each of the closing parens
         // on their own line:
@@ -370,9 +367,7 @@ impl SexpDocument {
         //  If none of the ends of containers in the prevous line are collapsed, then the previous
         //  visible line is really just the previous line.
 
-        let previous_logical_line = self.logical_line_of_node_index(logical_line.start_index - 1);
-
-        for end_node_index in previous_logical_line.node_indexes().rev() {
+        for end_node_index in logical_line.node_indexes().rev() {
             let Some(list_start_index) = self.core.token(end_node_index).list_start_index() else {
                 // Since all the closing parens go at the end, once we see a non-end of list,
                 // then we can stop checking.
@@ -381,11 +376,21 @@ impl SexpDocument {
 
             match self.collapsible_nodes.get(&list_start_index) {
                 None | Some(Expanded) => continue,
-                Some(Collapsed) => return Some(self.logical_line_of_node_index(list_start_index)),
+                Some(Collapsed) => return self.logical_line_of_node_index(list_start_index),
             }
         }
 
-        Some(previous_logical_line)
+        logical_line
+    }
+
+    fn prev_visible_logical_line(&self, logical_line: &LogicalLine) -> Option<LogicalLine> {
+        if logical_line.start_index == NodeIndex(0) {
+            return None;
+        }
+
+        let previous_logical_line = self.logical_line_of_node_index(logical_line.start_index - 1);
+
+        Some(self.first_visible_line_at_or_above(previous_logical_line))
     }
 
     // Very annoying that this can't be in the `impl Document` block...
@@ -503,14 +508,17 @@ impl Document for SexpDocument {
     fn bottom_screen_line_and_cursor(&self) -> Option<(Self::ScreenLine, Self::Cursor)> {
         match self.starts_of_logical_lines.last_key_value() {
             None => None,
-            Some((start_index, (end_index, indentation))) => Some((
-                LogicalLine {
+            Some((start_index, (end_index, indentation))) => {
+                let last_line = LogicalLine {
                     indentation: *indentation,
                     start_index: *start_index,
                     end_index: *end_index,
-                },
-                *start_index,
-            )),
+                };
+
+                let last_visible_line = self.first_visible_line_at_or_above(last_line);
+                let cursor = last_visible_line.start_index;
+                Some((last_visible_line, cursor))
+            }
         }
     }
 
@@ -1010,6 +1018,7 @@ mod tests {
         Up(usize),
         Right,
         Left,
+        FocusBottom,
     }
 
     use Action::*;
@@ -1025,6 +1034,9 @@ mod tests {
                 Up(lines) => self.move_cursor_up(lines, &current_cursor),
                 Right => self.expand_or_move_cursor_right_or_down(&current_cursor),
                 Left => self.collapse_or_move_cursor_left_or_up(&current_cursor),
+                FocusBottom => self
+                    .bottom_screen_line_and_cursor()
+                    .map(|(_, cursor)| cursor),
             }
         }
     }
@@ -1105,6 +1117,25 @@ mod tests {
         Up(1) => NodeIndex(1)
         Up(1) => NodeIndex(0)
         Up(1) => -
+        ");
+    }
+
+    #[test]
+    fn focus_buttom() {
+        let mut doc = new_doc(b"(1 2 3)");
+        assert_snapshot!(dump(&doc), @r"
+        0..=1  : (1
+        2..=2  :  2
+        3..=4  :  3)
+        ");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(0), vec![FocusBottom]);
+        assert_snapshot!(movements, @r"FocusBottom => NodeIndex(3)");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(0), vec![Left, FocusBottom]);
+        assert_snapshot!(movements, @r"
+        Left =>        NodeIndex(0) Collapsed(0)
+        FocusBottom => NodeIndex(0)
         ");
     }
 
