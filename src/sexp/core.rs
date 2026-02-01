@@ -298,6 +298,12 @@ pub enum ListKind {
     Plain,
 }
 
+impl ListKind {
+    pub fn is_variant(&self) -> bool {
+        matches!(self, ListKind::VariantRecord | ListKind::VariantTuple)
+    }
+}
+
 impl DocCore {
     pub fn new() -> DocCore {
         DocCore {

@@ -248,7 +248,9 @@ impl<D: Document> App<D> {
                                 let _ = terminal.set_inverted(true);
                             };
 
-                            let line = viewer.doc.debug_text_content(&screen_line);
+                            let line = viewer
+                                .doc
+                                .debug_text_content(&screen_line, &viewer.current_focus);
                             let _ = match std::str::from_utf8(&line) {
                                 Ok(s) => write!(terminal, "{s}"),
                                 Err(_) => write!(terminal, "line is not valid UTF-8"),

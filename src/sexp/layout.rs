@@ -13,6 +13,10 @@ impl LogicalLine {
     pub fn node_indexes(&self) -> impl DoubleEndedIterator<Item = NodeIndex> {
         ((self.start_index.0)..=(self.end_index.0)).map(NodeIndex)
     }
+
+    pub fn contains_node_index(&self, node_index: NodeIndex) -> bool {
+        self.start_index <= node_index && node_index <= self.end_index
+    }
 }
 
 pub fn layout_fully_expanded_node(doc: &DocCore, node_index: NodeIndex) -> Vec<LogicalLine> {
@@ -80,7 +84,7 @@ impl SemanticTokenKind {
 }
 
 impl<'a> LayoutEngine<'a> {
-    fn new(doc: &'a DocCore, node_index: NodeIndex) -> LayoutEngine {
+    fn new(doc: &'a DocCore, node_index: NodeIndex) -> LayoutEngine<'a> {
         let end_index_incl = match doc.token(node_index) {
             DocumentToken::StartOfList(list_metadata) => list_metadata.end_index().unwrap(),
             _ => node_index,
@@ -409,7 +413,7 @@ impl<'a> LayoutEngine<'a> {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     use std::fmt::Write;
@@ -419,7 +423,7 @@ mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
-    fn show_logical_lines(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
+    pub fn show_logical_lines(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
         let mut output = String::new();
 
         for LogicalLine {
@@ -552,6 +556,14 @@ mod tests {
         4..=4  :    Constructor
         5..=8  :     (a 1)
         9..=14 :     (b 2)))
+        ");
+        assert_snapshot!(layout(b"(key ; comment before\n(; and after paren\nConstructor (a 1) (b 2)))"), @r"
+         0..=1  : (key
+         2..=2  :    ; comment before
+         3..=4  :    (; and after paren
+         5..=5  :     Constructor
+         6..=9  :      (a 1)
+        10..=15 :      (b 2)))
         ");
     }
 

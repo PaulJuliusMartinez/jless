@@ -1206,7 +1206,9 @@ mod test {
                     if is_focused { '*' } else { ' ' },
                     line_number,
                     if wraps_from_prev_line { '↪' } else { ' ' },
-                    self.doc.debug_text_content(&screen_line).as_bstr(),
+                    self.doc
+                        .debug_text_content(&screen_line, &self.current_focus)
+                        .as_bstr(),
                     if wraps_onto_next_line { '↩' } else { ' ' },
                 )
                 .unwrap();
