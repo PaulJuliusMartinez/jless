@@ -348,6 +348,10 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
+    pub fn page_down(&mut self, pages: usize) {
+        self.scroll_viewport_down(self.dimensions.height * pages);
+    }
+
     pub fn scroll_viewport_up(&mut self, mut lines: usize) {
         let mut lines_scrolled = 0;
         let mut next_top_line = self.top_line.clone();
@@ -366,6 +370,10 @@ impl<D: Document> DocumentViewer<D> {
             self.top_line = next_top_line;
             self.maybe_update_focused_node_after_scroll();
         }
+    }
+
+    pub fn page_up(&mut self, pages: usize) {
+        self.scroll_viewport_up(self.dimensions.height * pages);
     }
 
     fn jump_down(&mut self, num_screen_lines: Option<NonZeroUsize>) {
@@ -1008,6 +1016,8 @@ impl<D: Document> DocumentViewer<D> {
             Action::CollapseOrMoveCursorLeftOrUp => self.collapse_or_move_cursor_left_or_up(),
             Action::ScrollViewportDown(n) => self.scroll_viewport_down(n),
             Action::ScrollViewportUp(n) => self.scroll_viewport_up(n),
+            Action::PageDown(n) => self.page_down(n),
+            Action::PageUp(n) => self.page_up(n),
             Action::JumpDown(n) => self.jump_down(n),
             Action::JumpUp(n) => self.jump_up(n),
             Action::FocusTop => self.focus_top(),
@@ -1127,6 +1137,14 @@ mod test {
 
     fn scroll_viewport_up(n: usize) -> Change {
         Change::Action(Action::ScrollViewportUp(n))
+    }
+
+    fn page_down(n: usize) -> Change {
+        Change::Action(Action::PageDown(n))
+    }
+
+    fn page_up(n: usize) -> Change {
+        Change::Action(Action::PageUp(n))
     }
 
     fn jump_down(n: Option<usize>) -> Change {
@@ -1530,6 +1548,37 @@ mod test {
         │ 3│ ~ │      │ │ 3│*8 │ hh   │     │ 3│*7 │↪g    │     │ 3│*7 │ gggg↩│     │ 3│*6 │ ff   │     │ 3│*4 │ dddd↩│
         │ 4│ ~ │      │ │ 4│ 9 │ i    │     │ 4│ 8 │ hh   │     │ 4│*7 │↪g    │     │ 4│ 7 │ gggg↩│     │ 4│*4 │↪dd   │
         └──┴───┴──────┘ └──┴───┴──────┘     └──┴───┴──────┘     └──┴───┴──────┘     └──┴───┴──────┘     └──┴───┴──────┘
+        ");
+    }
+
+    #[test]
+    fn test_page_up_and_down() {
+        let mut viewer = init(b"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n", 1, 3, 1);
+
+        let output = run(
+            &mut viewer,
+            vec![vec![page_down(1)], vec![page_down(2)], vec![page_down(1)]],
+        );
+        assert_snapshot!(output, @r"
+                     PageDown(1)  PageDown(2)  PageDown(1)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐
+        │ 0│*1 │ a │ │ 0│ 4 │ d │ │ 0│ 10│ j │ │ 0│*11│ k │
+        │ 1│ 2 │ b │ │ 1│*5 │ e │ │ 1│*11│ k │ │ 1│ ~ │   │
+        │ 2│ 3 │ c │ │ 2│ 6 │ f │ │ 2│ ~ │   │ │ 2│ ~ │   │
+        └──┴───┴───┘ └──┴───┴───┘ └──┴───┴───┘ └──┴───┴───┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![vec![page_up(1)], vec![page_up(2)], vec![page_up(1)]],
+        );
+        assert_snapshot!(output, @r"
+                     PageUp(1)    PageUp(2)    PageUp(1)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐
+        │ 0│*11│ k │ │ 0│ 8 │ h │ │ 0│ 2 │ b │ │ 0│ 1 │ a │
+        │ 1│ ~ │   │ │ 1│*9 │ i │ │ 1│*3 │ c │ │ 1│*2 │ b │
+        │ 2│ ~ │   │ │ 2│ 10│ j │ │ 2│ 4 │ d │ │ 2│ 3 │ c │
+        └──┴───┴───┘ └──┴───┴───┘ └──┴───┴───┘ └──┴───┴───┘
         ");
     }
 

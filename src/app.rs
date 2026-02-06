@@ -102,10 +102,12 @@ impl<D: Document> App<D> {
                             Key::Left | Key::Char('h') => {
                                 Some(Action::CollapseOrMoveCursorLeftOrUp)
                             }
-                            Key::Char('g') => Some(Action::FocusTop),
-                            Key::Char('G') => Some(Action::FocusBottom),
+                            Key::Home | Key::Char('g') => Some(Action::FocusTop),
+                            Key::End | Key::Char('G') => Some(Action::FocusBottom),
                             Key::Ctrl('e') => Some(Action::ScrollViewportDown(count_or_1)),
                             Key::Ctrl('y') => Some(Action::ScrollViewportUp(count_or_1)),
+                            Key::PageDown => Some(Action::PageDown(count_or_1)),
+                            Key::PageUp => Some(Action::PageUp(count_or_1)),
                             Key::Ctrl('d') => {
                                 let count = count.map(NonZeroUsize::new).flatten();
                                 Some(Action::JumpDown(count))

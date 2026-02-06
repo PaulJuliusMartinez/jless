@@ -13,6 +13,8 @@ pub enum Action {
 
     ScrollViewportDown(usize),
     ScrollViewportUp(usize),
+    PageDown(usize),
+    PageUp(usize),
 
     // Move the viewport by half the height of the screen, and update the focused node
     // so that the focus remains in the same spot on the screen.
