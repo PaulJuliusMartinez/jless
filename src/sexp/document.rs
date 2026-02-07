@@ -44,7 +44,7 @@ impl SexpDocument {
                     self.core.append_eof();
                     break;
                 }
-                Err(err) => unimplemented!("TODO: appending errors to sexp::core::DocCore"),
+                Err(_err) => unimplemented!("TODO: appending errors to sexp::core::DocCore"),
             }
         }
 
@@ -667,7 +667,7 @@ impl Document for SexpDocument {
         // to the right of the cursor.
         let mut any_collapsible_nodes = false;
 
-        let mut node_to_expand = 'find_node_to_expand: {
+        let node_to_expand = 'find_node_to_expand: {
             let collapsible_nodes_in_line = self.collapsible_nodes_in_line(&current_line);
 
             let end_of_range_to_check_for_collapsed_nodes =
@@ -930,6 +930,10 @@ impl Document for SexpDocument {
         }
 
         output.into_bytes()
+    }
+
+    fn raw_contents_for_searching(&self) -> &[u8] {
+        self.core.completed_contents()
     }
 }
 

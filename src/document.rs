@@ -136,6 +136,8 @@ pub trait Document {
     // Soon: Uncomment this.
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &Self::ScreenLine, cursor: &Self::Cursor) -> Vec<u8>;
+
+    fn raw_contents_for_searching(&self) -> &[u8];
 }
 
 /// Representation of a `Cursor` in "Screen" space, as a start and end `ScreenLine`, along with how

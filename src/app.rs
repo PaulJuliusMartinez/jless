@@ -10,9 +10,12 @@ use crate::action::Action;
 use crate::dimensions::Dimensions;
 use crate::document::Document;
 use crate::document_viewer::DocumentViewer;
+use crate::search::{JumpDirection, SearchDirection, SearchState};
 use crate::terminal::{AnsiTerminal, Terminal};
 
 const MAX_BUFFER_SIZE: usize = 9;
+const BOTTOM_CHROME_HEIGHT: usize = 1;
+const DEFAULT_SCROLLOFF: usize = 2;
 
 pub struct App<D: Document> {
     doc_while_waiting_for_input: Option<D>,
@@ -21,8 +24,10 @@ pub struct App<D: Document> {
     // Buffered input for movement commands with counts, e.g. "3j", or multi-character commands,
     // e.g., "zz".
     input_buffer: Vec<u8>,
+    search_state: Option<SearchState>,
     readline_editor: Editor<(), MemHistory>,
-    dimensions: Dimensions,
+    screen_dimensions: Dimensions,
+    viewer_dimensions: Dimensions,
     stdout: Box<dyn std::io::Write>,
 }
 
@@ -47,7 +52,12 @@ impl<D: Document> App<D> {
             viewer: None,
             input_state: InputState::Default,
             input_buffer: vec![],
-            dimensions,
+            search_state: None,
+            screen_dimensions: dimensions,
+            viewer_dimensions: Dimensions {
+                width: dimensions.width,
+                height: dimensions.height - BOTTOM_CHROME_HEIGHT,
+            },
             readline_editor,
             stdout,
         }
@@ -116,6 +126,14 @@ impl<D: Document> App<D> {
                                 let count = count.map(NonZeroUsize::new).flatten();
                                 Some(Action::JumpUp(count))
                             }
+                            Key::Char('/') => self.get_search_input_and_start_search(
+                                SearchDirection::Forward,
+                                count_or_1,
+                            ),
+                            Key::Char('?') => self.get_search_input_and_start_search(
+                                SearchDirection::Reverse,
+                                count_or_1,
+                            ),
                             Key::Esc => None,
                             _ => None,
                         };
@@ -156,13 +174,17 @@ impl<D: Document> App<D> {
     }
 
     pub fn handle_window_resize(&mut self, new_dimensions: Dimensions) {
-        self.dimensions = new_dimensions;
+        self.screen_dimensions = new_dimensions;
+        self.viewer_dimensions = Dimensions {
+            width: new_dimensions.width,
+            height: new_dimensions.height - BOTTOM_CHROME_HEIGHT,
+        };
 
         if let Some(doc) = &mut self.doc_while_waiting_for_input {
             doc.resize(new_dimensions.width);
         }
         if let Some(viewer) = &mut self.viewer {
-            viewer.resize(new_dimensions);
+            viewer.resize(self.viewer_dimensions);
         }
 
         self.draw_screen();
@@ -186,8 +208,13 @@ impl<D: Document> App<D> {
                     doc.append(data);
                     if let Some((top_screen_line, cursor)) = doc.top_screen_line_and_cursor() {
                         let doc = self.doc_while_waiting_for_input.take().unwrap();
-                        let viewer =
-                            DocumentViewer::new(doc, top_screen_line, cursor, self.dimensions, 2);
+                        let viewer = DocumentViewer::new(
+                            doc,
+                            top_screen_line,
+                            cursor,
+                            self.viewer_dimensions,
+                            DEFAULT_SCROLLOFF,
+                        );
                         self.viewer = Some(viewer);
                     }
                 }
@@ -215,6 +242,41 @@ impl<D: Document> App<D> {
         let n = str::parse::<usize>(std::str::from_utf8(&self.input_buffer).unwrap());
         self.input_buffer.clear();
         n.ok()
+    }
+
+    fn get_search_input_and_start_search(
+        &mut self,
+        search_direction: SearchDirection,
+        count: usize,
+    ) -> Option<Action> {
+        let search_input = self.readline(search_direction.prompt_str())?;
+
+        let haystack = if let Some(viewer) = &self.viewer {
+            viewer.doc.raw_contents_for_searching()
+        } else {
+            b""
+        };
+
+        self.search_state = SearchState::new(
+            search_input,
+            haystack,
+            search_direction,
+            crate::search::SEXP_INVERTED_PAIRED_DELIMITERS,
+        );
+
+        None
+    }
+
+    fn readline(&mut self, prompt: &str) -> Option<String> {
+        let mut terminal = AnsiTerminal::new(String::new());
+        let _ = write!(self.stdout, "{}", termion::cursor::Show);
+        let _ = terminal.position_cursor(1, self.screen_dimensions.height as u16);
+        let _ = terminal.flush_contents(&mut self.stdout);
+
+        let result = self.readline_editor.readline(prompt).ok()?;
+        let _ = write!(self.stdout, "{}", termion::cursor::Hide);
+
+        Some(result)
     }
 
     fn draw_screen(&mut self) {

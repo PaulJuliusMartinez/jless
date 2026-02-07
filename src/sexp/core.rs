@@ -33,6 +33,7 @@ impl std::ops::Sub<usize> for NodeIndex {
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Debug)]
 pub struct DocCore {
+    // Someday: This shouldn't be marked public.
     // Pretty-printed data
     pub pretty_printed: PrettyPrinted,
     data_len_of_completed_sexps: usize,
@@ -776,6 +777,10 @@ impl DocCore {
             self.num_pending_sexp_comments -= 1;
             true
         }
+    }
+
+    pub fn completed_contents(&self) -> &[u8] {
+        &self.pretty_printed.data()[..self.data_len_of_completed_sexps]
     }
 }
 

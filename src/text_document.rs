@@ -176,6 +176,8 @@ pub type Cursor = usize;
 pub struct TextDocument {
     data: Vec<u8>,
     complete_line_ranges: Vec<Range<usize>>,
+    // Someday: It's awkward to have both `next_start` and `trailing_newline`. `next_start`
+    // becomes invalid once `eof` is called and we set `trailing_newline` to `Some`.
     next_start: usize,
     trailing_newline: Option<bool>,
     width: usize,
@@ -461,6 +463,15 @@ impl Document for TextDocument {
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &Self::ScreenLine, _cursor: &Cursor) -> Vec<u8> {
         self.screen_line_contents(screen_line).to_vec()
+    }
+
+    fn raw_contents_for_searching(&self) -> &[u8] {
+        // This indicates whether we're going to accept any more input or not.
+        if self.trailing_newline.is_some() {
+            &self.data
+        } else {
+            &self.data[..self.next_start]
+        }
     }
 }
 
