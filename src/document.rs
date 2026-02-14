@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 // Misc. notes:
 //
 // Maybe want:
@@ -137,7 +139,13 @@ pub trait Document {
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &Self::ScreenLine, cursor: &Self::Cursor) -> Vec<u8>;
 
+    // Search
+
     fn raw_contents_for_searching(&self) -> &[u8];
+    fn cursor_content_range(&self, cursor: &Self::Cursor) -> Range<usize>;
+    // Someady: This should maybe take in a Range and return a CursorRange instead?
+    fn content_index_to_cursor(&self, index: usize) -> Self::Cursor;
+    fn visible_ancestor(&self, cursor: &Self::Cursor) -> Self::Cursor;
 }
 
 /// Representation of a `Cursor` in "Screen" space, as a start and end `ScreenLine`, along with how

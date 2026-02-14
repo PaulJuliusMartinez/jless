@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 
 #[derive(Debug, Copy, Clone)]
-pub enum Action {
+pub enum Action<Cursor> {
     // Does nothing, for debugging, shouldn't modify any state.
     #[allow(dead_code)]
     NoOp,
@@ -35,6 +35,8 @@ pub enum Action {
     // all, then we will change the focused node by the expected count.
     JumpDown(Option<NonZeroUsize>),
     JumpUp(Option<NonZeroUsize>),
+
+    JumpToSearchMatch(Cursor),
 
     FocusTop,
     FocusBottom,

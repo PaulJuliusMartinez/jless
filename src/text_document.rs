@@ -473,6 +473,22 @@ impl Document for TextDocument {
             &self.data[..self.next_start]
         }
     }
+
+    fn cursor_content_range(&self, cursor: &Cursor) -> Range<usize> {
+        self.complete_line_ranges[*cursor].clone()
+    }
+
+    fn content_index_to_cursor(&self, index: usize) -> Cursor {
+        assert!(index < self.raw_contents_for_searching().len());
+
+        self.complete_line_ranges
+            .partition_point(|line_range| line_range.start <= index)
+    }
+
+    fn visible_ancestor(&self, cursor: &Cursor) -> Cursor {
+        // All lines are always visible
+        *cursor
+    }
 }
 
 #[cfg(test)]

@@ -4,6 +4,9 @@ use std::ops::Range;
 use regex::bytes::{Regex as ByteRegex, RegexBuilder as ByteRegexBuilder};
 use regex::{Captures as StrCaptures, Regex as StrRegex};
 
+use crate::document::Document;
+use crate::document_viewer::DocumentViewer;
+
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum SearchDirection {
     Forward,
@@ -32,7 +35,18 @@ pub struct SearchState {
     matches: Vec<Range<usize>>,
     len_of_searched_input: usize,
     direction: SearchDirection,
-    immediate_state: ImmediateSearchState,
+    last_jump: Option<LastJump>,
+}
+
+#[derive(Debug)]
+struct LastJump {
+    match_jumped_to: usize,
+    // Needed to show 'W' next to current match number.
+    just_wrapped: bool,
+    // Needed to know to jump *past* a collapsed container, even though
+    // there are matches in between the current focus and the end of that
+    // container.
+    jumped_into_collapsed_container: bool,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -53,32 +67,6 @@ pub static SEXP_INVERTED_PAIRED_DELIMITERS: InvertedPairedDelimeters = InvertedP
     curly_braces: false,
     parentheses: true,
 };
-
-// Someday: If we implement persistent highlighting of search matches, like vim's
-// default setting (configured by e.g. `hlsearch`), then `NotSearching` and
-// `MatchesVisible` should probably be tracked at a higher level, and we should
-// consider the `ActivelySearching` variant as a `LastJump` option.
-#[derive(Debug)]
-enum ImmediateSearchState {
-    // The user is actively searching, having just started the search, or jumped
-    // to another match.
-    ActivelySearching {
-        last_match_jumped_to: usize,
-        // Needed to show 'W' next to current match number.
-        just_wrapped: bool,
-        // Needed to know to jump *past* a collapsed container, even though
-        // there are matches in between the current focus and the end of that
-        // container.
-        last_search_into_collapsed_container: bool,
-    },
-    // The user has moved their cursor away from a match; or hit escape to
-    // hide search matches. In this state, matches are not highlighted.
-    NotSearching,
-    // If the user searches for something in a collapsed node, then expands it,
-    // we still want to show matches, but they're no longer on top of match, so
-    // we should jump to the next visible match when then hit 'n'.
-    MatchesVisible,
-}
 
 // By default, we *don't* want paired delimiters to have their usual meaning in
 // a regex, to make it easier for users to search the document and anchor on the
@@ -173,6 +161,8 @@ impl SearchState {
         let (regex_input, case_sensitive) = extract_regex_input_and_case_sensitivity(&search_input);
 
         if regex_input.is_empty() {
+            // This case is checked by the App before calling this function, and handled
+            // by displaying an appropriate error.
             return None;
         }
 
@@ -194,8 +184,229 @@ impl SearchState {
             matches,
             len_of_searched_input: haystack.len(),
             direction,
-            immediate_state: ImmediateSearchState::NotSearching,
+            last_jump: None,
         })
+    }
+
+    pub fn set_search_direction(&mut self, direction: SearchDirection) {
+        self.direction = direction;
+    }
+
+    pub fn any_matches(&self) -> bool {
+        !self.matches.is_empty()
+    }
+
+    pub fn jump_to_match<D: Document>(
+        &mut self,
+        viewer: &DocumentViewer<D>,
+        jump_direction: JumpDirection,
+        jumps: usize,
+    ) -> D::Cursor {
+        if self.matches.is_empty() {
+            panic!("Shouldn't call `jump_to_match` if no matches.");
+        }
+
+        let true_direction = self.true_direction(jump_direction);
+        let (next_match_index, wrapped) = self.get_next_match(viewer, true_direction, jumps);
+
+        let match_cursor = self.convert_match_to_cursor(viewer, true_direction, next_match_index);
+        let new_cursor = viewer.doc.visible_ancestor(&match_cursor);
+
+        self.last_jump = Some(LastJump {
+            match_jumped_to: next_match_index,
+            just_wrapped: wrapped,
+            jumped_into_collapsed_container: match_cursor != new_cursor,
+        });
+
+        new_cursor
+    }
+
+    fn true_direction(&self, jump_direction: JumpDirection) -> SearchDirection {
+        use JumpDirection::*;
+        use SearchDirection::*;
+
+        match (self.direction, jump_direction) {
+            (Forward, Next) | (Reverse, Prev) => Forward,
+            (Forward, Prev) | (Reverse, Next) => Reverse,
+        }
+    }
+
+    // Returns next_match_index, and whether or not the search wrapped.
+    fn get_next_match<D: Document>(
+        &mut self,
+        viewer: &DocumentViewer<D>,
+        search_direction: SearchDirection,
+        jumps: usize,
+    ) -> (usize, bool) {
+        debug_assert!(jumps != 0);
+
+        match &self.last_jump {
+            None => {
+                let (closest_match, wrapped_while_going_to_closest_match) =
+                    self.closest_match_to_cursor(viewer, search_direction);
+
+                let delta = match search_direction {
+                    SearchDirection::Forward => (jumps - 1) as isize,
+                    SearchDirection::Reverse => -((jumps - 1) as isize),
+                };
+
+                let (final_match, wrapped_while_cycling) = self.cycle_match(closest_match, delta);
+                let wrapped = wrapped_while_going_to_closest_match || wrapped_while_cycling;
+
+                (final_match, wrapped)
+            }
+            Some(LastJump {
+                match_jumped_to,
+                jumped_into_collapsed_container,
+                ..
+            }) => {
+                let start_match = *match_jumped_to;
+                let jumped_into_collapsed_container = *jumped_into_collapsed_container;
+
+                let delta = match search_direction {
+                    SearchDirection::Forward => jumps as isize,
+                    SearchDirection::Reverse => -(jumps as isize),
+                };
+
+                // Jump by `delta` the first time.
+                let (mut next_match, wrapped) = self.cycle_match(start_match, delta);
+                let mut ever_wrapped = wrapped;
+
+                if jumped_into_collapsed_container {
+                    // If we previously jumped into a container, we'll make sure that the
+                    // the cursor moves by advancing to the next match after the container.
+                    // If you hit '3n', this might result in something different than hitting
+                    // 'n' three times, but that's fine -- that's not the intended semantics.
+                    // The semantics are: "jump N matches from previous match, then round up".
+                    let delta = delta.signum(); // Returns 1 or -1 (or 0, but delta isn't 0).
+
+                    // If all the matches are in a single collapsed container, this might happen.
+                    // We want to make sure we don't infinitely loop.
+                    while next_match != start_match {
+                        // Check if we're still in the same container by getting the cursor
+                        // pointed to by the match and seeing if that's the same as the current
+                        // cursor.
+                        let match_cursor =
+                            self.convert_match_to_cursor(viewer, search_direction, next_match);
+                        let next_cursor = viewer.doc.visible_ancestor(&match_cursor);
+
+                        if next_cursor != viewer.current_focus {
+                            break;
+                        }
+
+                        let (next_next_match, wrapped) = self.cycle_match(next_match, delta);
+                        next_match = next_next_match;
+                        ever_wrapped = ever_wrapped || wrapped;
+                    }
+                }
+
+                (next_match, ever_wrapped)
+            }
+        }
+    }
+
+    fn closest_match_to_cursor<D: Document>(
+        &mut self,
+        viewer: &DocumentViewer<D>,
+        search_direction: SearchDirection,
+    ) -> (usize, bool) {
+        let focused_range = viewer.currently_focused_content_range();
+
+        // Note: `partition_point` is awkward and returns the first index
+        // where the predicate returns *false*.
+        match search_direction {
+            SearchDirection::Forward => {
+                // When searching forwards, we want the first match that starts
+                // _after_ the current focus. This is pretty subtle; for example,
+                // if you're focused on a key/value pair where the value has multiple
+                // matches, you should jump to the first of those. But if you search
+                // for the key itself, it should go to the next iteration of that key.
+                // We'll let `Viewer::currently_focused_content_range` deal with the
+                // complexities of turning the current cursor into a reasonable range,
+                // and assume that it does something like returning the range of the
+                // key, but the range doesn't include the value.
+                let next_match = self.matches.partition_point(|match_range| {
+                    // This condition starts false, then becomes true, so we have
+                    // to invert it for `partition_point`.
+                    let match_starts_after_focused_range = focused_range.end <= match_range.start;
+                    !match_starts_after_focused_range
+                });
+
+                // If NONE of the matches start after the end of the focused row,
+                // partition_point returns the length of the array, but then we
+                // want to jump back to the start in that case.
+                if next_match == self.matches.len() {
+                    (0, true)
+                } else {
+                    (next_match, false)
+                }
+            }
+            SearchDirection::Reverse => {
+                // When searching backwards, we want the last match that
+                // ends before the start of focused range.
+                //
+                // `partition_point` returns the first index where the condition
+                // is false, so it will return the match after the one we actually
+                // want.
+                let match_after_prev_match = self
+                    .matches
+                    .partition_point(|match_range| match_range.end < focused_range.start);
+
+                // If the very first match ends the start of the focused row,
+                // then partition_point will return 0, and we need to wrap
+                // around to the end of the file.
+                if match_after_prev_match == 0 {
+                    (self.matches.len() - 1, true)
+                } else {
+                    (match_after_prev_match - 1, false)
+                }
+            }
+        }
+    }
+
+    fn convert_match_to_cursor<D: Document>(
+        &mut self,
+        viewer: &DocumentViewer<D>,
+        search_direction: SearchDirection,
+        match_index: usize,
+    ) -> D::Cursor {
+        let next_match_range = &self.matches[match_index];
+        let match_content_index = match search_direction {
+            SearchDirection::Forward => next_match_range.start,
+            SearchDirection::Reverse =>
+            // Normally we want to jump to the node that contains the last character
+            // in the match, which is at `end - 1`, but someone could enter a regex
+            // (e.g. "\b") that returns empty matches. In that case, we'll jump
+            // to the first character after the empty match.
+            //
+            // This empty match could also appear at the start of the file, leading
+            // to a match range of 0..0, so we also handle that case.
+            {
+                usize::min(
+                    next_match_range.start,
+                    next_match_range.end.saturating_sub(1),
+                )
+            }
+        };
+
+        viewer.doc.content_index_to_cursor(match_content_index)
+    }
+
+    fn cycle_match(&self, start_index: usize, delta: isize) -> (usize, bool) {
+        Self::cycle_match_impl(start_index, delta, self.matches.len())
+    }
+
+    fn cycle_match_impl(start_index: usize, delta: isize, num_matches: usize) -> (usize, bool) {
+        let new_index = ((start_index + num_matches) as isize + delta) as usize % num_matches;
+
+        let wrapped = match delta.signum() {
+            0 => false,
+            1 => num_matches <= (delta.abs() as usize) || new_index < start_index,
+            -1 => num_matches <= (delta.abs() as usize) || start_index < new_index,
+            _ => unreachable!(),
+        };
+
+        (new_index, wrapped)
     }
 }
 
@@ -255,5 +466,25 @@ mod tests {
                 invert_paired_delimiters(before, SEXP_INVERTED_PAIRED_DELIMITERS)
             );
         }
+    }
+
+    #[test]
+    fn test_cycle_match() {
+        fn check(start: usize, delta: isize, num_matches: usize) -> (usize, bool) {
+            SearchState::cycle_match_impl(start, delta, num_matches)
+        }
+
+        assert_eq!(check(0, 0, 10), (0, false));
+        assert_eq!(check(0, 5, 10), (5, false));
+        assert_eq!(check(0, 15, 10), (5, true));
+        assert_eq!(check(5, 3, 10), (8, false));
+        assert_eq!(check(7, 3, 10), (0, true));
+        assert_eq!(check(7, 20, 10), (7, true));
+
+        assert_eq!(check(9, -5, 10), (4, false));
+        assert_eq!(check(9, -15, 10), (4, true));
+        assert_eq!(check(5, -3, 10), (2, false));
+        assert_eq!(check(1, -3, 10), (8, true));
+        assert_eq!(check(7, -20, 10), (7, true));
     }
 }

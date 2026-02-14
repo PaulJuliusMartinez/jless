@@ -1,6 +1,6 @@
 use std::cmp;
 use std::num::NonZeroUsize;
-use std::ops::RangeInclusive;
+use std::ops::{Range, RangeInclusive};
 
 use crate::action::Action;
 use crate::dimensions::Dimensions;
@@ -243,6 +243,10 @@ impl<D: Document> DocumentViewer<D> {
             .doc
             .collapse_or_move_cursor_left_or_up(&self.current_focus);
         self.update_so_new_cursor_is_visible(new_cursor);
+    }
+
+    fn jump_to_search_match(&mut self, cursor: D::Cursor) {
+        self.update_so_new_cursor_is_visible(Some(cursor));
     }
 
     pub fn focus_top(&mut self) {
@@ -1005,8 +1009,10 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn do_action(&mut self, action: Action) {
+    pub fn do_action(&mut self, action: Action<D::Cursor>) {
         let prev_cursor = self.current_focus.clone();
+
+        let focusing_bottom = matches!(action, Action::FocusBottom);
 
         match action {
             Action::NoOp => (),
@@ -1020,6 +1026,7 @@ impl<D: Document> DocumentViewer<D> {
             Action::PageUp(n) => self.page_up(n),
             Action::JumpDown(n) => self.jump_down(n),
             Action::JumpUp(n) => self.jump_up(n),
+            Action::JumpToSearchMatch(cursor) => self.jump_to_search_match(cursor),
             Action::FocusTop => self.focus_top(),
             Action::FocusBottom => self.focus_bottom(),
             Action::MoveFocusedElemToTop => self.move_focused_elem_to_top(),
@@ -1029,7 +1036,7 @@ impl<D: Document> DocumentViewer<D> {
 
         // When we focus the bottom of the document, we'll start tailing the
         // end, and we stop when we move the cursor.
-        if matches!(action, Action::FocusBottom) {
+        if focusing_bottom {
             self.tailing_end_of_document = true;
         } else if prev_cursor != self.current_focus {
             self.tailing_end_of_document = false;
@@ -1042,6 +1049,14 @@ impl<D: Document> DocumentViewer<D> {
             next_line: Some(self.top_line.clone()),
             remaining_height: self.dimensions.height,
         }
+    }
+
+    ////////////
+    // Search //
+    ////////////
+
+    pub fn currently_focused_content_range(&self) -> Range<usize> {
+        self.doc.cursor_content_range(&self.current_focus)
     }
 }
 

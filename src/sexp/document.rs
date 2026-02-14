@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
+use std::ops::Range;
 
 use crate::document::{CursorRange, Document};
 use crate::sexp::core::{
@@ -934,6 +935,21 @@ impl Document for SexpDocument {
 
     fn raw_contents_for_searching(&self) -> &[u8] {
         self.core.completed_contents()
+    }
+
+    fn cursor_content_range(&self, cursor: &NodeIndex) -> Range<usize> {
+        // TODO: Implement me
+        0..0
+    }
+
+    fn content_index_to_cursor(&self, index: usize) -> NodeIndex {
+        // TODO: Implement me
+        NodeIndex(0)
+    }
+
+    fn visible_ancestor(&self, cursor: &NodeIndex) -> NodeIndex {
+        // TODO: Implement me
+        *cursor
     }
 }
 
