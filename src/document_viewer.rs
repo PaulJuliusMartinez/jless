@@ -999,10 +999,12 @@ impl<D: Document> DocumentViewer<D> {
 
     pub fn document_eof(&mut self) {
         self.doc.eof();
+        self.update_search_matches_after_receiving_more_data();
     }
 
     pub fn append_document_data(&mut self, data: &[u8]) {
         self.doc.append(data);
+        self.update_search_matches_after_receiving_more_data();
 
         if self.tailing_end_of_document {
             self.focus_bottom();
@@ -1086,6 +1088,12 @@ impl<D: Document> DocumentViewer<D> {
         )?);
 
         Ok(())
+    }
+
+    fn update_search_matches_after_receiving_more_data(&mut self) {
+        if let Some(search_state) = &mut self.search_state {
+            search_state.find_additional_matches(self.doc.raw_contents_for_searching());
+        }
     }
 
     pub fn has_initialized_search_state(&self) -> bool {
@@ -2311,6 +2319,57 @@ mod test {
         │ 2│ 3 │ 3a  │ │ 2│ 8 │ 8   │             │ 2│ 8 │ 8   │             │ 2│ 8 │ 8   │
         │ 3│ 4 │ 4   │ │ 3│*9 │ 9b  │             │ 3│ 9 │ 9b  │             │ 3│*9 │ 9b  │
         └──┴───┴─────┘ └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘
+        ");
+    }
+
+    #[test]
+    fn test_search_finds_additional_matches_after_reading_more_data() {
+        let text = br"1
+2a
+3a
+4
+";
+        let mut viewer = init(text, 2, 5, 0);
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("a", SearchDirection::Forward),
+                    jump_to_next_match(2),
+                ],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                      /a                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1)
+                      JumpToSearchMatch(Next, 2)
+        ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐
+        │ 0│*1 │ 1  │ │ 0│ 1 │ 1  │              │ 0│ 1 │ 1  │              │ 0│ 1 │ 1  │
+        │ 1│ 2 │ 2a │ │ 1│ 2 │ 2a │              │ 1│*2 │ 2a │              │ 1│ 2 │ 2a │
+        │ 2│ 3 │ 3a │ │ 2│*3 │ 3a │              │ 2│ 3 │ 3a │              │ 2│*3 │ 3a │
+        │ 3│ 4 │ 4  │ │ 3│ 4 │ 4  │              │ 3│ 4 │ 4  │              │ 3│ 4 │ 4  │
+        │ 4│ ~ │    │ │ 4│ ~ │    │              │ 4│ ~ │    │              │ 4│ ~ │    │
+        └──┴───┴────┘ └──┴───┴────┘              └──┴───┴────┘              └──┴───┴────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![append_document_data(b"5a\n6a\n")],
+                vec![jump_to_next_match(2)],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                      AppendDocData JumpToSearchMatch(Next, 2) JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐
+        │ 0│ 1 │ 1  │ │ 0│ 1 │ 1  │ │ 0│ 2 │ 2a │              │ 0│*2 │ 2a │
+        │ 1│ 2 │ 2a │ │ 1│ 2 │ 2a │ │ 1│ 3 │ 3a │              │ 1│ 3 │ 3a │
+        │ 2│*3 │ 3a │ │ 2│*3 │ 3a │ │ 2│ 4 │ 4  │              │ 2│ 4 │ 4  │
+        │ 3│ 4 │ 4  │ │ 3│ 4 │ 4  │ │ 3│ 5 │ 5a │              │ 3│ 5 │ 5a │
+        │ 4│ ~ │    │ │ 4│ 5 │ 5a │ │ 4│*6 │ 6a │              │ 4│ 6 │ 6a │
+        └──┴───┴────┘ └──┴───┴────┘ └──┴───┴────┘              └──┴───┴────┘
         ");
     }
 }

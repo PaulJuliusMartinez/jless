@@ -46,7 +46,7 @@ struct LastJump {
     jumped_into_collapsed_container: bool,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Default)]
 pub struct InvertedPairedDelimeters {
     pub square_brackets: bool,
     pub curly_braces: bool,
@@ -169,6 +169,59 @@ impl SearchState {
             direction,
             last_jump: None,
         })
+    }
+
+    pub fn find_additional_matches(&mut self, haystack: &[u8]) {
+        if haystack.len() == self.len_of_searched_input {
+            return;
+        }
+
+        // We don't want to search the whole input again, but we also want to make sure the
+        // regex engine is sync'd up as if we had started searching at the beginning of the
+        // input. We'll do this by searching at the start of the last match using `Regex::find_at`,
+        // which takes into account context, so, in most cases, it should find the same match,
+        // but it could be different if the regex was ended with ".*" or "$". (We could even
+        // fail to find a match at all.)
+        //
+        // So we'll pop the previous last match, and start searching at the same place,
+        // expecting to find the same match. But if we don't, we have to consider clearing
+        // `last_jump` if it was pointing to this last match.
+        match self.matches.pop() {
+            None => {
+                // Simple case, just search the whole input again.
+                self.matches = self
+                    .search_regex
+                    .find_iter(haystack)
+                    .map(|m| m.range())
+                    .collect();
+            }
+            Some(last_match_range) => {
+                let prev_last_match_index = self.matches.len();
+
+                let mut start_index = last_match_range.start;
+                while let Some(match_) = self.search_regex.find_at(haystack, start_index) {
+                    self.matches.push(match_.range());
+                    start_index = match_.end();
+                }
+
+                if let Some(last_jump) = &self.last_jump {
+                    if last_jump.match_jumped_to == prev_last_match_index {
+                        // The last jump was to the last match. We have to make sure
+                        // the last match is unchanged, otherwise we should clear it.
+                        match self.matches.get(prev_last_match_index) {
+                            None => self.last_jump = None,
+                            Some(new_last_match_range) => {
+                                if last_match_range != *new_last_match_range {
+                                    self.last_jump = None;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        self.len_of_searched_input = haystack.len();
     }
 
     pub fn set_search_direction(&mut self, direction: SearchDirection) {
@@ -363,6 +416,8 @@ impl SearchState {
 mod tests {
     use super::*;
 
+    use insta::assert_debug_snapshot;
+
     #[test]
     fn test_extract_regex_input_and_case_sensitivity() {
         let tests = vec![
@@ -447,5 +502,103 @@ mod tests {
         assert_eq!(check(5, -3, 10), (2, false));
         assert_eq!(check(1, -3, 10), (8, true));
         assert_eq!(check(7, -20, 10), (7, true));
+    }
+
+    #[test]
+    fn test_find_additional_matches() {
+        let mut search_state = SearchState::new(
+            "abc abc".to_string(),
+            b"-abc abc abc",
+            SearchDirection::Forward,
+            InvertedPairedDelimeters::default(),
+        )
+        .unwrap();
+
+        assert_debug_snapshot!(search_state.matches, @r"
+        [
+            1..8,
+        ]
+        ");
+
+        search_state.last_jump = Some(LastJump {
+            match_jumped_to: 0,
+            just_wrapped: false,
+            jumped_into_collapsed_container: false,
+        });
+
+        search_state.find_additional_matches(b"-abc abc abc abc");
+        assert_debug_snapshot!(search_state.matches, @r"
+        [
+            1..8,
+            9..16,
+        ]
+        ");
+
+        assert!(search_state.last_jump.is_some());
+    }
+
+    #[test]
+    fn test_find_additional_matches_last_match_is_removed() {
+        let mut search_state = SearchState::new(
+            r"abc\b".to_string(),
+            b"-abc abc",
+            SearchDirection::Forward,
+            InvertedPairedDelimeters::default(),
+        )
+        .unwrap();
+
+        assert_debug_snapshot!(search_state.matches, @r"
+        [
+            1..4,
+            5..8,
+        ]
+        ");
+
+        search_state.last_jump = Some(LastJump {
+            match_jumped_to: 1,
+            just_wrapped: false,
+            jumped_into_collapsed_container: false,
+        });
+
+        search_state.find_additional_matches(b"-abc abcdef");
+        assert_debug_snapshot!(search_state.matches, @r"
+        [
+            1..4,
+        ]
+        ");
+        assert!(search_state.last_jump.is_none());
+    }
+
+    #[test]
+    fn test_find_additional_matches_last_match_is_updated() {
+        let mut search_state = SearchState::new(
+            r"abc\b".to_string(),
+            b"-abc abc",
+            SearchDirection::Forward,
+            InvertedPairedDelimeters::default(),
+        )
+        .unwrap();
+
+        assert_debug_snapshot!(search_state.matches, @r"
+        [
+            1..4,
+            5..8,
+        ]
+        ");
+
+        search_state.last_jump = Some(LastJump {
+            match_jumped_to: 1,
+            just_wrapped: false,
+            jumped_into_collapsed_container: false,
+        });
+
+        search_state.find_additional_matches(b"-abc abcdef abc");
+        assert_debug_snapshot!(search_state.matches, @r"
+        [
+            1..4,
+            12..15,
+        ]
+        ");
+        assert!(search_state.last_jump.is_none());
     }
 }
