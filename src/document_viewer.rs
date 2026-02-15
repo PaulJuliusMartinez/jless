@@ -4,7 +4,7 @@ use std::ops::{Range, RangeInclusive};
 
 use crate::action::Action;
 use crate::dimensions::Dimensions;
-use crate::document::{CursorRange, Document};
+use crate::document::{ContentRange, Document};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 
 /// The `DocumentViewer` manages what part of a document is displayed on screen
@@ -38,8 +38,16 @@ pub struct DocumentViewer<D: Document> {
     search_state: Option<SearchState>,
 }
 
+/// Computed details about how close some content is to the start or end of the document. If one of
+/// these values is `None`, that means the start/end of the document is _more_ than some fixed
+/// number of screen lines (usually the height of the viewport) before/after the content range.
+struct BoundedProximityToDocEnds {
+    screen_lines_before_start_of_doc: Option<usize>,
+    screen_lines_after_end_of_doc: Option<usize>,
+}
+
 #[derive(Debug)]
-struct AcceptableStartScreenIndexesToShowCursorNode {
+struct AcceptableStartScreenIndexesToShowContentRange {
     #[allow(dead_code)]
     #[cfg(debug_assertions)]
     cursor_height: usize,
@@ -183,7 +191,7 @@ impl<D: Document> DocumentViewer<D> {
 
     fn position_of_cursor_in_viewport(
         &self,
-        cursor_range: &CursorRange<D::ScreenLine>,
+        cursor_range: &ContentRange<D::ScreenLine>,
     ) -> PositionOfCursorInViewport {
         let start_position = self.position_of_screen_line(&cursor_range.start);
         let end_position = self.position_of_screen_line(&cursor_range.end);
@@ -520,10 +528,12 @@ impl<D: Document> DocumentViewer<D> {
 
         self.current_focus = new_cursor;
 
-        let (cursor_range, acceptable_start_index_range) =
-            self.calculate_acceptable_start_screen_indexes_to_show_cursor_node(&self.current_focus);
+        let cursor_range = self.doc.cursor_range(&self.current_focus);
 
-        let AcceptableStartScreenIndexesToShowCursorNode {
+        let acceptable_start_index_range =
+            self.calculate_acceptable_start_screen_indexes_to_show_content(&cursor_range);
+
+        let AcceptableStartScreenIndexesToShowContentRange {
             start: start_index,
             end: end_index,
             ..
@@ -559,16 +569,13 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    // Someday: We should compute the `CursorRange` outside of this function, pass it in,
+    // Someday: We should compute the `ContentRange` outside of this function, pass it in,
     // and then get rid of `cursor_layout_details` in lieu of functions to directly
     // count `bounded_screen_lines_{before,after}_screen_line`.
-    fn calculate_acceptable_start_screen_indexes_to_show_cursor_node(
+    fn calculate_acceptable_start_screen_indexes_to_show_content(
         &self,
-        cursor: &D::Cursor,
-    ) -> (
-        CursorRange<D::ScreenLine>,
-        AcceptableStartScreenIndexesToShowCursorNode,
-    ) {
+        content_range: &ContentRange<D::ScreenLine>,
+    ) -> AcceptableStartScreenIndexesToShowContentRange {
         // We want to make sure that as much of the newly focused node is visible. The high level
         // logic here is to first determine the range of "acceptable" places for the cursor to be
         // This is by default the entire screen, but then it gets shrunk based on the `scrolloff`
@@ -577,9 +584,8 @@ impl<D: Document> DocumentViewer<D> {
         //
         // Once we have this range, we will snap the position of the cursor into that range.
 
-        let cursor_layout_details = self
-            .doc
-            .cursor_layout_details(&cursor, self.dimensions.height - 1);
+        let bounded_proximity_to_doc_ends =
+            self.bounded_proximity_to_doc_ends(content_range, self.dimensions.height - 1);
 
         // Initial acceptable range is the whole screen.
         let mut first_acceptable_screen_index = 0;
@@ -608,18 +614,18 @@ impl<D: Document> DocumentViewer<D> {
         // so it is not relevant here.)
 
         if let Some(lines_before_start) =
-            cursor_layout_details.bounded_doc_screen_lines_before_start
+            bounded_proximity_to_doc_ends.screen_lines_before_start_of_doc
         {
             first_acceptable_screen_index =
                 cmp::min(first_acceptable_screen_index, lines_before_start);
         }
 
-        if let Some(lines_after_end) = cursor_layout_details.bounded_doc_screen_lines_after_end {
+        if let Some(lines_after_end) = bounded_proximity_to_doc_ends.screen_lines_after_end_of_doc {
             last_acceptable_screen_index = cmp::max(
                 last_acceptable_screen_index,
                 // The bound is approximate, to prevent us from having to look at the whole
-                // document, not exact;
-                // last_screen_index.saturating_sub(lines_after_end),
+                // document, not exact.
+                // Someday: Should this be `saturating_sub`?
                 last_screen_index - lines_after_end,
             );
         }
@@ -633,7 +639,7 @@ impl<D: Document> DocumentViewer<D> {
 
         let height_of_acceptable_range =
             last_acceptable_screen_index - first_acceptable_screen_index + 1;
-        let cursor_height = cursor_layout_details.range.num_screen_lines;
+        let cursor_height = content_range.num_screen_lines;
 
         if cursor_height >= self.dimensions.height {
             // Simple case, the cursor is as big or bigger than the screen, so the whole screen
@@ -699,11 +705,10 @@ impl<D: Document> DocumentViewer<D> {
             first_acceptable_screen_index_for_start_of_cursor,
             // Subtract (size - 1); for example, if the cursor takes up two lines, then
             // the last acceptable start is one line before the last acceptable screen index.
-            last_acceptable_screen_index
-                .saturating_sub(cursor_layout_details.range.num_screen_lines - 1),
+            last_acceptable_screen_index.saturating_sub(content_range.num_screen_lines - 1),
         );
 
-        let acceptable_start_indexes = AcceptableStartScreenIndexesToShowCursorNode {
+        AcceptableStartScreenIndexesToShowContentRange {
             #[cfg(debug_assertions)]
             cursor_height,
             #[cfg(debug_assertions)]
@@ -717,9 +722,48 @@ impl<D: Document> DocumentViewer<D> {
             // The actual fields
             start: first_acceptable_screen_index_for_start_of_cursor,
             end: last_acceptable_screen_index_for_start_of_cursor,
+        }
+    }
+
+    fn bounded_proximity_to_doc_ends(
+        &self,
+        content_range: &ContentRange<D::ScreenLine>,
+        bound: usize,
+    ) -> BoundedProximityToDocEnds {
+        let mut screen_lines_before = 0;
+        let mut prev_screen_line = content_range.start.clone();
+        while screen_lines_before < bound {
+            let Some(screen_line) = self.doc.prev_screen_line(&prev_screen_line) else {
+                break;
+            };
+            screen_lines_before += 1;
+            prev_screen_line = screen_line;
+        }
+        let screen_lines_before_start_of_doc = if screen_lines_before <= bound {
+            Some(screen_lines_before)
+        } else {
+            None
         };
 
-        (cursor_layout_details.range, acceptable_start_indexes)
+        let mut screen_lines_after = 0;
+        let mut next_screen_line = content_range.end.clone();
+        while screen_lines_after < bound {
+            let Some(screen_line) = self.doc.next_screen_line(&next_screen_line) else {
+                break;
+            };
+            screen_lines_after += 1;
+            next_screen_line = screen_line;
+        }
+        let screen_lines_after_end_of_doc = if screen_lines_after <= bound {
+            Some(screen_lines_after)
+        } else {
+            None
+        };
+
+        BoundedProximityToDocEnds {
+            screen_lines_before_start_of_doc,
+            screen_lines_after_end_of_doc,
+        }
     }
 
     fn screen_indexes_within_scrolloff(&self) -> RangeInclusive<usize> {
@@ -1074,7 +1118,7 @@ impl<D: Document> DocumentViewer<D> {
         input: String,
         direction: SearchDirection,
     ) -> Result<(), String> {
-        let haystack = self.doc.raw_contents_for_searching();
+        let haystack = self.doc.raw_bytes_for_searching();
 
         if input.is_empty() {
             return Err("Cannot initialize search with empty string".to_string());
@@ -1092,7 +1136,7 @@ impl<D: Document> DocumentViewer<D> {
 
     fn update_search_matches_after_receiving_more_data(&mut self) {
         if let Some(search_state) = &mut self.search_state {
-            search_state.find_additional_matches(self.doc.raw_contents_for_searching());
+            search_state.find_additional_matches(self.doc.raw_bytes_for_searching());
         }
     }
 
@@ -1122,10 +1166,11 @@ impl<D: Document> DocumentViewer<D> {
             return;
         };
 
-        let current_focused_range = self.doc.cursor_content_range(&self.current_focus);
+        let current_focused_range = self.doc.raw_byte_range_of_cursor(&self.current_focus);
+        // Only capture reference to doc, and not self, so we can still mutate `search_state`.
         let doc = &self.doc;
         let is_match_in_collapsed_container = |match_range: Range<usize>| {
-            let cursor = doc.content_index_to_cursor(match_range.start);
+            let cursor = doc.raw_byte_index_to_cursor(match_range.start);
             doc.visible_ancestor(&cursor) != cursor
         };
 
@@ -1138,7 +1183,7 @@ impl<D: Document> DocumentViewer<D> {
 
         // Someday: Convert the range to an actual ScreenLine, and make sure that is
         // visible too.
-        let cursor = self.doc.content_index_to_cursor(match_range.start);
+        let cursor = self.doc.raw_byte_index_to_cursor(match_range.start);
         self.update_so_new_cursor_is_visible(Some(cursor));
     }
 }
@@ -1409,10 +1454,9 @@ mod test {
     fn acceptable_screen_indexes(
         viewer: &DocumentViewer<TextDocument>,
         cursor: &Cursor,
-    ) -> AcceptableStartScreenIndexesToShowCursorNode {
-        viewer
-            .calculate_acceptable_start_screen_indexes_to_show_cursor_node(cursor)
-            .1
+    ) -> AcceptableStartScreenIndexesToShowContentRange {
+        let cursor_range = viewer.doc.cursor_range(cursor);
+        viewer.calculate_acceptable_start_screen_indexes_to_show_content(&cursor_range)
     }
 
     #[test]
@@ -1435,7 +1479,7 @@ mod test {
 
         let line_2 = viewer.doc.cursor_to_line_n(2);
         assert_debug_snapshot!(acceptable_screen_indexes(&viewer, &line_2), @r"
-        AcceptableStartScreenIndexesToShowCursorNode {
+        AcceptableStartScreenIndexesToShowContentRange {
             cursor_height: 4,
             last_screen_index: 9,
             range_after_considering_scrolloff: 0..=9,
@@ -1448,7 +1492,7 @@ mod test {
 
         viewer.set_scrolloff(3);
         assert_debug_snapshot!(acceptable_screen_indexes(&viewer, &line_2), @r"
-        AcceptableStartScreenIndexesToShowCursorNode {
+        AcceptableStartScreenIndexesToShowContentRange {
             cursor_height: 4,
             last_screen_index: 9,
             range_after_considering_scrolloff: 3..=6,
@@ -1459,7 +1503,7 @@ mod test {
         }
         ");
 
-        // Example from the comment in `calculate_acceptable_start_screen_indexes_to_show_cursor_node`:
+        // Example from the comment in `calculate_acceptable_start_screen_indexes_to_show_content`:
         let viewer = init(b"a\nbbbbbbbb\nc\nd\ne\nf\n", 1, 10, 4);
         assert_snapshot!(viewer.render(), @r"
         ┌SI┬─L#┬───┐
@@ -1478,7 +1522,7 @@ mod test {
 
         let line_2 = viewer.doc.cursor_to_line_n(2);
         assert_debug_snapshot!(acceptable_screen_indexes(&viewer, &line_2), @r"
-        AcceptableStartScreenIndexesToShowCursorNode {
+        AcceptableStartScreenIndexesToShowContentRange {
             cursor_height: 8,
             last_screen_index: 9,
             range_after_considering_scrolloff: 4..=5,
@@ -1511,7 +1555,7 @@ mod test {
                 // Clear for the snapshot, since it differs
                 acceptable_screen_indexes.cursor_height = 0;
                 assert_debug_snapshot!(acceptable_screen_indexes, @r"
-                AcceptableStartScreenIndexesToShowCursorNode {
+                AcceptableStartScreenIndexesToShowContentRange {
                     cursor_height: 0,
                     last_screen_index: 2,
                     range_after_considering_scrolloff: 0..=2,
@@ -1544,7 +1588,7 @@ mod test {
                 // Clear for the snapshot, since it differs
                 acceptable_screen_indexes.cursor_height = 0;
                 assert_debug_snapshot!(acceptable_screen_indexes, @r"
-                AcceptableStartScreenIndexesToShowCursorNode {
+                AcceptableStartScreenIndexesToShowContentRange {
                     cursor_height: 0,
                     last_screen_index: 3,
                     range_after_considering_scrolloff: 0..=3,

@@ -779,7 +779,7 @@ impl DocCore {
         }
     }
 
-    pub fn completed_contents(&self) -> &[u8] {
+    pub fn raw_bytes_of_complete_content(&self) -> &[u8] {
         &self.pretty_printed.data()[..self.data_len_of_completed_sexps]
     }
 }

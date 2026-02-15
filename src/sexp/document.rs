@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
 use std::ops::Range;
 
-use crate::document::{CursorRange, Document};
+use crate::document::{ContentRange, Document};
 use crate::search::InvertedPairedDelimeters;
 use crate::sexp::core::{
     AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, ListKind, ListMetadata, NodeIndex,
@@ -564,10 +564,10 @@ impl Document for SexpDocument {
         false
     }
 
-    fn cursor_range(&self, cursor: &NodeIndex) -> CursorRange<Self::ScreenLine> {
+    fn cursor_range(&self, cursor: &NodeIndex) -> ContentRange<Self::ScreenLine> {
         let logical_line = self.logical_line_of_node_index(*cursor);
 
-        CursorRange {
+        ContentRange {
             start: logical_line.clone(),
             end: logical_line.clone(),
             num_screen_lines: 1,
@@ -934,10 +934,6 @@ impl Document for SexpDocument {
         output.into_bytes()
     }
 
-    fn raw_contents_for_searching(&self) -> &[u8] {
-        self.core.completed_contents()
-    }
-
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
         InvertedPairedDelimeters {
             square_brackets: false,
@@ -946,12 +942,16 @@ impl Document for SexpDocument {
         }
     }
 
-    fn cursor_content_range(&self, cursor: &NodeIndex) -> Range<usize> {
+    fn raw_bytes_for_searching(&self) -> &[u8] {
+        self.core.raw_bytes_of_complete_content()
+    }
+
+    fn raw_byte_range_of_cursor(&self, cursor: &NodeIndex) -> Range<usize> {
         // TODO: Implement me
         0..0
     }
 
-    fn content_index_to_cursor(&self, index: usize) -> NodeIndex {
+    fn raw_byte_index_to_cursor(&self, index: usize) -> NodeIndex {
         // TODO: Implement me
         NodeIndex(0)
     }

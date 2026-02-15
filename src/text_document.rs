@@ -2,7 +2,7 @@ use std::cmp::{self, Ordering};
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::document::{CursorRange, Document};
+use crate::document::{ContentRange, Document};
 
 // Precalculated break points when displaying a long line. Each values represents
 // the starting byte offset of one line.
@@ -402,7 +402,7 @@ impl Document for TextDocument {
             .map_or(false, SegmentOfWrappedLine::is_before_end)
     }
 
-    fn cursor_range(&self, cursor: &Cursor) -> CursorRange<ScreenLine> {
+    fn cursor_range(&self, cursor: &Cursor) -> ContentRange<ScreenLine> {
         let start = self.create_ref_to_start_of_line(*cursor);
         let end = match &start.segment_of_wrapped_line {
             None => start.clone(),
@@ -417,7 +417,7 @@ impl Document for TextDocument {
             Some(SegmentOfWrappedLine { break_points, .. }) => break_points.len(),
         };
 
-        CursorRange {
+        ContentRange {
             start,
             end,
             num_screen_lines,
@@ -465,7 +465,7 @@ impl Document for TextDocument {
         self.screen_line_contents(screen_line).to_vec()
     }
 
-    fn raw_contents_for_searching(&self) -> &[u8] {
+    fn raw_bytes_for_searching(&self) -> &[u8] {
         // This indicates whether we're going to accept any more input or not.
         if self.trailing_newline.is_some() {
             &self.data
@@ -474,12 +474,12 @@ impl Document for TextDocument {
         }
     }
 
-    fn cursor_content_range(&self, cursor: &Cursor) -> Range<usize> {
+    fn raw_byte_range_of_cursor(&self, cursor: &Cursor) -> Range<usize> {
         self.complete_line_ranges[*cursor].clone()
     }
 
-    fn content_index_to_cursor(&self, index: usize) -> Cursor {
-        assert!(index < self.raw_contents_for_searching().len());
+    fn raw_byte_index_to_cursor(&self, index: usize) -> Cursor {
+        assert!(index < self.raw_bytes_for_searching().len());
 
         let first_line_starting_after_index = self
             .complete_line_ranges
