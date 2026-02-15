@@ -1195,6 +1195,7 @@ mod test {
         Resize(Dimensions),
         SetScrolloff(usize),
         AppendDocumentData(Vec<u8>),
+        InitializeSearch(String, SearchDirection),
         // DocumentEof,
     }
 
@@ -1209,6 +1210,7 @@ mod test {
                 }
                 Change::SetScrolloff(scrolloff) => write!(f, "SetScrolloff({})", scrolloff),
                 Change::AppendDocumentData(_) => write!(f, "AppendDocData"),
+                Change::InitializeSearch(s, d) => write!(f, "{}{}", d.prompt_str(), s),
             }
         }
     }
@@ -1287,6 +1289,18 @@ mod test {
         Change::AppendDocumentData(data.to_vec())
     }
 
+    fn initialize_search(search_input: &str, search_direction: SearchDirection) -> Change {
+        Change::InitializeSearch(search_input.to_string(), search_direction)
+    }
+
+    fn jump_to_next_match(jumps: usize) -> Change {
+        Change::Action(Action::JumpToSearchMatch(JumpDirection::Next, jumps))
+    }
+
+    fn jump_to_prev_match(jumps: usize) -> Change {
+        Change::Action(Action::JumpToSearchMatch(JumpDirection::Prev, jumps))
+    }
+
     impl<D: Document> DocumentViewer<D> {
         fn render(&self) -> String {
             // |12345678       9|
@@ -1333,6 +1347,9 @@ mod test {
                 Change::Resize(dimensions) => self.resize(dimensions),
                 Change::SetScrolloff(scrolloff) => self.set_scrolloff(scrolloff),
                 Change::AppendDocumentData(data) => self.append_document_data(&data),
+                Change::InitializeSearch(search_input, search_direction) => self
+                    .initialize_search(search_input, search_direction)
+                    .unwrap(),
             }
         }
     }
@@ -2216,6 +2233,84 @@ mod test {
         │ 3│ 4 │ d   │ │ 3│*5 │↪xxx↩│        │ 3│ 6 │ e                              │
         │ 4│ 5 │ xxx↩│ │ 4│*5 │↪xxx↩│        │ 4│ 7 │ f                              │
         └──┴───┴─────┘ └──┴───┴─────┘        └──┴───┴────────────────────────────────┘
+        ");
+    }
+
+    #[test]
+    fn test_basic_search() {
+        let text = br"1
+2a
+3a
+4
+5
+6b
+7aa
+8
+9b
+0";
+        let mut viewer = init(text, 3, 4, 0);
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("a", SearchDirection::Forward),
+                    jump_to_next_match(1),
+                ],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(2)],
+                vec![jump_to_prev_match(3)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                       /a                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 2) JumpToSearchMatch(Prev, 3)
+                       JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐
+        │ 0│*1 │ 1   │ │ 0│ 1 │ 1   │             │ 0│ 1 │ 1   │             │ 0│ 4 │ 4   │             │ 0│*2 │ 2a  │
+        │ 1│ 2 │ 2a  │ │ 1│*2 │ 2a  │             │ 1│ 2 │ 2a  │             │ 1│ 5 │ 5   │             │ 1│ 3 │ 3a  │
+        │ 2│ 3 │ 3a  │ │ 2│ 3 │ 3a  │             │ 2│*3 │ 3a  │             │ 2│ 6 │ 6b  │             │ 2│ 4 │ 4   │
+        │ 3│ 4 │ 4   │ │ 3│ 4 │ 4   │             │ 3│ 4 │ 4   │             │ 3│*7 │ 7aa │             │ 3│ 5 │ 5   │
+        └──┴───┴─────┘ └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘
+        ");
+
+        // Moving the cursor resets the search (we don't jump to line 7).
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![jump_to_next_match(1)],
+                vec![focus_top(), jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                       JumpToSearchMatch(Next, 1) FocusTop
+                                                  JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐
+        │ 0│*2 │ 2a  │ │ 0│ 2 │ 2a  │             │ 0│ 1 │ 1   │
+        │ 1│ 3 │ 3a  │ │ 1│*3 │ 3a  │             │ 1│*2 │ 2a  │
+        │ 2│ 4 │ 4   │ │ 2│ 4 │ 4   │             │ 2│ 3 │ 3a  │
+        │ 3│ 5 │ 5   │ │ 3│ 5 │ 5   │             │ 3│ 4 │ 4   │
+        └──┴───┴─────┘ └──┴───┴─────┘             └──┴───┴─────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("b", SearchDirection::Reverse),
+                    jump_to_next_match(1),
+                ],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_prev_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                       ?b                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Prev, 1)
+                       JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐
+        │ 0│ 1 │ 1   │ │ 0│ 6 │ 6b  │             │ 0│*6 │ 6b  │             │ 0│ 6 │ 6b  │
+        │ 1│*2 │ 2a  │ │ 1│ 7 │ 7aa │             │ 1│ 7 │ 7aa │             │ 1│ 7 │ 7aa │
+        │ 2│ 3 │ 3a  │ │ 2│ 8 │ 8   │             │ 2│ 8 │ 8   │             │ 2│ 8 │ 8   │
+        │ 3│ 4 │ 4   │ │ 3│*9 │ 9b  │             │ 3│ 9 │ 9b  │             │ 3│*9 │ 9b  │
+        └──┴───┴─────┘ └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘
         ");
     }
 }
