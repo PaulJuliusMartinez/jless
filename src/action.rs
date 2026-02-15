@@ -1,7 +1,9 @@
 use std::num::NonZeroUsize;
 
+use crate::search::JumpDirection;
+
 #[derive(Debug, Copy, Clone)]
-pub enum Action<Cursor> {
+pub enum Action {
     // Does nothing, for debugging, shouldn't modify any state.
     #[allow(dead_code)]
     NoOp,
@@ -36,7 +38,7 @@ pub enum Action<Cursor> {
     JumpDown(Option<NonZeroUsize>),
     JumpUp(Option<NonZeroUsize>),
 
-    JumpToSearchMatch(Cursor),
+    JumpToSearchMatch(JumpDirection, usize),
 
     FocusTop,
     FocusBottom,

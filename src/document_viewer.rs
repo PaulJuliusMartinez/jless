@@ -5,6 +5,7 @@ use std::ops::{Range, RangeInclusive};
 use crate::action::Action;
 use crate::dimensions::Dimensions;
 use crate::document::{CursorRange, Document};
+use crate::search::{JumpDirection, SearchDirection, SearchState};
 
 /// The `DocumentViewer` manages what part of a document is displayed on screen
 /// as the user takes actions to move the cursor or manipulate the document. Much
@@ -33,6 +34,8 @@ pub struct DocumentViewer<D: Document> {
 
     tailing_end_of_document: bool,
     jump_distance: Option<NonZeroUsize>,
+
+    search_state: Option<SearchState>,
 }
 
 #[derive(Debug)]
@@ -95,6 +98,7 @@ impl<D: Document> DocumentViewer<D> {
             scrolloff_setting: scrolloff,
             tailing_end_of_document: false,
             jump_distance: None,
+            search_state: None,
         }
     }
 
@@ -221,35 +225,31 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn move_cursor_down(&mut self, lines: usize) {
+    fn move_cursor_down(&mut self, lines: usize) {
         let new_cursor = self.doc.move_cursor_down(lines, &self.current_focus);
         self.update_so_new_cursor_is_visible(new_cursor);
     }
 
-    pub fn move_cursor_up(&mut self, lines: usize) {
+    fn move_cursor_up(&mut self, lines: usize) {
         let new_cursor = self.doc.move_cursor_up(lines, &self.current_focus);
         self.update_so_new_cursor_is_visible(new_cursor);
     }
 
-    pub fn expand_or_move_cursor_right_or_down(&mut self) {
+    fn expand_or_move_cursor_right_or_down(&mut self) {
         let new_cursor = self
             .doc
             .expand_or_move_cursor_right_or_down(&self.current_focus);
         self.update_so_new_cursor_is_visible(new_cursor);
     }
 
-    pub fn collapse_or_move_cursor_left_or_up(&mut self) {
+    fn collapse_or_move_cursor_left_or_up(&mut self) {
         let new_cursor = self
             .doc
             .collapse_or_move_cursor_left_or_up(&self.current_focus);
         self.update_so_new_cursor_is_visible(new_cursor);
     }
 
-    fn jump_to_search_match(&mut self, cursor: D::Cursor) {
-        self.update_so_new_cursor_is_visible(Some(cursor));
-    }
-
-    pub fn focus_top(&mut self) {
+    fn focus_top(&mut self) {
         let (top_screen_line, cursor) = self
             .doc
             .top_screen_line_and_cursor()
@@ -258,7 +258,7 @@ impl<D: Document> DocumentViewer<D> {
         self.current_focus = cursor;
     }
 
-    pub fn focus_bottom(&mut self) {
+    fn focus_bottom(&mut self) {
         let (bottom_screen_line, cursor) = self
             .doc
             .bottom_screen_line_and_cursor()
@@ -278,14 +278,14 @@ impl<D: Document> DocumentViewer<D> {
         self.current_focus = cursor;
     }
 
-    pub fn move_focused_elem_to_top(&mut self) {
+    fn move_focused_elem_to_top(&mut self) {
         let cursor_range = self.doc.cursor_range(&self.current_focus);
         let scrolloff = self.effective_scrolloff();
         // If the focused node is multiple lines, put the start at the top of the screen.
         self.top_line = self.n_screen_lines_before_or_top_of_doc(cursor_range.start, scrolloff);
     }
 
-    pub fn move_focused_elem_to_center(&mut self) {
+    fn move_focused_elem_to_center(&mut self) {
         // We want to put the middle of the focused node, at the middle of the screen.
         // There are four cases: even/odd viewport height, even/odd cursor height.
         // In the odd/odd and even/even cases, things fit evenly, but otherwise we need
@@ -322,7 +322,7 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn move_focused_elem_to_bottom(&mut self) {
+    fn move_focused_elem_to_bottom(&mut self) {
         let cursor_range = self.doc.cursor_range(&self.current_focus);
         let scrolloff = self.effective_scrolloff();
         // If `height = 5`, and `scrolloff = 1`, then we want the end to be the fourth line,
@@ -332,7 +332,7 @@ impl<D: Document> DocumentViewer<D> {
         self.top_line = self.n_screen_lines_before_or_top_of_doc(cursor_range.end, offset);
     }
 
-    pub fn scroll_viewport_down(&mut self, mut lines: usize) {
+    fn scroll_viewport_down(&mut self, mut lines: usize) {
         let mut lines_scrolled = 0;
         let mut next_top_line = self.top_line.clone();
         while lines > 0 {
@@ -352,11 +352,11 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn page_down(&mut self, pages: usize) {
+    fn page_down(&mut self, pages: usize) {
         self.scroll_viewport_down(self.dimensions.height * pages);
     }
 
-    pub fn scroll_viewport_up(&mut self, mut lines: usize) {
+    fn scroll_viewport_up(&mut self, mut lines: usize) {
         let mut lines_scrolled = 0;
         let mut next_top_line = self.top_line.clone();
         while lines > 0 {
@@ -376,7 +376,7 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn page_up(&mut self, pages: usize) {
+    fn page_up(&mut self, pages: usize) {
         self.scroll_viewport_up(self.dimensions.height * pages);
     }
 
@@ -1009,10 +1009,11 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn do_action(&mut self, action: Action<D::Cursor>) {
+    pub fn do_action(&mut self, action: Action) {
         let prev_cursor = self.current_focus.clone();
 
-        let focusing_bottom = matches!(action, Action::FocusBottom);
+        let mut focused_bottom = false;
+        let mut jumped_to_search_match = false;
 
         match action {
             Action::NoOp => (),
@@ -1026,9 +1027,15 @@ impl<D: Document> DocumentViewer<D> {
             Action::PageUp(n) => self.page_up(n),
             Action::JumpDown(n) => self.jump_down(n),
             Action::JumpUp(n) => self.jump_up(n),
-            Action::JumpToSearchMatch(cursor) => self.jump_to_search_match(cursor),
+            Action::JumpToSearchMatch(jump_direction, n) => {
+                jumped_to_search_match = true;
+                self.jump_to_search_match(jump_direction, n)
+            }
             Action::FocusTop => self.focus_top(),
-            Action::FocusBottom => self.focus_bottom(),
+            Action::FocusBottom => {
+                focused_bottom = true;
+                self.focus_bottom()
+            }
             Action::MoveFocusedElemToTop => self.move_focused_elem_to_top(),
             Action::MoveFocusedElemToCenter => self.move_focused_elem_to_center(),
             Action::MoveFocusedElemToBottom => self.move_focused_elem_to_bottom(),
@@ -1036,9 +1043,14 @@ impl<D: Document> DocumentViewer<D> {
 
         // When we focus the bottom of the document, we'll start tailing the
         // end, and we stop when we move the cursor.
-        if focusing_bottom {
+        if focused_bottom {
             self.tailing_end_of_document = true;
         } else if prev_cursor != self.current_focus {
+            if !jumped_to_search_match {
+                if let Some(search_state) = &mut self.search_state {
+                    search_state.clear_last_jump();
+                }
+            };
             self.tailing_end_of_document = false;
         }
     }
@@ -1055,8 +1067,71 @@ impl<D: Document> DocumentViewer<D> {
     // Search //
     ////////////
 
-    pub fn currently_focused_content_range(&self) -> Range<usize> {
-        self.doc.cursor_content_range(&self.current_focus)
+    pub fn initialize_search(
+        &mut self,
+        input: String,
+        direction: SearchDirection,
+    ) -> Result<(), String> {
+        let haystack = self.doc.raw_contents_for_searching();
+
+        if input.is_empty() {
+            return Err("Cannot initialize search with empty string".to_string());
+        }
+
+        self.search_state = Some(SearchState::new(
+            input,
+            haystack,
+            direction,
+            D::inverted_paired_delimiters_for_search_input(),
+        )?);
+
+        Ok(())
+    }
+
+    pub fn has_initialized_search_state(&self) -> bool {
+        self.search_state.is_some()
+    }
+
+    pub fn set_search_direction(&mut self, direction: SearchDirection) {
+        debug_assert!(self.search_state.is_some());
+
+        if let Some(search_state) = &mut self.search_state {
+            search_state.set_search_direction(direction);
+        }
+    }
+
+    // Returns `None` if no search is currently initialized.
+    pub fn num_search_matches(&self) -> Option<usize> {
+        match &self.search_state {
+            None => None,
+            Some(search_state) => Some(search_state.num_matches()),
+        }
+    }
+
+    fn jump_to_search_match(&mut self, jump_direction: JumpDirection, jumps: usize) {
+        let Some(search_state) = &mut self.search_state else {
+            debug_assert!(false, "Shouldn't jump to search match if no search state");
+            return;
+        };
+
+        let current_focused_range = self.doc.cursor_content_range(&self.current_focus);
+        let doc = &self.doc;
+        let is_match_in_collapsed_container = |match_range: Range<usize>| {
+            let cursor = doc.content_index_to_cursor(match_range.start);
+            doc.visible_ancestor(&cursor) != cursor
+        };
+
+        let match_range = search_state.jump_to_next_match(
+            current_focused_range,
+            jump_direction,
+            jumps,
+            &is_match_in_collapsed_container,
+        );
+
+        // Someday: Convert the range to an actual ScreenLine, and make sure that is
+        // visible too.
+        let cursor = self.doc.content_index_to_cursor(match_range.start);
+        self.update_so_new_cursor_is_visible(Some(cursor));
     }
 }
 

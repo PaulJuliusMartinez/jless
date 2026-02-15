@@ -254,61 +254,57 @@ impl<D: Document> App<D> {
         &mut self,
         search_direction: SearchDirection,
         count: usize,
-    ) -> Option<Action<D::Cursor>> {
+    ) -> Option<Action> {
         let search_input = self.readline(search_direction.prompt_str())?;
+
+        let Some(viewer) = &mut self.viewer else {
+            // TODO: Display error: "Waiting for input", but eventually store the search
+            // input, and give it to the viewer later. (Once we do that though, we still
+            // need to check for an empty input.
+            return None;
+        };
 
         // In vim, /<CR> or ?<CR> is a longcut for repeating the previous search.
         if search_input.is_empty() {
-            if let Some(search_state) = &mut self.search_state {
-                // This will actually set the direction of a search going forward.
-                search_state.set_search_direction(search_direction);
-                return self.jump_to_search_match(JumpDirection::Next, count);
+            if viewer.has_initialized_search_state() {
+                viewer.set_search_direction(search_direction);
+                return Some(Action::JumpToSearchMatch(JumpDirection::Next, count));
             } else {
                 // TODO: Display error: "No current search input"
-                // Check return value; bell or not?
                 return None;
             }
         }
 
-        let haystack = if let Some(viewer) = &self.viewer {
-            viewer.doc.raw_contents_for_searching()
-        } else {
-            b""
-        };
-
-        self.search_state = SearchState::new(
-            search_input,
-            haystack,
-            search_direction,
-            crate::search::SEXP_INVERTED_PAIRED_DELIMITERS,
-        );
-
-        self.jump_to_search_match(JumpDirection::Next, count)
+        match viewer.initialize_search(search_input, search_direction) {
+            Ok(()) => Some(Action::JumpToSearchMatch(JumpDirection::Next, count)),
+            Err(_err) => {
+                // TODO: Display this error
+                None
+            }
+        }
     }
 
     fn jump_to_search_match(
         &mut self,
         jump_direction: JumpDirection,
         jumps: usize,
-    ) -> Option<Action<D::Cursor>> {
-        let Some(search_state) = &mut self.search_state else {
-            // TODO: Display error: "Type / to search"
-            return None;
-        };
-
-        if !search_state.any_matches() {
-            // TODO: Display error: "Pattern not found: {}"
-            return None;
-        }
-
+    ) -> Option<Action> {
         let Some(viewer) = &self.viewer else {
             // TODO: Display error: "Still waiting for input..."
             return None;
         };
 
-        let destination = search_state.jump_to_match(viewer, jump_direction, jumps);
-
-        Some(Action::JumpToSearchMatch(destination))
+        match viewer.num_search_matches() {
+            None => {
+                // TODO: Display error: "Type / to search"
+                None
+            }
+            Some(0) => {
+                // TODO: Display error: "Pattern not found: {}"
+                None
+            }
+            Some(_) => Some(Action::JumpToSearchMatch(jump_direction, jumps)),
+        }
     }
 
     fn readline(&mut self, prompt: &str) -> Option<String> {

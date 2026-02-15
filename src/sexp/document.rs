@@ -3,6 +3,7 @@ use std::iter::DoubleEndedIterator;
 use std::ops::Range;
 
 use crate::document::{CursorRange, Document};
+use crate::search::InvertedPairedDelimeters;
 use crate::sexp::core::{
     AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, ListKind, ListMetadata, NodeIndex,
 };
@@ -935,6 +936,14 @@ impl Document for SexpDocument {
 
     fn raw_contents_for_searching(&self) -> &[u8] {
         self.core.completed_contents()
+    }
+
+    fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
+        InvertedPairedDelimeters {
+            square_brackets: false,
+            curly_braces: false,
+            parentheses: true,
+        }
     }
 
     fn cursor_content_range(&self, cursor: &NodeIndex) -> Range<usize> {

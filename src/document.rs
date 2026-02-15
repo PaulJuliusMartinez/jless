@@ -1,5 +1,7 @@
 use std::ops::Range;
 
+use crate::search::InvertedPairedDelimeters;
+
 // Misc. notes:
 //
 // Maybe want:
@@ -142,6 +144,15 @@ pub trait Document {
     // Search
 
     fn raw_contents_for_searching(&self) -> &[u8];
+
+    fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
+        InvertedPairedDelimeters {
+            square_brackets: false,
+            curly_braces: false,
+            parentheses: false,
+        }
+    }
+
     fn cursor_content_range(&self, cursor: &Self::Cursor) -> Range<usize>;
     // Someady: This should maybe take in a Range and return a CursorRange instead?
     fn content_index_to_cursor(&self, index: usize) -> Self::Cursor;

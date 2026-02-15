@@ -481,8 +481,11 @@ impl Document for TextDocument {
     fn content_index_to_cursor(&self, index: usize) -> Cursor {
         assert!(index < self.raw_contents_for_searching().len());
 
-        self.complete_line_ranges
-            .partition_point(|line_range| line_range.start <= index)
+        let first_line_starting_after_index = self
+            .complete_line_ranges
+            .partition_point(|line_range| line_range.start <= index);
+
+        first_line_starting_after_index - 1
     }
 
     fn visible_ancestor(&self, cursor: &Cursor) -> Cursor {
