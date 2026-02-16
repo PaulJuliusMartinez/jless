@@ -786,6 +786,14 @@ impl DocCore {
     pub fn raw_bytes_of_complete_content(&self) -> &[u8] {
         &self.pretty_printed.data()[..self.data_len_of_completed_sexps]
     }
+
+    pub fn closest_node_to_byte_index(&self, byte_index: usize) -> NodeIndex {
+        debug_assert!(byte_index < self.pretty_printed.len());
+        NodeIndex(
+            self.all_nodes
+                .partition_point(|node| node.data_range.end <= byte_index),
+        )
+    }
 }
 
 #[cfg(test)]
@@ -983,7 +991,7 @@ mod tests {
     #[test]
     fn test_basic_errors() {
         let unmatched_closing_paren = dump(b"one )");
-        assert_snapshot!(&unmatched_closing_paren, @r#"
+        assert_snapshot!(unmatched_closing_paren, @r#"
         Raw document:
         one
 
@@ -992,7 +1000,7 @@ mod tests {
         "#);
 
         let pending_sexp_comment_at_end_of_list = dump(b"(1 #;)");
-        assert_snapshot!(&pending_sexp_comment_at_end_of_list, @r##"
+        assert_snapshot!(pending_sexp_comment_at_end_of_list, @r##"
         Raw document:
         (1 #;)
 
@@ -1003,7 +1011,7 @@ mod tests {
         "##);
 
         let invalid_atom_escape = dump(br#""\xGG""#);
-        assert_snapshot!(&invalid_atom_escape, @r#"
+        assert_snapshot!(invalid_atom_escape, @r#"
         Raw document:
         "\xGG"
 
@@ -1012,7 +1020,7 @@ mod tests {
         "#);
 
         let eof_before_list_end = dump(b"((a z");
-        assert_snapshot!(&eof_before_list_end, @r#"
+        assert_snapshot!(eof_before_list_end, @r#"
         Raw document:
         ((a z
 
@@ -1024,5 +1032,45 @@ mod tests {
         5   5..5     <-- ^ 0[--] --> EndOfList                : ""
         6   5..5     <-- ^--[--] --> EndOfList                : ""
         "#);
+    }
+
+    #[test]
+    fn test_closest_node_to_byte_index() {
+        let doc = DocCore::from_bytes(b"((one two) #; three ; four\n)");
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        ((one two) #; three ; four
+        )
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..2     <-- ^ 0[0 ]  5> StartOfList(RecordField) : "("
+        2   2..5     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "one"
+        3   6..9     <2  ^ 1[1 ] --> Atom(RecordKey)          : "two"
+        4   9..10    <-- ^ 0[--] --> EndOfList                : ")"
+        5   14..19   <1  ^ 0[#;]  6> Atom(RecordKey)          : "three"
+        6   20..26   <5  ^ 0[--] --> LineComment              : "; four"
+        7   27..28   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        assert_eq!(doc.closest_node_to_byte_index(0), NodeIndex(0));
+        assert_eq!(doc.closest_node_to_byte_index(1), NodeIndex(1));
+        assert_eq!(doc.closest_node_to_byte_index(4), NodeIndex(2));
+        assert_eq!(doc.closest_node_to_byte_index(5), NodeIndex(3));
+        assert_eq!(doc.closest_node_to_byte_index(10), NodeIndex(5));
+        assert_eq!(doc.closest_node_to_byte_index(27), NodeIndex(7));
+        assert_eq!(doc.pretty_printed.len(), 28);
+
+        let doc = DocCore::from_bytes(b"(a");
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (a
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..2     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "a"
+        2   2..2     <1  ^ 0[--] --> Error: Unexpected EOF while parsing list
+        3   2..2     <-- ^--[--] --> EndOfList                : ""
+        "#);
+
+        assert_eq!(doc.closest_node_to_byte_index(1), NodeIndex(1));
     }
 }

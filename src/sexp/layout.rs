@@ -423,7 +423,24 @@ pub mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
+    enum IndexType {
+        Node,
+        Byte,
+    }
+
     pub fn show_logical_lines(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
+        show_logical_lines_impl(doc, lines, false)
+    }
+
+    pub fn show_logical_lines_with_byte_indexes(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
+        show_logical_lines_impl(doc, lines, true)
+    }
+
+    fn show_logical_lines_impl(
+        doc: &DocCore,
+        lines: Vec<LogicalLine>,
+        show_byte_indexes: bool,
+    ) -> String {
         let mut output = String::new();
 
         for LogicalLine {
@@ -435,7 +452,10 @@ pub mod tests {
             let start_range = &doc.node(start_index).data_range;
             let end_range = &doc.node(end_index).data_range;
 
-            let _ = write!(output, "{:>2}..={:<2} : ", start_index.0, end_index.0,);
+            let _ = write!(output, "{:>2}..={:<2} : ", start_index.0, end_index.0);
+            if show_byte_indexes {
+                let _ = write!(output, "{:>3}..={:<3} : ", start_range.start, end_range.end);
+            }
 
             let _ = write!(output, "{: <indentation$}", "");
 

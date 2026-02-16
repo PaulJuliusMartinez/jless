@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
-use std::ops::Range;
+use std::ops::{Range, RangeInclusive};
 
 use crate::document::{ContentRange, Document};
 use crate::search::InvertedPairedDelimeters;
@@ -319,6 +319,63 @@ impl SexpDocument {
         focusable_nodes.last().map(|(node_index, _)| *node_index)
     }
 
+    fn first_normal_focusable_node_to_left_of_node_or_node(
+        &self,
+        node_index: NodeIndex,
+    ) -> NodeIndex {
+        let logical_line = self.logical_line_of_node_index(node_index);
+
+        let mut focusable_nodes = self.focusable_nodes_in_line(&logical_line);
+        focusable_nodes.retain(|(focusable_node_index, _)| *focusable_node_index <= node_index);
+
+        match Self::last_normal_focusable_node_or_last_node(focusable_nodes) {
+            Some(focusable_node_index) => focusable_node_index,
+            None => node_index,
+        }
+    }
+
+    // When we're focused on record fields and variants, the cursor points to the list, but we
+    // really consider the record key / constructor as currently focused as well. And for DateTimes
+    // we also consider the whole list as the cursor.
+    //
+    // This returns the range of node indexes that we consider as currently being part of the cursor.
+    fn nodes_considered_as_part_of_cursor(
+        &self,
+        node_index: NodeIndex,
+    ) -> RangeInclusive<NodeIndex> {
+        let logical_line = self.logical_line_of_node_index(node_index);
+
+        match self.core.token(node_index) {
+            // When we're focused on non-lists, we don't consider any other nodes as part of the
+            // cursor.
+            DocumentToken::Atom(_)
+            | DocumentToken::Unit { .. }
+            | DocumentToken::LineComment
+            | DocumentToken::BlockComment
+            | DocumentToken::Error(_)
+            | DocumentToken::EndOfList(_) => node_index..=node_index,
+            DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => match list_kind {
+                ListKind::Record | ListKind::Singleton | ListKind::Unit | ListKind::Plain => {
+                    node_index..=node_index
+                }
+                ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
+                    let atom_node_index = node_index + 1;
+                    if matches!(self.core.token(atom_node_index), DocumentToken::Atom(_))
+                        && logical_line.contains_node_index(atom_node_index)
+                    {
+                        node_index..=atom_node_index
+                    } else {
+                        node_index..=node_index
+                    }
+                }
+                ListKind::DateTime => {
+                    // DateTimes can't be interrupted by comments or anything else.
+                    node_index..=(node_index + 3)
+                }
+            },
+        }
+    }
+
     // Assumes that the logical line passed in is itself visible (i.e., if a parent node is
     // collapsed, this may not return an actually visible node, but if all the parents _were_
     // expanded, then it would the correct thing).
@@ -341,49 +398,24 @@ impl SexpDocument {
         self.maybe_logical_line_of_node_index(logical_line.end_index + 1)
     }
 
-    fn first_visible_line_at_or_above(&self, logical_line: LogicalLine) -> LogicalLine {
-        // Imagine we are on 'h' in the below sexp, and we want the previous logical line.
-        // It may be easier to think about it if we explode each of the closing parens
-        // on their own line:
-        //                               first record collapsed:    d) record collapsed:
-        // (a              (a            (a                         (a
-        //  ((b 1)          ((b 1)        (... (d (... (g 3))))      ((b 1)
-        //   (c 2)           (c 2)        h)                          (c 2)
-        //   (d (            (d (                                     (d (... (g 3))))
-        //     (e 1)           (e 1)                                 h)
-        //     (f 2)           (f 2)
-        //                     (g 3
-        //                     )
-        //                    )
-        //                   )
-        //     (g 3))))     )
-        //  h)
-        //
-        //  Starting from the bottom (i.e., last paren on previous line), if any of those
-        //  containers are collapsed, then moving up will take us to the start of that container.
-        //  There can't be another an earlier container in that line that is collapsed, because
-        //  then it would have ended at our line or later (by the rules of choosing collapsible
-        //  nodes). And by the same logic, there isn't some other even-earlier thing that is
-        //  collapsed, because it would have to contain our starting line too, but we're assuming
-        //  that it's visible.
-        //
-        //  If none of the ends of containers in the prevous line are collapsed, then the previous
-        //  visible line is really just the previous line.
+    fn closest_visible_ancestor(&self, cursor: &NodeIndex) -> NodeIndex {
+        let mut closest_visible = *cursor;
+        let mut curr = *cursor;
 
-        for end_node_index in logical_line.node_indexes().rev() {
-            let Some(list_start_index) = self.core.token(end_node_index).list_start_index() else {
-                // Since all the closing parens go at the end, once we see a non-end of list,
-                // then we can stop checking.
-                break;
-            };
-
-            match self.collapsible_nodes.get(&list_start_index) {
-                None | Some(Expanded) => continue,
-                Some(Collapsed) => return self.logical_line_of_node_index(list_start_index),
+        while let Some(parent_index) = self.core.node(curr).parent_index {
+            match self.collapsible_nodes.get(&parent_index) {
+                Some(Collapsed) => closest_visible = parent_index,
+                None | Some(Expanded) => (),
             }
+            curr = parent_index;
         }
 
-        logical_line
+        closest_visible
+    }
+
+    fn first_visible_line_at_or_above(&self, logical_line: LogicalLine) -> LogicalLine {
+        let visible_ancestor = self.closest_visible_ancestor(&logical_line.start_index);
+        return self.logical_line_of_node_index(visible_ancestor);
     }
 
     fn prev_visible_logical_line(&self, logical_line: &LogicalLine) -> Option<LogicalLine> {
@@ -957,23 +989,26 @@ impl Document for SexpDocument {
     }
 
     fn raw_byte_range_of_cursor(&self, cursor: &NodeIndex) -> Range<usize> {
-        // TODO: Implement me
-        0..0
+        let nodes = self.nodes_considered_as_part_of_cursor(*cursor);
+        let start = self.core.node(*nodes.start()).data_range.start;
+        let end = self.core.node(*nodes.end()).data_range.end;
+        start..end
     }
 
-    fn raw_byte_index_to_cursor(&self, index: usize) -> NodeIndex {
-        // TODO: Implement me
-        NodeIndex(0)
+    fn raw_byte_index_to_cursor(&self, byte_index: usize) -> NodeIndex {
+        let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
+        self.first_normal_focusable_node_to_left_of_node_or_node(closest_node_to_byte_index)
     }
 
-    fn raw_byte_index_to_visible_screen_line(&self, index: usize) -> Self::ScreenLine {
-        // TODO: Implement me
-        self.logical_line_of_node_index(NodeIndex(0))
+    fn raw_byte_index_to_visible_screen_line(&self, byte_index: usize) -> Self::ScreenLine {
+        let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
+        let closest_visible_ancestor = self.closest_visible_ancestor(&closest_node_to_byte_index);
+        self.logical_line_of_node_index(closest_visible_ancestor)
     }
 
     fn closest_visible_cursor(&self, cursor: &NodeIndex) -> NodeIndex {
-        // TODO: Implement me
-        *cursor
+        let closest_visible_ancestor = self.closest_visible_ancestor(cursor);
+        self.first_normal_focusable_node_to_left_of_node_or_node(closest_visible_ancestor)
     }
 }
 
@@ -987,7 +1022,7 @@ mod tests {
     use std::fmt::Write;
 
     use bstr::ByteSlice;
-    use insta::assert_snapshot;
+    use insta::{assert_debug_snapshot, assert_snapshot};
 
     const FAR_AWAY_CURSOR: NodeIndex = NodeIndex(usize::MAX);
 
@@ -998,17 +1033,25 @@ mod tests {
         doc
     }
 
-    fn dump(doc: &SexpDocument) -> String {
-        let logical_lines: Vec<LogicalLine> = doc
-            .starts_of_logical_lines
+    fn logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
+        doc.starts_of_logical_lines
             .iter()
             .map(|(start_index, (end_index, indentation))| LogicalLine {
                 indentation: *indentation,
                 start_index: *start_index,
                 end_index: *end_index,
             })
-            .collect();
+            .collect()
+    }
+
+    fn dump(doc: &SexpDocument) -> String {
+        let logical_lines = logical_lines(doc);
         crate::sexp::layout::tests::show_logical_lines(&doc.core, logical_lines)
+    }
+
+    fn dump_with_byte_indexes(doc: &SexpDocument) -> String {
+        let logical_lines = logical_lines(doc);
+        crate::sexp::layout::tests::show_logical_lines_with_byte_indexes(&doc.core, logical_lines)
     }
 
     fn show_visible_lines(doc: &SexpDocument) -> String {
@@ -1385,5 +1428,100 @@ mod tests {
         Left => NodeIndex(5) Collapsed(7)
         Left => NodeIndex(0)
         ");
+    }
+
+    #[test]
+    fn test_converting_between_raw_bytes_and_cursors() {
+        let doc = new_doc(b"((aa 11)(bb (Var1 22))(cc (33 (Var2 (dd 44)) (Var3 55))))");
+        assert_snapshot!(dump_with_byte_indexes(&doc), @r#"
+         0..=4  :   0..=8   : ((aa 11)
+         5..=8  :   9..=18  :  (bb (Var1
+         9..=11 :  19..=23  :    22))
+        12..=14 :  24..=29  :  (cc (
+        15..=15 :  29..=31  :    33
+        16..=17 :  32..=37  :    (Var2
+        18..=22 :  38..=46  :      (dd 44))
+        23..=24 :  47..=52  :    (Var3
+        25..=29 :  53..=59  :      55))))
+        "#);
+
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(0)), @"0..1");
+        assert_eq!(doc.raw_byte_index_to_cursor(0), NodeIndex(0));
+        assert_eq!(doc.raw_byte_index_to_cursor(1), NodeIndex(1));
+
+        // Record fields include the key
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(5)), @"9..12");
+        assert_eq!(doc.raw_byte_index_to_cursor(8), NodeIndex(5));
+        assert_eq!(doc.raw_byte_index_to_cursor(9), NodeIndex(5));
+        assert_eq!(doc.raw_byte_index_to_cursor(12), NodeIndex(5));
+
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(6)), @"10..12");
+
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(8)), @"14..18");
+        // Even though "(Var1" is a focusable node, we go back to the normal focusable
+        // node, the record field.
+        assert_eq!(doc.raw_byte_index_to_cursor(17), NodeIndex(5));
+        assert_eq!(doc.raw_byte_index_to_cursor(18), NodeIndex(9));
+
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(9)), @"19..21");
+        assert_eq!(doc.raw_byte_index_to_cursor(20), NodeIndex(9));
+
+        // Variant tuples and records include their constructor
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(16)), @"32..37");
+        assert_eq!(doc.raw_byte_index_to_cursor(34), NodeIndex(16));
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(23)), @"47..52");
+        assert_eq!(doc.raw_byte_index_to_cursor(48), NodeIndex(23));
+
+        // Trailing parens at the end of first sexp
+        assert_eq!(doc.raw_byte_index_to_cursor(58), NodeIndex(25));
+    }
+
+    #[test]
+    fn test_converting_between_raw_bytes_and_visible_cursors_and_screen_lines() {
+        let mut doc = new_doc(
+            b"(((aa 11)(bb (Var1 22))(cc (33 (Var2 (dd 44)) (Var3 55))))
+            ((xx false)(yy ())(zz \"\")))",
+        );
+        assert_snapshot!(dump_with_byte_indexes(&doc), @r#"
+         0..=5  :   0..=9   : (((aa 11)
+         6..=9  :  10..=19  :   (bb (Var1
+        10..=12 :  20..=24  :     22))
+        13..=15 :  25..=30  :   (cc (
+        16..=16 :  30..=32  :     33
+        17..=18 :  33..=38  :     (Var2
+        19..=23 :  39..=47  :       (dd 44))
+        24..=25 :  48..=53  :     (Var3
+        26..=30 :  54..=60  :       55))))
+        31..=35 :  61..=72  :  ((xx false)
+        36..=39 :  73..=80  :   (yy ())
+        40..=45 :  81..=90  :   (zz "")))
+        "#);
+
+        fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
+            let LogicalLine {
+                start_index,
+                end_index,
+                ..
+            } = doc.raw_byte_index_to_visible_screen_line(index);
+
+            format!("{}..={}", start_index.0, end_index.0)
+        }
+
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 0), @"0..=5");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 15), @"6..=9");
+
+        // Byte index of the actual "55" (coincidentally).
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"26..=30");
+
+        // Collapse "(Var3 ....)"
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(24));
+        assert_eq!(doc.closest_visible_cursor(&NodeIndex(26)), NodeIndex(24));
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"24..=25");
+
+        // Collapse "(cc ....)"
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(13));
+        assert_eq!(doc.closest_visible_ancestor(&NodeIndex(26)), NodeIndex(15));
+        assert_eq!(doc.closest_visible_cursor(&NodeIndex(26)), NodeIndex(13));
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"13..=15");
     }
 }
