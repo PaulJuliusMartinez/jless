@@ -956,7 +956,12 @@ impl Document for SexpDocument {
         NodeIndex(0)
     }
 
-    fn visible_ancestor(&self, cursor: &NodeIndex) -> NodeIndex {
+    fn raw_byte_index_to_visible_screen_line(&self, index: usize) -> Self::ScreenLine {
+        // TODO: Implement me
+        self.logical_line_of_node_index(NodeIndex(0))
+    }
+
+    fn closest_visible_cursor(&self, cursor: &NodeIndex) -> NodeIndex {
         // TODO: Implement me
         *cursor
     }

@@ -40,10 +40,11 @@ struct LastJump {
     match_jumped_to: usize,
     // Needed to show 'W' next to current match number.
     just_wrapped: bool,
-    // Needed to know to jump *past* a collapsed container, even though
-    // there are matches in between the current focus and the end of that
-    // container.
-    jumped_into_collapsed_container: bool,
+    // If a match is hidden because it is in a collapsed container, we want
+    // the next jump to go *past* that collapsed container, even though there
+    // may be multiple matches in between the current focus and the end of
+    // that container.
+    jumped_to_hidden_match: bool,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -241,7 +242,7 @@ impl SearchState {
         current_focused_range: Range<usize>,
         jump_direction: JumpDirection,
         jumps: usize,
-        is_match_in_collapsed_container: &dyn Fn(Range<usize>) -> bool,
+        is_match_visible: &dyn Fn(Range<usize>) -> bool,
     ) -> Range<usize> {
         debug_assert!(jumps != 0);
 
@@ -268,11 +269,11 @@ impl SearchState {
             }
             Some(LastJump {
                 match_jumped_to,
-                jumped_into_collapsed_container,
+                jumped_to_hidden_match,
                 ..
             }) => {
                 let start_match = *match_jumped_to;
-                let jumped_into_collapsed_container = *jumped_into_collapsed_container;
+                let jumped_to_hidden_match = *jumped_to_hidden_match;
 
                 let delta = match search_direction {
                     SearchDirection::Forward => jumps as isize,
@@ -283,21 +284,21 @@ impl SearchState {
                 let (mut next_match, wrapped) = self.cycle_match(start_match, delta);
                 let mut ever_wrapped = wrapped;
 
-                if jumped_into_collapsed_container {
-                    // If we previously jumped into a container, we'll make sure that the
-                    // the cursor moves by advancing to the next match after the container.
-                    // If you hit '3n', this might result in something different than hitting
-                    // 'n' three times, but that's fine -- that's not the intended semantics.
-                    // The semantics are: "jump N matches from previous match, then round up".
+                if jumped_to_hidden_match {
+                    // If the previous match was hidden, we'll make sure that the the cursor moves
+                    // by advancing to the next visible match. If you hit '3n', this might result
+                    // in something different than hitting 'n' three times, but that's fine --
+                    // that's not the intended semantics. The semantics are: "jump N matches from
+                    // previous match, then round up".
                     let unit_step = delta.signum(); // Returns 1 or -1 (or 0, but delta isn't 0).
 
-                    // If all the matches are in a single collapsed container, this might happen.
-                    // We want to make sure we don't infinitely loop.
+                    // If all the matches are hidden in the case collapsed container, this might
+                    // happen. We want to make sure we don't infinitely loop.
                     while next_match != start_match {
                         // Check if we're still in the same container by getting the cursor
                         // pointed to by the match and seeing if that's the same as the current
                         // cursor.
-                        if !is_match_in_collapsed_container(self.matches[next_match].clone()) {
+                        if is_match_visible(self.matches[next_match].clone()) {
                             break;
                         }
 
@@ -316,9 +317,7 @@ impl SearchState {
         self.last_jump = Some(LastJump {
             match_jumped_to: next_match_index,
             just_wrapped: wrapped,
-            jumped_into_collapsed_container: is_match_in_collapsed_container(
-                next_match_range.clone(),
-            ),
+            jumped_to_hidden_match: !is_match_visible(next_match_range.clone()),
         });
 
         next_match_range
@@ -523,7 +522,7 @@ mod tests {
         search_state.last_jump = Some(LastJump {
             match_jumped_to: 0,
             just_wrapped: false,
-            jumped_into_collapsed_container: false,
+            jumped_to_hidden_match: false,
         });
 
         search_state.find_additional_matches(b"-abc abc abc abc");
@@ -557,7 +556,7 @@ mod tests {
         search_state.last_jump = Some(LastJump {
             match_jumped_to: 1,
             just_wrapped: false,
-            jumped_into_collapsed_container: false,
+            jumped_to_hidden_match: false,
         });
 
         search_state.find_additional_matches(b"-abc abcdef");
@@ -589,7 +588,7 @@ mod tests {
         search_state.last_jump = Some(LastJump {
             match_jumped_to: 1,
             just_wrapped: false,
-            jumped_into_collapsed_container: false,
+            jumped_to_hidden_match: false,
         });
 
         search_state.find_additional_matches(b"-abc abcdef abc");

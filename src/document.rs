@@ -78,7 +78,7 @@ pub trait Document {
         while t != *b {
             t = self
                 .prev_screen_line(&t)
-                .expect("a <= b, but never found b after a");
+                .expect("a >= b, but never found b before a");
             diff += 1;
         }
         diff
@@ -111,8 +111,38 @@ pub trait Document {
 
     fn raw_bytes_for_searching(&self) -> &[u8];
     fn raw_byte_range_of_cursor(&self, cursor: &Self::Cursor) -> Range<usize>;
+
+    /// This should return the cursor that is closest to the given index. It does not
+    /// have to be visible.
     fn raw_byte_index_to_cursor(&self, index: usize) -> Self::Cursor;
-    fn visible_ancestor(&self, cursor: &Self::Cursor) -> Self::Cursor;
+
+    /// This should return the screen line that contains the given index (possibly as
+    /// part of a collapsed node in that screen line though).
+    fn raw_byte_index_to_visible_screen_line(&self, index: usize) -> Self::ScreenLine;
+
+    fn raw_byte_range_to_visible_content_range(
+        &self,
+        range: Range<usize>,
+    ) -> ContentRange<Self::ScreenLine> {
+        // We normally want the last byte of the range (i.e. `end - 1`), but we can have empty
+        // ranges, so in that case we'll use the start for both. We can also have an empty
+        // range at the start of the doc, hence the saturating sub.
+        let end_index = usize::max(range.start, range.end.saturating_sub(1));
+
+        let start = self.raw_byte_index_to_visible_screen_line(range.start);
+        let end = self.raw_byte_index_to_visible_screen_line(end_index);
+        let num_screen_lines = self.diff_screen_lines(&end, &start) + 1;
+
+        ContentRange {
+            start,
+            end,
+            num_screen_lines,
+        }
+    }
+
+    /// If the given cursor is hidden because it is collapsed, returns the first
+    /// visible cursor before it. If the given cursor is visible, it just returns it.
+    fn closest_visible_cursor(&self, cursor: &Self::Cursor) -> Self::Cursor;
 }
 
 pub struct ContentRange<SL> {

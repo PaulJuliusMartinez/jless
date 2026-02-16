@@ -98,6 +98,13 @@ impl BreakPoints {
             &bytes[start..]
         }
     }
+
+    fn segment_index_containing_offset(&self, offset: usize) -> usize {
+        let segment_index_after_offset = self
+            .0
+            .partition_point(|segment_offset| *segment_offset <= offset);
+        segment_index_after_offset - 1
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -222,9 +229,34 @@ impl TextDocument {
         match start_of_line.segment_of_wrapped_line {
             None => start_of_line,
             Some(start_segment) => ScreenLine {
+                line_index: start_of_line.line_index,
                 segment_of_wrapped_line: Some(start_segment.into_last()),
-                ..start_of_line
             },
+        }
+    }
+
+    fn create_ref_to_byte_offset_within_line(
+        &self,
+        line_index: usize,
+        offset: usize,
+    ) -> ScreenLine {
+        let start_of_line = self.create_ref_to_start_of_line(line_index);
+        match start_of_line.segment_of_wrapped_line {
+            None => start_of_line,
+            Some(start_segment) => {
+                let segment_index = start_segment
+                    .break_points
+                    .segment_index_containing_offset(offset);
+
+                ScreenLine {
+                    line_index: start_of_line.line_index,
+                    segment_of_wrapped_line: Some(SegmentOfWrappedLine {
+                        break_points: start_segment.break_points,
+                        index: segment_index,
+                        width: start_segment.width,
+                    }),
+                }
+            }
         }
     }
 
@@ -426,9 +458,9 @@ impl Document for TextDocument {
 
     fn convert_screen_line_to_cursor(
         &self,
-        screen_line: Self::ScreenLine,
-        _prev_cursor: &Self::Cursor,
-    ) -> Self::Cursor {
+        screen_line: ScreenLine,
+        _prev_cursor: &Cursor,
+    ) -> Cursor {
         screen_line.line_index
     }
 
@@ -461,7 +493,7 @@ impl Document for TextDocument {
 
     // Soon: Uncomment this.
     // #[cfg(test)]
-    fn debug_text_content(&self, screen_line: &Self::ScreenLine, _cursor: &Cursor) -> Vec<u8> {
+    fn debug_text_content(&self, screen_line: &ScreenLine, _cursor: &Cursor) -> Vec<u8> {
         self.screen_line_contents(screen_line).to_vec()
     }
 
@@ -488,7 +520,14 @@ impl Document for TextDocument {
         first_line_starting_after_index - 1
     }
 
-    fn visible_ancestor(&self, cursor: &Cursor) -> Cursor {
+    fn raw_byte_index_to_visible_screen_line(&self, index: usize) -> ScreenLine {
+        // All lines are visible, so we don't need to maneuver to a visible ancestor or anything.
+        let cursor = self.raw_byte_index_to_cursor(index);
+        let offset_within_line = index - self.complete_line_ranges[cursor].start;
+        self.create_ref_to_byte_offset_within_line(cursor, offset_within_line)
+    }
+
+    fn closest_visible_cursor(&self, cursor: &Cursor) -> Cursor {
         // All lines are always visible
         *cursor
     }
@@ -500,7 +539,7 @@ mod tests {
     use super::*;
 
     use bstr::ByteSlice;
-    use insta::assert_snapshot;
+    use insta::{assert_debug_snapshot, assert_snapshot};
 
     use std::fmt::Write;
 
@@ -637,5 +676,79 @@ mod tests {
         |line|
         |.3  |
         ");
+    }
+
+    #[test]
+    fn test_breakpoints() {
+        let breakpoints = BreakPoints::calculate(b"0123456789", 4).unwrap();
+        assert_eq!(breakpoints.len(), 3);
+        assert_eq!(breakpoints.segment_index_containing_offset(0), 0);
+        assert_eq!(breakpoints.segment_index_containing_offset(3), 0);
+        assert_eq!(breakpoints.segment_index_containing_offset(4), 1);
+        assert_eq!(breakpoints.segment_index_containing_offset(7), 1);
+        assert_eq!(breakpoints.segment_index_containing_offset(8), 2);
+        assert_eq!(breakpoints.segment_index_containing_offset(9), 2);
+    }
+
+    #[test]
+    fn test_raw_bytes_to_screen_lines() {
+        let mut doc = TextDocument::new(10);
+        doc.append(b"0123\n");
+        doc.append(b"567890123\n");
+        doc.append(b"56789012345678\n");
+        doc.append(b"0123\n");
+
+        assert_snapshot!(print_screen_lines(&doc), @r"
+        |0123      |
+        |567890123 |
+        |5678901234|
+        |5678      |
+        |0123      |
+        ");
+
+        assert_debug_snapshot!(doc.complete_line_ranges, @r"
+        [
+            0..4,
+            5..14,
+            15..29,
+            30..34,
+        ]
+        ");
+
+        fn fmt_index(screen_line: ScreenLine) -> String {
+            match screen_line.segment_of_wrapped_line {
+                None => format!("{}", screen_line.line_index),
+                Some(SegmentOfWrappedLine { index, .. }) => {
+                    format!("{}/{}", screen_line.line_index, index)
+                }
+            }
+        }
+
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(0)), @"0");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(3)), @"0");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(4)), @"0");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(5)), @"1");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(15)), @"2/0");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(24)), @"2/0");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(25)), @"2/1");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(29)), @"2/1");
+        assert_snapshot!(fmt_index(doc.raw_byte_index_to_visible_screen_line(34)), @"3");
+
+        fn fmt_range(range: ContentRange<ScreenLine>) -> String {
+            format!(
+                "{} - {} ({})",
+                fmt_index(range.start),
+                fmt_index(range.end),
+                range.num_screen_lines
+            )
+        }
+
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(0..0)), @"0 - 0 (1)");
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(0..10)), @"0 - 1 (2)");
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(5..15)), @"1 - 1 (1)");
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(5..28)), @"1 - 2/1 (3)");
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(15..28)), @"2/0 - 2/1 (2)");
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(29..31)), @"2/1 - 3 (2)");
+        assert_snapshot!(fmt_range(doc.raw_byte_range_to_visible_content_range(0..34)), @"0 - 3 (5)");
     }
 }

@@ -529,9 +529,12 @@ impl<D: Document> DocumentViewer<D> {
         self.current_focus = new_cursor;
 
         let cursor_range = self.doc.cursor_range(&self.current_focus);
+        self.update_so_content_range_is_visible(cursor_range);
+    }
 
+    fn update_so_content_range_is_visible(&mut self, content_range: ContentRange<D::ScreenLine>) {
         let acceptable_start_index_range =
-            self.calculate_acceptable_start_screen_indexes_to_show_content(&cursor_range);
+            self.calculate_acceptable_start_screen_indexes_to_show_content(&content_range);
 
         let AcceptableStartScreenIndexesToShowContentRange {
             start: start_index,
@@ -542,30 +545,30 @@ impl<D: Document> DocumentViewer<D> {
         let screen_line_at_first_acceptable_start = self.screen_line_at_screen_index(start_index);
         let screen_line_at_last_acceptable_start = self.screen_line_at_screen_index(end_index);
 
-        let cursor_start_is_before_first_acceptable_start =
+        let content_start_is_before_first_acceptable_start =
             match screen_line_at_first_acceptable_start {
                 // If there's no screen line af the first acceptable start, then must be the after
-                // the end of the file, so the cursor start is definitely before then.
+                // the end of the file, so the content start is definitely before then.
                 None => true,
-                Some(acceptable_start) => cursor_range.start < acceptable_start,
+                Some(acceptable_start) => content_range.start < acceptable_start,
             };
 
-        let cursor_start_is_at_or_before_last_acceptable_start =
+        let content_start_is_at_or_before_last_acceptable_start =
             match screen_line_at_last_acceptable_start {
                 None => true, // Same logic as above
-                Some(acceptable_start) => cursor_range.start <= acceptable_start,
+                Some(acceptable_start) => content_range.start <= acceptable_start,
             };
 
-        if cursor_start_is_before_first_acceptable_start {
-            // Cursor is too close to the top of the screen (or past it); move the viewport so
-            // the cursor is at the start of the acceptable range.
-            self.top_line = self.n_screen_lines_before(cursor_range.start, start_index);
-        } else if cursor_start_is_at_or_before_last_acceptable_start {
-            // Nothing to do, the cursor is in an acceptable range!
+        if content_start_is_before_first_acceptable_start {
+            // Content is too close to the top of the screen (or past it); move the viewport so
+            // the content is at the start of the acceptable range.
+            self.top_line = self.n_screen_lines_before(content_range.start, start_index);
+        } else if content_start_is_at_or_before_last_acceptable_start {
+            // Nothing to do, the content is in an acceptable range!
         } else {
-            // Cursor is too close to the bottom of the screen (or past it); move the viewport
-            // so the cursor is at the end of the acceptable range.
-            self.top_line = self.n_screen_lines_before(cursor_range.start, end_index);
+            // Content is too close to the bottom of the screen (or past it); move the viewport
+            // so the content is at the end of the acceptable range.
+            self.top_line = self.n_screen_lines_before(content_range.start, end_index);
         }
     }
 
@@ -1169,22 +1172,30 @@ impl<D: Document> DocumentViewer<D> {
         let current_focused_range = self.doc.raw_byte_range_of_cursor(&self.current_focus);
         // Only capture reference to doc, and not self, so we can still mutate `search_state`.
         let doc = &self.doc;
-        let is_match_in_collapsed_container = |match_range: Range<usize>| {
+        let is_match_visible = |match_range: Range<usize>| {
             let cursor = doc.raw_byte_index_to_cursor(match_range.start);
-            doc.visible_ancestor(&cursor) != cursor
+            doc.closest_visible_cursor(&cursor) == cursor
         };
 
-        let match_range = search_state.jump_to_next_match(
+        let match_byte_range = search_state.jump_to_next_match(
             current_focused_range,
             jump_direction,
             jumps,
-            &is_match_in_collapsed_container,
+            &is_match_visible,
         );
 
-        // Someday: Convert the range to an actual ScreenLine, and make sure that is
-        // visible too.
-        let cursor = self.doc.raw_byte_index_to_cursor(match_range.start);
-        self.update_so_new_cursor_is_visible(Some(cursor));
+        let match_cursor = self.doc.raw_byte_index_to_cursor(match_byte_range.start);
+        let visible_cursor = self.doc.closest_visible_cursor(&match_cursor);
+
+        if match_cursor == visible_cursor {
+            self.current_focus = match_cursor;
+            let match_content_range = self
+                .doc
+                .raw_byte_range_to_visible_content_range(match_byte_range);
+            self.update_so_content_range_is_visible(match_content_range);
+        } else {
+            self.update_so_new_cursor_is_visible(Some(visible_cursor));
+        }
     }
 }
 
@@ -2363,6 +2374,55 @@ mod test {
         │ 2│ 3 │ 3a  │ │ 2│ 8 │ 8   │             │ 2│ 8 │ 8   │             │ 2│ 8 │ 8   │
         │ 3│ 4 │ 4   │ │ 3│*9 │ 9b  │             │ 3│ 9 │ 9b  │             │ 3│*9 │ 9b  │
         └──┴───┴─────┘ └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘
+        ");
+    }
+
+    #[test]
+    fn test_jump_to_search_matches_in_very_long_line() {
+        let text = b"a\nb\nc\nd\ne\n1   2H H3   4   5   6   7   8 H 9   10  11H 12  12  14H 15  \nv\nw\nx\ny\nz\n";
+        let mut viewer = init(text, 4, 5, 1);
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("H", SearchDirection::Forward),
+                    jump_to_next_match(1),
+                ],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                        /H                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1)
+                        JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬──────┐ ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐
+        │ 0│*1 │ a    │ │ 0│ 4 │ d    │            │ 0│ 4 │ d    │            │ 0│*6 │↪5   ↩│            │ 0│*6 │↪8 H ↩│            │ 0│*6 │↪11H ↩│
+        │ 1│ 2 │ b    │ │ 1│ 5 │ e    │            │ 1│ 5 │ e    │            │ 1│*6 │↪6   ↩│            │ 1│*6 │↪9   ↩│            │ 1│*6 │↪12  ↩│
+        │ 2│ 3 │ c    │ │ 2│*6 │ 1   ↩│            │ 2│*6 │ 1   ↩│            │ 2│*6 │↪7   ↩│            │ 2│*6 │↪10  ↩│            │ 2│*6 │↪12  ↩│
+        │ 3│ 4 │ d    │ │ 3│*6 │↪2H H↩│            │ 3│*6 │↪2H H↩│            │ 3│*6 │↪8 H ↩│            │ 3│*6 │↪11H ↩│            │ 3│*6 │↪14H ↩│
+        │ 4│ 5 │ e    │ │ 4│*6 │↪3   ↩│            │ 4│*6 │↪3   ↩│            │ 4│*6 │↪9   ↩│            │ 4│*6 │↪12  ↩│            │ 4│*6 │↪15   │
+        └──┴───┴──────┘ └──┴───┴──────┘            └──┴───┴──────┘            └──┴───┴──────┘            └──┴───┴──────┘            └──┴───┴──────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(2)],
+                vec![jump_to_prev_match(2)],
+                vec![jump_to_next_match(2)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                        MoveCursorDown(2) JumpToSearchMatch(Prev, 2) JumpToSearchMatch(Next, 2)
+        ┌SI┬─L#┬──────┐ ┌SI┬─L#┬──────┐   ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐
+        │ 0│*6 │↪11H ↩│ │ 0│ 6 │↪14H ↩│   │ 0│*6 │↪10  ↩│            │ 0│*6 │ 1   ↩│
+        │ 1│*6 │↪12  ↩│ │ 1│ 6 │↪15   │   │ 1│*6 │↪11H ↩│            │ 1│*6 │↪2H H↩│
+        │ 2│*6 │↪12  ↩│ │ 2│ 7 │ v    │   │ 2│*6 │↪12  ↩│            │ 2│*6 │↪3   ↩│
+        │ 3│*6 │↪14H ↩│ │ 3│*8 │ w    │   │ 3│*6 │↪12  ↩│            │ 3│*6 │↪4   ↩│
+        │ 4│*6 │↪15   │ │ 4│ 9 │ x    │   │ 4│*6 │↪14H ↩│            │ 4│*6 │↪5   ↩│
+        └──┴───┴──────┘ └──┴───┴──────┘   └──┴───┴──────┘            └──┴───┴──────┘
         ");
     }
 
