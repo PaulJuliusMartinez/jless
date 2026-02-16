@@ -10,7 +10,7 @@ use crate::action::Action;
 use crate::dimensions::Dimensions;
 use crate::document::Document;
 use crate::document_viewer::DocumentViewer;
-use crate::search::{JumpDirection, SearchDirection, SearchState};
+use crate::search::{JumpDirection, SearchDirection};
 use crate::terminal::{AnsiTerminal, Terminal};
 
 const MAX_BUFFER_SIZE: usize = 9;
@@ -24,7 +24,6 @@ pub struct App<D: Document> {
     // Buffered input for movement commands with counts, e.g. "3j", or multi-character commands,
     // e.g., "zz".
     input_buffer: Vec<u8>,
-    search_state: Option<SearchState>,
     readline_editor: Editor<(), MemHistory>,
     screen_dimensions: Dimensions,
     viewer_dimensions: Dimensions,
@@ -52,7 +51,6 @@ impl<D: Document> App<D> {
             viewer: None,
             input_state: InputState::Default,
             input_buffer: vec![],
-            search_state: None,
             screen_dimensions: dimensions,
             viewer_dimensions: Dimensions {
                 width: dimensions.width,
