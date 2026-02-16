@@ -432,23 +432,18 @@ pub mod tests {
             end_index,
         } in lines.into_iter()
         {
-            let start_range = doc.node(start_index).data_range.clone();
-            let end_range = doc.node(end_index).data_range.clone();
+            let start_range = &doc.node(start_index).data_range;
+            let end_range = &doc.node(end_index).data_range;
 
             let _ = write!(output, "{:>2}..={:<2} : ", start_index.0, end_index.0,);
 
             let _ = write!(output, "{: <indentation$}", "");
 
-            let _ = match (start_range, end_range) {
-                (Some(start), Some(end)) => {
-                    writeln!(
-                        output,
-                        "{}",
-                        doc.pretty_printed[start.start..end.end].as_bstr()
-                    )
-                }
-                _ => writeln!(output, "<no range>"),
-            };
+            let _ = writeln!(
+                output,
+                "{}",
+                doc.pretty_printed[start_range.start..end_range.end].as_bstr()
+            );
         }
 
         output

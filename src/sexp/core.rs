@@ -60,7 +60,7 @@ pub struct DocumentNode {
     /// Only set for atoms and the start of lists. Indicates the index of the node
     /// in the parent (or amongst all top-level nodes) if comments are ignored.
     pub data_index_in_parent: Option<usize>,
-    pub data_range: Option<Range<usize>>,
+    pub data_range: Range<usize>,
     pub token: DocumentToken,
 }
 
@@ -189,7 +189,7 @@ pub struct EndOfListMetadata {
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Debug)]
 pub struct ErrorMetadata {
-    message: String,
+    pub message: String,
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -367,7 +367,7 @@ impl DocCore {
     fn push_new_document_node(
         &mut self,
         token: DocumentToken,
-        data_range: Option<Range<usize>>,
+        data_range: Range<usize>,
     ) -> NodeIndex {
         assert!(!matches!(token, DocumentToken::EndOfList(_)));
 
@@ -439,8 +439,12 @@ impl DocCore {
     }
 
     fn push_new_error_node(&mut self, error_metadata: ErrorMetadata) {
+        // We'll say error nodes exist at an empty data range based on the current
+        // end of the pretty printed doc.
+        let end_of_doc = self.pretty_printed.len();
+        let data_range = end_of_doc..end_of_doc;
         let _error_node_index =
-            self.push_new_document_node(DocumentToken::Error(error_metadata), None);
+            self.push_new_document_node(DocumentToken::Error(error_metadata), data_range);
     }
 
     pub fn append_raw_token(&mut self, raw_token: RawToken<'_, '_>) {
@@ -452,14 +456,14 @@ impl DocCore {
                 let data_range = self
                     .pretty_printed
                     .write_line_comment(line_comment.raw_bytes());
-                let _ = self.push_new_document_node(DocumentToken::LineComment, Some(data_range));
+                let _ = self.push_new_document_node(DocumentToken::LineComment, data_range);
             }
             RawToken::BlockComment(block_comment) => {
                 // TODO: I need to validate these block comment bytes.
                 let data_range = self
                     .pretty_printed
                     .write_block_comment(block_comment.raw_bytes());
-                let _ = self.push_new_document_node(DocumentToken::BlockComment, Some(data_range));
+                let _ = self.push_new_document_node(DocumentToken::BlockComment, data_range);
             }
             RawToken::SexpComment => self.add_sexp_comment(),
         }
@@ -518,8 +522,8 @@ impl DocCore {
         };
 
         let data_range = self.pretty_printed.start_list();
-        let new_node_index = self
-            .push_new_document_node(DocumentToken::StartOfList(list_metadata), Some(data_range));
+        let new_node_index =
+            self.push_new_document_node(DocumentToken::StartOfList(list_metadata), data_range);
 
         self.starts_of_unterminated_lists.push(new_node_index);
     }
@@ -555,7 +559,7 @@ impl DocCore {
 
             let unit_start = self.pretty_printed.len() - 1;
             let _end_list_range = self.pretty_printed.end_list();
-            curr_node.data_range = Some(unit_start..(unit_start + 2));
+            curr_node.data_range = unit_start..(unit_start + 2);
 
             return;
         };
@@ -607,7 +611,7 @@ impl DocCore {
                 prev_sibling: list_start_node.prev_sibling,
                 next_sibling: list_start_node.next_sibling,
                 data_index_in_parent: None,
-                data_range: Some(data_range),
+                data_range,
                 token: DocumentToken::EndOfList(end_of_list_metadata),
             }
         };
@@ -739,7 +743,7 @@ impl DocCore {
             valid,
         };
 
-        let _ = self.push_new_document_node(DocumentToken::Atom(atom_metadata), Some(data_range));
+        let _ = self.push_new_document_node(DocumentToken::Atom(atom_metadata), data_range);
     }
 
     fn classify_atom_kind(unescaped_bytes: &UnescapedBytes) -> AtomKind {
@@ -803,12 +807,7 @@ mod tests {
 
         for (i, node) in doc.all_nodes.iter().enumerate() {
             let _ = write!(output, "{:<4}", i);
-
-            if let Some(data_range) = &node.data_range {
-                let _ = write!(output, "{:<9}", format!("{:?}", data_range));
-            } else {
-                let _ = write!(output, "{:<9}", "");
-            }
+            let _ = write!(output, "{:<9}", format!("{:?}", &node.data_range));
 
             let DocumentNode {
                 parent_index,
@@ -859,10 +858,10 @@ mod tests {
             };
 
             let _ = write!(output, "{:<25}", token);
-            if let Some(data_range) = data_range {
-                let data = &doc.pretty_printed[data_range.clone()];
-                let _ = write!(output, ": {:?}", data.as_bstr());
-            }
+
+            let data = &doc.pretty_printed[data_range.clone()];
+            let _ = write!(output, ": {:?}", data.as_bstr());
+
             let _ = writeln!(output, "");
         }
 
@@ -989,7 +988,7 @@ mod tests {
         one
 
         0   0..3     <-- ^--[0 ]  1> Atom(RecordKey)          : "one"
-        1            <0  ^--[--] --> Error: Saw unexpected ')' while parsing top-level sexp
+        1   3..3     <0  ^--[--] --> Error: Saw unexpected ')' while parsing top-level sexp
         "#);
 
         let pending_sexp_comment_at_end_of_list = dump(b"(1 #;)");
@@ -999,7 +998,7 @@ mod tests {
 
         0   0..1     <-- ^--[0 ]  2> StartOfList(Singleton)   : "("
         1   1..2     <-- ^ 0[0 ] --> Atom(Number)             : "1"
-        2            <0  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
+        2   5..5     <0  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
         3   5..6     <-- ^--[--]  2> EndOfList                : ")"
         "##);
 
@@ -1008,7 +1007,7 @@ mod tests {
         Raw document:
         "\xGG"
 
-        0            <-- ^--[--]  1> Error: Unable to unescape atom: InvalidHexadecimalEscape
+        0   0..0     <-- ^--[--]  1> Error: Unable to unescape atom: InvalidHexadecimalEscape
         1   0..6     <0  ^--[0 ] --> Atom(Plain)              : "\"\\xGG\""
         "#);
 
@@ -1021,7 +1020,7 @@ mod tests {
         1   1..2     <-- ^ 0[0 ] --> StartOfList(RecordField) : "("
         2   2..3     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "a"
         3   4..5     <2  ^ 1[1 ]  4> Atom(RecordKey)          : "z"
-        4            <3  ^ 1[--] --> Error: Unexpected EOF while parsing list
+        4   5..5     <3  ^ 1[--] --> Error: Unexpected EOF while parsing list
         5   5..5     <-- ^ 0[--] --> EndOfList                : ""
         6   5..5     <-- ^--[--] --> EndOfList                : ""
         "#);

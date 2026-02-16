@@ -5,7 +5,8 @@ use std::ops::Range;
 use crate::document::{ContentRange, Document};
 use crate::search::InvertedPairedDelimeters;
 use crate::sexp::core::{
-    AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, ListKind, ListMetadata, NodeIndex,
+    AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, ErrorMetadata, ListKind,
+    ListMetadata, NodeIndex,
 };
 use crate::sexp::layout::{self as layout, LogicalLine};
 
@@ -896,22 +897,31 @@ impl Document for SexpDocument {
         let start_range = self.core.node(*start_index).data_range.clone();
         let end_range = self.core.node(end_visible_index).data_range.clone();
 
-        if let (Some(start), Some(end)) = (start_range, end_range) {
-            let mut line_content = self.core.pretty_printed[start.start..end.end].to_vec();
+        match self.core.token(*start_index) {
+            DocumentToken::Error(ErrorMetadata { message }) if start_index == end_index => {
+                let mut s = message.clone();
+                if cursor == start_index {
+                    s.insert_str(0, "> ");
+                }
+                let _ = write!(output, "{}", s);
+            }
+            _ => {
+                let mut line_content =
+                    self.core.pretty_printed[start_range.start..end_range.end].to_vec();
 
-            if start_index <= cursor && cursor <= end_index {
-                if let Some(cursor_range) = &self.core.node(*cursor).data_range {
-                    let offset = cursor_range.start - start.start;
+                if start_index <= cursor && cursor <= end_index {
+                    let cursor_range = &self.core.node(*cursor).data_range;
+                    let offset = cursor_range.start - start_range.start;
                     if line_content[offset] == b'(' {
                         line_content[offset] = b'[';
                     } else {
                         line_content[offset] = b'*';
                     }
                 }
-            }
 
-            let _ = write!(output, "{}", line_content.as_bstr());
-        };
+                let _ = write!(output, "{}", line_content.as_bstr());
+            }
+        }
 
         if let Some(collapsed_node_index) = collapsed_node_index {
             if collapsed_variant {
