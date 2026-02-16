@@ -1101,16 +1101,34 @@ impl<D: Document> DocumentViewer<D> {
             Action::MoveFocusedElemToBottom => self.move_focused_elem_to_bottom(),
         }
 
+        let cursor_moved = prev_cursor != self.current_focus;
+
+        // Check if we need to clear the last jump of the search state.
+        if let Some(search_state) = &mut self.search_state {
+            if let Some(last_match_range) = search_state.last_match_range() {
+                // Obviously don't clear the last jump if we just jumped.
+                if !jumped_to_search_match {
+                    if cursor_moved {
+                        search_state.clear_last_jump();
+                    } else {
+                        // Even if the cursor didn't move, check if we're no longer pointing
+                        // to the the match, possibly because we expanded the currently
+                        // focused node.
+                        let match_cursor =
+                            self.doc.raw_byte_index_to_cursor(last_match_range.start);
+                        if match_cursor != self.current_focus {
+                            search_state.clear_last_jump();
+                        }
+                    }
+                }
+            }
+        }
+
         // When we focus the bottom of the document, we'll start tailing the
         // end, and we stop when we move the cursor.
         if focused_bottom {
             self.tailing_end_of_document = true;
-        } else if prev_cursor != self.current_focus {
-            if !jumped_to_search_match {
-                if let Some(search_state) = &mut self.search_state {
-                    search_state.clear_last_jump();
-                }
-            };
+        } else if cursor_moved {
             self.tailing_end_of_document = false;
         }
     }
@@ -1181,8 +1199,16 @@ impl<D: Document> DocumentViewer<D> {
         };
 
         let current_focused_range = self.doc.raw_byte_range_of_cursor(&self.current_focus);
-        // Only capture reference to doc, and not self, so we can still mutate `search_state`.
+        // Only capture reference to doc/current focus, and not self, so we can still mutate
+        // `search_state`.
         let doc = &self.doc;
+        let current_focus = &self.current_focus;
+
+        let cursor_will_move = |match_range: Range<usize>| {
+            let cursor = doc.raw_byte_index_to_cursor(match_range.start);
+            doc.closest_visible_cursor(&cursor) != *current_focus
+        };
+
         let is_match_visible = |match_range: Range<usize>| {
             let cursor = doc.raw_byte_index_to_cursor(match_range.start);
             doc.closest_visible_cursor(&cursor) == cursor
@@ -1192,6 +1218,7 @@ impl<D: Document> DocumentViewer<D> {
             current_focused_range,
             jump_direction,
             jumps,
+            &cursor_will_move,
             &is_match_visible,
         );
 
@@ -1245,8 +1272,24 @@ mod test {
     use std::fmt::{self, Write};
 
     use crate::dimensions::Dimensions;
+    use crate::document::Document;
+    use crate::sexp::document::SexpDocument;
     use crate::test_helpers::format_table;
     use crate::text_document::{Cursor, TextDocument};
+
+    fn init_doc<D: Document>(
+        contents: &[u8],
+        width: usize,
+        height: usize,
+        scrolloff: usize,
+    ) -> DocumentViewer<D> {
+        let mut doc = D::new(width);
+        doc.append(contents);
+
+        let (top_line, initial_cursor) = doc.top_screen_line_and_cursor().unwrap();
+        let dimensions = Dimensions { width, height };
+        DocumentViewer::new(doc, top_line, initial_cursor, dimensions, scrolloff)
+    }
 
     fn init(
         contents: &[u8],
@@ -1254,12 +1297,16 @@ mod test {
         height: usize,
         scrolloff: usize,
     ) -> DocumentViewer<TextDocument> {
-        let mut doc = TextDocument::new(width);
-        doc.append(contents);
+        init_doc::<TextDocument>(contents, width, height, scrolloff)
+    }
 
-        let (top_line, initial_cursor) = doc.top_screen_line_and_cursor().unwrap();
-        let dimensions = Dimensions { width, height };
-        DocumentViewer::new(doc, top_line, initial_cursor, dimensions, scrolloff)
+    fn init_sexp(
+        contents: &[u8],
+        width: usize,
+        height: usize,
+        scrolloff: usize,
+    ) -> DocumentViewer<SexpDocument> {
+        init_doc::<SexpDocument>(contents, width, height, scrolloff)
     }
 
     #[derive(Clone)]
@@ -1296,6 +1343,14 @@ mod test {
 
     fn move_cursor_up(n: usize) -> Change {
         Change::Action(Action::MoveCursorUp(n))
+    }
+
+    fn press_left() -> Change {
+        Change::Action(Action::CollapseOrMoveCursorLeftOrUp)
+    }
+
+    fn press_right() -> Change {
+        Change::Action(Action::ExpandOrMoveCursorRightOrDown)
     }
 
     fn scroll_viewport_down(n: usize) -> Change {
@@ -2462,6 +2517,140 @@ mod test {
         │ 3│ 4 │ 4  │ │ 3│ 4 │ 4  │ │ 3│ 5 │ 5a │              │ 3│ 5 │ 5a │
         │ 4│ ~ │    │ │ 4│ 5 │ 5a │ │ 4│*6 │ 6a │              │ 4│ 6 │ 6a │
         └──┴───┴────┘ └──┴───┴────┘ └──┴───┴────┘              └──┴───┴────┘
+        ");
+    }
+
+    #[test]
+    fn test_search_into_collapsed_containers() {
+        let text = b"((k1 a)(k2 b))((k3 a)(k4 b)(k5 b))((k6 b)(k7 b))(a)(b)(c)";
+        let mut viewer = init_sexp(text, 8, 5, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("b", SearchDirection::Forward),
+                    jump_to_next_match(1),
+                ],
+                vec![jump_to_next_match(1)],
+                vec![press_left(), press_left(), move_cursor_up(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                            /b                         JumpToSearchMatch(Next, 1) CollapseOrMoveCursorLeftOrUp
+                            JumpToSearchMatch(Next, 1)                            CollapseOrMoveCursorLeftOrUp
+                                                                                  MoveCursorUp(1)
+        ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐
+        │ 0│*1 │ [(k1 a)  │ │ 0│ 1 │ ((k1 a)  │        │ 0│ 1 │ ((k1 a)  │        │ 0│ 1 │ ((k1 a)  │
+        │ 1│ 2 │  (k2 b)) │ │ 1│*2 │  [k2 b)) │        │ 1│ 2 │  (k2 b)) │        │ 1│*2 │  [k2 b)) │
+        │ 2│ 2 │ ((k3 a)  │ │ 2│ 2 │ ((k3 a)  │        │ 2│ 2 │ ((k3 a)  │        │ 2│ 2 │ (...)    │
+        │ 3│ 2 │  (k4 b)  │ │ 3│ 2 │  (k4 b)  │        │ 3│*2 │  [k4 b)  │        │ 3│ 2 │ ((k6 b)  │
+        │ 4│ 2 │  (k5 b)) │ │ 4│ 2 │  (k5 b)) │        │ 4│ 2 │  (k5 b)) │        │ 4│ 2 │  (k7 b)) │
+        └──┴───┴──────────┘ └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+                vec![press_left(), press_left(), focus_top()],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                            JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) CollapseOrMoveCursorLeftOrUp
+                                                                                                             CollapseOrMoveCursorLeftOrUp
+                                                                                                             FocusTop
+        ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐
+        │ 0│ 1 │ ((k1 a)  │ │ 0│ 1 │ ((k1 a)  │        │ 0│ 1 │ ((k1 a)  │        │ 0│ 1 │ ((k1 a)  │        │ 0│*1 │ [(k1 a)  │
+        │ 1│*2 │  [k2 b)) │ │ 1│*2 │  [k2 b)) │        │ 1│ 2 │  (k2 b)) │        │ 1│ 2 │  (k2 b)) │        │ 1│ 2 │  (k2 b)) │
+        │ 2│ 2 │ (...)    │ │ 2│ 2 │ (...)    │        │ 2│*2 │ [...)    │        │ 2│ 2 │ (...)    │        │ 2│ 2 │ (...)    │
+        │ 3│ 2 │ ((k6 b)  │ │ 3│ 2 │ ((k6 b)  │        │ 3│ 2 │ ((k6 b)  │        │ 3│*2 │ ([k6 b)  │        │ 3│ 2 │ (...)    │
+        │ 4│ 2 │  (k7 b)) │ │ 4│ 2 │  (k7 b)) │        │ 4│ 2 │  (k7 b)) │        │ 4│ 2 │  (k7 b)) │        │ 4│ 2 │ (a)      │
+        └──┴───┴──────────┘ └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                            JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐
+        │ 0│*1 │ [(k1 a)  │ │ 0│ 1 │ ((k1 a)  │        │ 0│ 1 │ ((k1 a)  │        │ 0│ 1 │ ((k1 a)  │        │ 0│ 2 │  (k2 b)) │
+        │ 1│ 2 │  (k2 b)) │ │ 1│*2 │  [k2 b)) │        │ 1│ 2 │  (k2 b)) │        │ 1│ 2 │  (k2 b)) │        │ 1│ 2 │ (...)    │
+        │ 2│ 2 │ (...)    │ │ 2│ 2 │ (...)    │        │ 2│*2 │ [...)    │        │ 2│ 2 │ (...)    │        │ 2│ 2 │ (...)    │
+        │ 3│ 2 │ (...)    │ │ 3│ 2 │ (...)    │        │ 3│ 2 │ (...)    │        │ 3│*2 │ [...)    │        │ 3│ 2 │ (a)      │
+        │ 4│ 2 │ (a)      │ │ 4│ 2 │ (a)      │        │ 4│ 2 │ (a)      │        │ 4│ 2 │ (a)      │        │ 4│*2 │ (*)      │
+        └──┴───┴──────────┘ └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![focus_bottom()],
+                vec![jump_to_prev_match(1)],
+                vec![jump_to_prev_match(1)],
+                vec![jump_to_prev_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                            FocusBottom         JumpToSearchMatch(Prev, 1) JumpToSearchMatch(Prev, 1) JumpToSearchMatch(Prev, 1)
+        ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐
+        │ 0│ 2 │  (k2 b)) │ │ 0│ 2 │ (...)    │ │ 0│ 2 │ (...)    │        │ 0│ 2 │ (...)    │        │ 0│*2 │ [...)    │
+        │ 1│ 2 │ (...)    │ │ 1│ 2 │ (...)    │ │ 1│ 2 │ (...)    │        │ 1│*2 │ [...)    │        │ 1│ 2 │ (...)    │
+        │ 2│ 2 │ (...)    │ │ 2│ 2 │ (a)      │ │ 2│ 2 │ (a)      │        │ 2│ 2 │ (a)      │        │ 2│ 2 │ (a)      │
+        │ 3│ 2 │ (a)      │ │ 3│ 2 │ (b)      │ │ 3│*2 │ (*)      │        │ 3│ 2 │ (b)      │        │ 3│ 2 │ (b)      │
+        │ 4│*2 │ (*)      │ │ 4│*2 │ [c)      │ │ 4│ 2 │ (c)      │        │ 4│ 2 │ (c)      │        │ 4│ 2 │ (c)      │
+        └──┴───┴──────────┘ └──┴───┴──────────┘ └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘
+        ");
+
+        // Technically we previously jumped to the k5 'b', so when we expand the container, the cursor
+        // is now very disconnected from that last jump, so we want to clear it.
+        let output = run(
+            &mut viewer,
+            vec![vec![press_right()], vec![jump_to_prev_match(1)]],
+        );
+        assert_snapshot!(output, @r"
+                            ExpandOrMoveCursorRightOrDown JumpToSearchMatch(Prev, 1)
+        ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐           ┌SI┬─L#┬──────────┐
+        │ 0│*2 │ [...)    │ │ 0│*2 │ [(k3 a)  │           │ 0│*2 │  [k2 b)) │
+        │ 1│ 2 │ (...)    │ │ 1│ 2 │  (k4 b)  │           │ 1│ 2 │ ((k3 a)  │
+        │ 2│ 2 │ (a)      │ │ 2│ 2 │  (k5 b)) │           │ 2│ 2 │  (k4 b)  │
+        │ 3│ 2 │ (b)      │ │ 3│ 2 │ (...)    │           │ 3│ 2 │  (k5 b)) │
+        │ 4│ 2 │ (c)      │ │ 4│ 2 │ (a)      │           │ 4│ 2 │ (...)    │
+        └──┴───┴──────────┘ └──┴───┴──────────┘           └──┴───┴──────────┘
+        ");
+
+        // Reset the doc a bit before we test a similar thing going forward
+        viewer.do_action(Action::MoveCursorDown(1));
+        viewer.do_action(Action::CollapseOrMoveCursorLeftOrUp);
+        viewer.do_action(Action::MoveCursorUp(1));
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![jump_to_next_match(1)], // First jump goes to the 'b' on the same line.
+                vec![jump_to_next_match(1)],
+                vec![press_right()],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                            JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) ExpandOrMoveCursorRightOrDown JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐        ┌SI┬─L#┬──────────┐           ┌SI┬─L#┬──────────┐
+        │ 0│*2 │  [k2 b)) │ │ 0│*2 │  [k2 b)) │        │ 0│ 2 │  (k2 b)) │        │ 0│ 2 │  (k2 b)) │           │ 0│ 2 │  (k2 b)) │
+        │ 1│ 2 │ (...)    │ │ 1│ 2 │ (...)    │        │ 1│*2 │ [...)    │        │ 1│*2 │ [(k3 a)  │           │ 1│ 2 │ ((k3 a)  │
+        │ 2│ 2 │ (...)    │ │ 2│ 2 │ (...)    │        │ 2│ 2 │ (...)    │        │ 2│ 2 │  (k4 b)  │           │ 2│*2 │  [k4 b)  │
+        │ 3│ 2 │ (a)      │ │ 3│ 2 │ (a)      │        │ 3│ 2 │ (a)      │        │ 3│ 2 │  (k5 b)) │           │ 3│ 2 │  (k5 b)) │
+        │ 4│ 2 │ (b)      │ │ 4│ 2 │ (b)      │        │ 4│ 2 │ (b)      │        │ 4│ 2 │ (...)    │           │ 4│ 2 │ (...)    │
+        └──┴───┴──────────┘ └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘           └──┴───┴──────────┘
         ");
     }
 }

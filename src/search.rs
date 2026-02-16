@@ -233,6 +233,12 @@ impl SearchState {
         self.matches.len()
     }
 
+    pub fn last_match_range(&self) -> Option<Range<usize>> {
+        self.last_jump
+            .as_ref()
+            .map(|lj| self.matches[lj.match_jumped_to].clone())
+    }
+
     pub fn clear_last_jump(&mut self) {
         self.last_jump = None;
     }
@@ -242,6 +248,7 @@ impl SearchState {
         current_focused_range: Range<usize>,
         jump_direction: JumpDirection,
         jumps: usize,
+        cursor_will_move: &dyn Fn(Range<usize>) -> bool,
         is_match_visible: &dyn Fn(Range<usize>) -> bool,
     ) -> Range<usize> {
         debug_assert!(jumps != 0);
@@ -295,10 +302,7 @@ impl SearchState {
                     // If all the matches are hidden in the case collapsed container, this might
                     // happen. We want to make sure we don't infinitely loop.
                     while next_match != start_match {
-                        // Check if we're still in the same container by getting the cursor
-                        // pointed to by the match and seeing if that's the same as the current
-                        // cursor.
-                        if is_match_visible(self.matches[next_match].clone()) {
+                        if cursor_will_move(self.matches[next_match].clone()) {
                             break;
                         }
 
