@@ -268,7 +268,7 @@ impl<D: Document> App<D> {
         if search_input.is_empty() {
             if viewer.has_initialized_search_state() {
                 viewer.set_search_direction(search_direction);
-                return Some(Action::JumpToSearchMatch(JumpDirection::Next, count));
+                return self.jump_to_search_match(JumpDirection::Next, count);
             } else {
                 // TODO: Display error: "No current search input"
                 return None;
@@ -276,7 +276,7 @@ impl<D: Document> App<D> {
         }
 
         match viewer.initialize_search(search_input, search_direction) {
-            Ok(()) => Some(Action::JumpToSearchMatch(JumpDirection::Next, count)),
+            Ok(()) => self.jump_to_search_match(JumpDirection::Next, count),
             Err(_err) => {
                 // TODO: Display this error
                 None
