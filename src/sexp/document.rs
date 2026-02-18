@@ -1006,6 +1006,23 @@ impl Document for SexpDocument {
         self.logical_line_of_node_index(closest_visible_ancestor)
     }
 
+    fn is_raw_byte_range_visible(&self, byte_range: Range<usize>) -> bool {
+        // This is fine for now; but might want to revisit later based on how previews
+        // for collapsed nodes are displayed. Right now, if you have a record field where
+        // the value is a collapsed variant (e.g. "(key (Variant ...))"), then we'll say
+        // that the range representing "Variant" is visible.
+        //
+        // This implementation also completely ignores the end of the range, so it doesn't
+        // handle searches that span multiple nodes.
+        //
+        // To handle especially pathological cases, we need to consider all they bytes
+        // (or, more likely, NodeIndexes) in between the start and the end. Consider a
+        // range that starts in one collapsed value, extends to a visible value, then ends
+        // in another collapsed value.
+        let cursor = self.raw_byte_index_to_cursor(byte_range.start);
+        self.closest_visible_cursor(&cursor) == cursor
+    }
+
     fn closest_visible_cursor(&self, cursor: &NodeIndex) -> NodeIndex {
         let closest_visible_ancestor = self.closest_visible_ancestor(cursor);
         self.first_normal_focusable_node_to_left_of_node_or_node(closest_visible_ancestor)
@@ -1523,5 +1540,43 @@ mod tests {
         assert_eq!(doc.closest_visible_ancestor(&NodeIndex(26)), NodeIndex(15));
         assert_eq!(doc.closest_visible_cursor(&NodeIndex(26)), NodeIndex(13));
         assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"13..=15");
+    }
+
+    #[test]
+    fn test_is_raw_byte_range_visible() {
+        let mut doc = new_doc(b"((k1 a)(k2 (Var b))(k3 c)(k4 (Var d)))");
+        assert_snapshot!(dump_with_byte_indexes(&doc), @r"
+         0..=4  :   0..=7   : ((k1 a)
+         5..=8  :   8..=16  :  (k2 (Var
+         9..=11 :  17..=20  :    b))
+        12..=15 :  21..=27  :  (k3 c)
+        16..=19 :  28..=36  :  (k4 (Var
+        20..=23 :  37..=41  :    d)))
+        ");
+
+        let var = 14..16;
+        let hidden_var_value = 17..19;
+        let hidden_into_next_line = 17..23;
+        let hidden_into_next_line_into_hidden = 17..38;
+
+        assert_snapshot!(doc.core.pretty_printed[var.clone()].as_bstr(), @"ar");
+        assert_snapshot!(doc.core.pretty_printed[hidden_var_value.clone()].as_bstr(), @"b)");
+        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line.clone()].as_bstr(), @"b)) (k");
+        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line_into_hidden.clone()].as_bstr(), @"b)) (k3 c) (k4 (Var d");
+
+        assert_snapshot!(doc.is_raw_byte_range_visible(var.clone()), @"true");
+        assert_snapshot!(doc.is_raw_byte_range_visible(hidden_var_value.clone()), @"true");
+        assert_snapshot!(doc.is_raw_byte_range_visible(hidden_into_next_line.clone()), @"true");
+        assert_snapshot!(doc.is_raw_byte_range_visible(hidden_into_next_line_into_hidden.clone()), @"true");
+
+        // Collapse both variants
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(5));
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(16));
+
+        assert_snapshot!(doc.is_raw_byte_range_visible(var), @"true");
+        assert_snapshot!(doc.is_raw_byte_range_visible(hidden_var_value), @"false");
+        // These two should arguably return true
+        assert_snapshot!(doc.is_raw_byte_range_visible(hidden_into_next_line), @"false");
+        assert_snapshot!(doc.is_raw_byte_range_visible(hidden_into_next_line_into_hidden), @"false");
     }
 }

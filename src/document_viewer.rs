@@ -1198,7 +1198,6 @@ impl<D: Document> DocumentViewer<D> {
             return;
         };
 
-        let current_focused_range = self.doc.raw_byte_range_of_cursor(&self.current_focus);
         // Only capture reference to doc/current focus, and not self, so we can still mutate
         // `search_state`.
         let doc = &self.doc;
@@ -1209,10 +1208,10 @@ impl<D: Document> DocumentViewer<D> {
             doc.closest_visible_cursor(&cursor) != *current_focus
         };
 
-        let is_match_visible = |match_range: Range<usize>| {
-            let cursor = doc.raw_byte_index_to_cursor(match_range.start);
-            doc.closest_visible_cursor(&cursor) == cursor
-        };
+        let is_match_visible =
+            |match_range: Range<usize>| doc.is_raw_byte_range_visible(match_range);
+
+        let current_focused_range = self.doc.raw_byte_range_of_cursor(&self.current_focus);
 
         let match_byte_range = search_state.jump_to_next_match(
             current_focused_range,
@@ -2651,6 +2650,35 @@ mod test {
         │ 3│ 2 │ (a)      │ │ 3│ 2 │ (a)      │        │ 3│ 2 │ (a)      │        │ 3│ 2 │  (k5 b)) │           │ 3│ 2 │  (k5 b)) │
         │ 4│ 2 │ (b)      │ │ 4│ 2 │ (b)      │        │ 4│ 2 │ (b)      │        │ 4│ 2 │ (...)    │           │ 4│ 2 │ (...)    │
         └──┴───┴──────────┘ └──┴───┴──────────┘        └──┴───┴──────────┘        └──┴───┴──────────┘           └──┴───┴──────────┘
+        ");
+    }
+
+    #[test]
+    fn test_starting_search_from_line_with_variant_record_value_on_it() {
+        let text = b"((k1 a)(k2 (V b)))(V c)";
+        let mut viewer = init_sexp(text, 15, 5, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(1), press_left()],
+                vec![
+                    initialize_search("v", SearchDirection::Forward),
+                    jump_to_next_match(1),
+                ],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                                   MoveCursorDown(1)            /v                         JumpToSearchMatch(Next, 1)
+                                   CollapseOrMoveCursorLeftOrUp JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬─────────────────┐ ┌SI┬─L#┬─────────────────┐   ┌SI┬─L#┬─────────────────┐ ┌SI┬─L#┬─────────────────┐
+        │ 0│*1 │ [(k1 a)         │ │ 0│ 1 │ ((k1 a)         │   │ 0│ 1 │ ((k1 a)         │ │ 0│ 1 │ ((k1 a)         │
+        │ 1│ 2 │  (k2 (V         │ │ 1│*2 │  [k2 (V ...)))  │   │ 1│*2 │  [k2 (V ...)))  │ │ 1│ 2 │  (k2 (V ...)))  │
+        │ 2│ 2 │    b)))         │ │ 2│ 2 │ (V              │   │ 2│ 2 │ (V              │ │ 2│*2 │ [V              │
+        │ 3│ 2 │ (V              │ │ 3│ 2 │   c)            │   │ 3│ 2 │   c)            │ │ 3│ 2 │   c)            │
+        │ 4│ 2 │   c)            │ │ 4│ ~ │                 │   │ 4│ ~ │                 │ │ 4│ ~ │                 │
+        └──┴───┴─────────────────┘ └──┴───┴─────────────────┘   └──┴───┴─────────────────┘ └──┴───┴─────────────────┘
         ");
     }
 }

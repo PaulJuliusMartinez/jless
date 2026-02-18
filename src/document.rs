@@ -120,6 +120,8 @@ pub trait Document {
     /// part of a collapsed node in that screen line though).
     fn raw_byte_index_to_visible_screen_line(&self, index: usize) -> Self::ScreenLine;
 
+    fn is_raw_byte_range_visible(&self, range: Range<usize>) -> bool;
+
     fn raw_byte_range_to_visible_content_range(
         &self,
         range: Range<usize>,

@@ -527,6 +527,11 @@ impl Document for TextDocument {
         self.create_ref_to_byte_offset_within_line(cursor, offset_within_line)
     }
 
+    fn is_raw_byte_range_visible(&self, _range: Range<usize>) -> bool {
+        // All lines are always visible
+        true
+    }
+
     fn closest_visible_cursor(&self, cursor: &Cursor) -> Cursor {
         // All lines are always visible
         *cursor
