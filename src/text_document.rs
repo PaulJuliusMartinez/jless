@@ -491,6 +491,10 @@ impl Document for TextDocument {
         None
     }
 
+    fn move_cursor_left_or_up_without_collapsing(&mut self, _cursor: &Cursor) -> Option<Cursor> {
+        None
+    }
+
     // Soon: Uncomment this.
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &ScreenLine, _cursor: &Cursor) -> Vec<u8> {

@@ -94,6 +94,10 @@ pub trait Document {
     ) -> Option<Self::Cursor>;
     fn collapse_or_move_cursor_left_or_up(&mut self, cursor: &Self::Cursor)
         -> Option<Self::Cursor>;
+    fn move_cursor_left_or_up_without_collapsing(
+        &mut self,
+        cursor: &Self::Cursor,
+    ) -> Option<Self::Cursor>;
 
     // Soon: Uncomment this.
     // #[cfg(test)]

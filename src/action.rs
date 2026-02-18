@@ -12,6 +12,7 @@ pub enum Action {
     MoveCursorUp(usize),
     ExpandOrMoveCursorRightOrDown,
     CollapseOrMoveCursorLeftOrUp,
+    MoveCursorLeftOrUpWithoutCollapsing,
 
     ScrollViewportDown(usize),
     ScrollViewportUp(usize),

@@ -490,6 +490,152 @@ impl SexpDocument {
             return Some(focusable_nodes.first().unwrap().0);
         }
     }
+
+    fn move_left_impl(
+        &mut self,
+        cursor: &NodeIndex,
+        should_actually_collapse: bool,
+    ) -> Option<NodeIndex> {
+        let current_line = self.logical_line_of_node_index(*cursor);
+
+        // This function is used for two actions:
+        // - CollapseOrMoveCursorLeftOrUp
+        // - MoveCursorLeftOrUpWithoutCollapsing
+        //
+        // The name of the first gives us our priorities:
+        //
+        // - Collapse something,
+        // - Or, move the cursor left on the current line if possible
+        // - Otherwise, if the focused node has a parent, try to move there (some weird
+        // cases here, see below.)
+        //
+        // For the second action, we implement the same logic, but just skip collapsing.
+
+        // Deciding what to collapse is complicated: In the example below, there are two
+        // collapsible nodes in the first line: the top level list, and the record field
+        // with the variant value. If we're focused on the top level list, and we hit
+        // left, we should collapse the top level list. We'd prefer the variant itself
+        // to not be focusable, but we make it so for consistency reasons. Therefore even
+        // when that is focused, we want this function to move to the key first, and then
+        // collapse the variant if we call this function again.
+        //
+        // ((a (Variant
+        //    1))
+        //  ((b 1)
+        //   (c 2)))
+        //
+        // So, our logic here will be:
+        // - Find first expanded node to the right of the cursor (inclusive)
+        // - If that's to the right of the cursor, collapse it
+        // - If that's the cursor itself, and the focus target kind is `Normal`, collapse it
+        // - If that's the cursor itself, but the focus target kind is `ListValueOfRecordField`,
+        // try moving left if possible; if not possible, then collapse it (not sure this can
+        // ever happen)
+
+        let node_to_collapse = self.collapsible_nodes_in_line(&current_line).find_map(
+            |(node_index, collapsed_state)| {
+                if *cursor <= *node_index && *collapsed_state == Expanded {
+                    Some(*node_index)
+                } else {
+                    None
+                }
+            },
+        );
+
+        let focusable_nodes = self.focusable_nodes_in_line(&current_line);
+        let mut cursor_focus_target_kind = FocusTargetKind::Normal;
+        let mut prev_focusable_node_in_line = None;
+
+        for (node_index, focus_target_kind) in focusable_nodes.into_iter() {
+            if node_index < *cursor {
+                prev_focusable_node_in_line = Some(node_index);
+            } else {
+                if node_index == *cursor {
+                    cursor_focus_target_kind = focus_target_kind;
+                }
+                break;
+            }
+        }
+
+        // Now we have our expandable node, and where we'd move if we can move left,
+        // so we can go through the checklist from above:
+        if let Some(node_to_collapse) = node_to_collapse {
+            let should_collapse = {
+                if *cursor < node_to_collapse {
+                    true
+                } else {
+                    match cursor_focus_target_kind {
+                        FocusTargetKind::Normal => true,
+                        FocusTargetKind::ListValueOfRecordField => {
+                            // Pretty sure this couldn't actually ever be none.
+                            prev_focusable_node_in_line.is_none()
+                        }
+                    }
+                }
+            };
+
+            if should_collapse && should_actually_collapse {
+                let _prev_state = self.collapsible_nodes.insert(node_to_collapse, Collapsed);
+                // Cursor doesn't move.
+                return Some(*cursor);
+            }
+        }
+
+        // If we didn't collapse, try to move left:
+        if let Some(prev_focusable_node_in_line) = prev_focusable_node_in_line {
+            return Some(prev_focusable_node_in_line);
+        }
+
+        // Can't move further left on our line, so we'll try to move to our parent.
+        if let Some(parent_index) = self.core.node(*cursor).parent_index {
+            // We don't always want the focus to move to the parent_index. Specifically,
+            // if the parent is the value of a record field, then we want to move the
+            // cursor to record key, not the parent.
+            //
+            // ((Variant
+            //    (foo 1)     < If cursor is here, we do want to go to the parent
+            //    (bar 2))
+            //
+            // ((key (Variant
+            //    (foo 1)     < But if cursor is here, we want to go to "key"s record field.
+            //    (bar 2))
+            //
+            // We should be able to handle this by setting the focus to be the last `Normal`
+            // focusable node in the parent's line. (The actual parent would appear to have
+            // a FocusTargetKind of `ListValueOfRecordField`, which isn't what we want.)
+            //
+            // There's another case to consider, that's more difficult: Do we really want
+            // to move to the parent, or just move left one indentation level? In the case
+            // below, if we're focused on "(bar 2)", and we hit left, do we want to move
+            // to focus "(key (", or do we just want to move up and focus "Variant"? I'm
+            // not sure how you could detect this case and find that line, so we won't solve
+            // it for now.
+            //
+            // ((key (
+            //     ; comment
+            //     Variant
+            //       (foo 1)
+            //       (bar 2))
+
+            let parent_line = self.logical_line_of_node_index(parent_index);
+            let mut focusable_nodes = self.focusable_nodes_in_line(&parent_line);
+            focusable_nodes.retain(|(node_index, _)| {
+                // The our parent is a regular list, then the first child of the list will
+                // also be on that line. We don't want to focus a sibling.
+                *node_index <= parent_index
+            });
+
+            match Self::last_normal_focusable_node_or_last_node(focusable_nodes) {
+                Some(node_index) => return Some(node_index),
+                None => {
+                    // This probably shouldn't ever happen; we'll just focus the parent.
+                    return Some(parent_index);
+                }
+            }
+        }
+
+        None
+    }
 }
 
 impl Document for SexpDocument {
@@ -756,138 +902,16 @@ impl Document for SexpDocument {
     }
 
     fn collapse_or_move_cursor_left_or_up(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
-        let current_line = self.logical_line_of_node_index(*cursor);
+        let should_collapse = true;
+        self.move_left_impl(cursor, should_collapse)
+    }
 
-        // The name of this function gives us our priorities:
-        // - Collapse something,
-        // - Or, move the cursor left on the current line if possible
-        // - Otherwise, if the focused node has a parent, try to move there (some weird
-        // cases here, see below.)
-
-        // Deciding what to collapse is complicated: In the example below, there are two
-        // collapsible nodes in the first line: the top level list, and the record field
-        // with the variant value. If we're focused on the top level list, and we hit
-        // left, we should collapse the top level list. We'd prefer the variant itself
-        // to not be focusable, but we make it so for consistency reasons. Therefore even
-        // when that is focused, we want this function to move to the key first, and then
-        // collapse the variant if we call this function again.
-        //
-        // ((a (Variant
-        //    1))
-        //  ((b 1)
-        //   (c 2)))
-        //
-        // So, our logic here will be:
-        // - Find first expanded node to the right of the cursor (inclusive)
-        // - If that's to the right of the cursor, collapse it
-        // - If that's the cursor itself, and the focus target kind is `Normal`, collapse it
-        // - If that's the cursor itself, but the focus target kind is `ListValueOfRecordField`,
-        // try moving left if possible; if not possible, then collapse it (not sure this can
-        // ever happen)
-
-        let node_to_collapse = self.collapsible_nodes_in_line(&current_line).find_map(
-            |(node_index, collapsed_state)| {
-                if *cursor <= *node_index && *collapsed_state == Expanded {
-                    Some(*node_index)
-                } else {
-                    None
-                }
-            },
-        );
-
-        let focusable_nodes = self.focusable_nodes_in_line(&current_line);
-        let mut cursor_focus_target_kind = FocusTargetKind::Normal;
-        let mut prev_focusable_node_in_line = None;
-
-        for (node_index, focus_target_kind) in focusable_nodes.into_iter() {
-            if node_index < *cursor {
-                prev_focusable_node_in_line = Some(node_index);
-            } else {
-                if node_index == *cursor {
-                    cursor_focus_target_kind = focus_target_kind;
-                }
-                break;
-            }
-        }
-
-        // Now we have our expandable node, and where we'd move if we can move left,
-        // so we can go through the checklist from above:
-        if let Some(node_to_collapse) = node_to_collapse {
-            let should_collapse = {
-                if *cursor < node_to_collapse {
-                    true
-                } else {
-                    match cursor_focus_target_kind {
-                        FocusTargetKind::Normal => true,
-                        FocusTargetKind::ListValueOfRecordField => {
-                            // Pretty sure this couldn't actually ever be none.
-                            prev_focusable_node_in_line.is_none()
-                        }
-                    }
-                }
-            };
-
-            if should_collapse {
-                let _prev_state = self.collapsible_nodes.insert(node_to_collapse, Collapsed);
-                // Cursor doesn't move.
-                return Some(*cursor);
-            }
-        }
-
-        // If we didn't collapse, try to move left:
-        if let Some(prev_focusable_node_in_line) = prev_focusable_node_in_line {
-            return Some(prev_focusable_node_in_line);
-        }
-
-        // Can't move further left on our line, so we'll try to move to our parent.
-        if let Some(parent_index) = self.core.node(*cursor).parent_index {
-            // We don't always want the focus to move to the parent_index. Specifically,
-            // if the parent is the value of a record field, then we want to move the
-            // cursor to record key, not the parent.
-            //
-            // ((Variant
-            //    (foo 1)     < If cursor is here, we do want to go to the parent
-            //    (bar 2))
-            //
-            // ((key (Variant
-            //    (foo 1)     < But if cursor is here, we want to go to "key"s record field.
-            //    (bar 2))
-            //
-            // We should be able to handle this by setting the focus to be the last `Normal`
-            // focusable node in the parent's line. (The actual parent would appear to have
-            // a FocusTargetKind of `ListValueOfRecordField`, which isn't what we want.)
-            //
-            // There's another case to consider, that's more difficult: Do we really want
-            // to move to the parent, or just move left one indentation level? In the case
-            // below, if we're focused on "(bar 2)", and we hit left, do we want to move
-            // to focus "(key (", or do we just want to move up and focus "Variant"? I'm
-            // not sure how you could detect this case and find that line, so we won't solve
-            // it for now.
-            //
-            // ((key (
-            //     ; comment
-            //     Variant
-            //       (foo 1)
-            //       (bar 2))
-
-            let parent_line = self.logical_line_of_node_index(parent_index);
-            let mut focusable_nodes = self.focusable_nodes_in_line(&parent_line);
-            focusable_nodes.retain(|(node_index, _)| {
-                // The our parent is a regular list, then the first child of the list will
-                // also be on that line. We don't want to focus a sibling.
-                *node_index <= parent_index
-            });
-
-            match Self::last_normal_focusable_node_or_last_node(focusable_nodes) {
-                Some(node_index) => return Some(node_index),
-                None => {
-                    // This probably shouldn't ever happen; we'll just focus the parent.
-                    return Some(parent_index);
-                }
-            }
-        }
-
-        None
+    fn move_cursor_left_or_up_without_collapsing(
+        &mut self,
+        cursor: &NodeIndex,
+    ) -> Option<NodeIndex> {
+        let should_collapse = false;
+        self.move_left_impl(cursor, should_collapse)
     }
 
     fn debug_text_content(&self, logical_line: &LogicalLine, cursor: &NodeIndex) -> Vec<u8> {
@@ -1122,6 +1146,7 @@ mod tests {
         Up(usize),
         Right,
         Left,
+        LeftNoCollapse,
         FocusBottom,
     }
 
@@ -1138,6 +1163,7 @@ mod tests {
                 Up(lines) => self.move_cursor_up(lines, &current_cursor),
                 Right => self.expand_or_move_cursor_right_or_down(&current_cursor),
                 Left => self.collapse_or_move_cursor_left_or_up(&current_cursor),
+                LeftNoCollapse => self.move_cursor_left_or_up_without_collapsing(&current_cursor),
                 FocusBottom => self
                     .bottom_screen_line_and_cursor()
                     .map(|(_, cursor)| cursor),
@@ -1306,6 +1332,13 @@ mod tests {
         3..=4  :  3)
         ");
 
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(2), vec![LeftNoCollapse, LeftNoCollapse]);
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(0)
+        LeftNoCollapse => -
+        ");
+
         let movements = show_cursor_movements(
             &mut doc,
             NodeIndex(2),
@@ -1327,6 +1360,13 @@ mod tests {
         5..=9  :  (b 2))
         ");
 
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(5), vec![LeftNoCollapse, LeftNoCollapse]);
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(0)
+        LeftNoCollapse => -
+        ");
+
         let movements = show_cursor_movements(
             &mut doc,
             NodeIndex(5),
@@ -1346,6 +1386,13 @@ mod tests {
         assert_snapshot!(dump(&doc), @r"
         0..=1  : (Variant
         2..=3  :   1)
+        ");
+
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(2), vec![LeftNoCollapse, LeftNoCollapse]);
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(0)
+        LeftNoCollapse => -
         ");
 
         let movements = show_cursor_movements(
@@ -1374,6 +1421,13 @@ mod tests {
         9..=12 :    3)))
         ");
 
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(9), vec![LeftNoCollapse, LeftNoCollapse]);
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(5)
+        LeftNoCollapse => NodeIndex(0)
+        ");
+
         let movements = show_cursor_movements(
             &mut doc,
             NodeIndex(9),
@@ -1396,6 +1450,13 @@ mod tests {
         0..=4  : ((a 1)
         5..=8  :  (b (Variant
         9..=12 :    2)))
+        ");
+
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(9), vec![LeftNoCollapse, LeftNoCollapse]);
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(5)
+        LeftNoCollapse => NodeIndex(0)
         ");
 
         let movements = show_cursor_movements(
@@ -1423,6 +1484,17 @@ mod tests {
         10..=14 :    3))))
         ");
 
+        let movements = show_cursor_movements(
+            &mut doc,
+            NodeIndex(10),
+            vec![LeftNoCollapse, LeftNoCollapse, LeftNoCollapse],
+        );
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(5)
+        LeftNoCollapse => NodeIndex(0)
+        LeftNoCollapse => -
+        ");
+
         let movements = show_cursor_movements(&mut doc, NodeIndex(10), vec![Left, Left, Left]);
         assert_snapshot!(movements, @r"
         Left => NodeIndex(5)
@@ -1437,6 +1509,17 @@ mod tests {
          0..=4  : ((a 1)
          5..=9  :  (b ((Variant
         10..=14 :    2))))
+        ");
+
+        let movements = show_cursor_movements(
+            &mut doc,
+            NodeIndex(10),
+            vec![LeftNoCollapse, LeftNoCollapse, LeftNoCollapse],
+        );
+        assert_snapshot!(movements, @r"
+        LeftNoCollapse => NodeIndex(5)
+        LeftNoCollapse => NodeIndex(0)
+        LeftNoCollapse => -
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(10), vec![Left, Left, Left]);

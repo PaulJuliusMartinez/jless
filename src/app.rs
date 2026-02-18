@@ -110,6 +110,7 @@ impl<D: Document> App<D> {
                             Key::Left | Key::Char('h') => {
                                 Some(Action::CollapseOrMoveCursorLeftOrUp)
                             }
+                            Key::Char('H') => Some(Action::MoveCursorLeftOrUpWithoutCollapsing),
                             Key::Home | Key::Char('g') => Some(Action::FocusTop),
                             Key::End | Key::Char('G') => Some(Action::FocusBottom),
                             Key::Ctrl('e') => Some(Action::ScrollViewportDown(count_or_1)),
