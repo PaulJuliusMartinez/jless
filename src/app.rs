@@ -463,6 +463,13 @@ impl App {
                         Key::End => Some(Action::FocusBottom),
                         Key::Char('%') => Some(Action::FocusMatchingPair),
                         Key::Char('m') => Some(Action::ToggleMode),
+                        Key::Char('r') => {
+                            crate::screenwriter::toggle_line_number_mode(
+                                &mut self.screen_writer.show_line_numbers,
+                                &mut self.screen_writer.show_relative_line_numbers,
+                            );
+                            None
+                        }
                         Key::Char('<') => {
                             self.screen_writer
                                 .decrease_indentation_level(self.viewer.flatjson.2 as u16);
