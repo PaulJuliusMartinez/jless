@@ -2,6 +2,10 @@ main
 ====
 
 Improvements:
+- [Issue #134]: Add a single-key shortcut `r` to toggle between
+  absolute-only and relative-only line numbers at runtime. The numeric
+  count buffer is cleared on toggle for consistency with other
+  single-key commands. Help text updated accordingly.
 - [Issue #143]: `ctrl-z` will now send jless to the background
 - `:w[rite] <file>` and `:w[rite]! <file>` can be used to write the
   current input to a file

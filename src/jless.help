@@ -235,6 +235,9 @@
       is from the currently focused line. This makes it easier to use the j
       and k commands with specified counts.
 
+      Press 'r' at any time to toggle between absolute-only and
+      relative-only line numbers.
+
       The appearance of line numbers can be configured via command line flags:
 
   -n, --line-numbers              Show absolute line numbers.

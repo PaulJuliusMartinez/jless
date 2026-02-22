@@ -570,3 +570,39 @@ impl ScreenWriter {
         }
     }
 }
+
+// Toggle between absolute-only and relative-only line numbers.
+// If both flags are the same (both true or both false), default to absolute-only.
+pub(crate) fn toggle_line_number_mode(
+    show_absolute_line_numbers: &mut bool,
+    show_relative_line_numbers: &mut bool,
+) {
+    if *show_absolute_line_numbers == *show_relative_line_numbers {
+        // If both are the same (both true or both false), normalize to absolute-only.
+        *show_absolute_line_numbers = true;
+        *show_relative_line_numbers = false;
+    } else {
+        // Otherwise, flip to the other exclusive mode.
+        *show_absolute_line_numbers = !*show_absolute_line_numbers;
+        *show_relative_line_numbers = !*show_relative_line_numbers;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::toggle_line_number_mode;
+
+    #[test]
+    fn toggle_line_number_mode_cases() {
+        for (start_absolute, start_relative, expected_absolute, expected_relative) in vec![
+            (true, false, false, true),
+            (false, true, true, false),
+            (true, true, true, false),
+            (false, false, true, false),
+        ] {
+            let (mut absolute, mut relative) = (start_absolute, start_relative);
+            toggle_line_number_mode(&mut absolute, &mut relative);
+            assert_eq!((absolute, relative), (expected_absolute, expected_relative));
+        }
+    }
+}
