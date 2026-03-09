@@ -605,6 +605,24 @@ impl Document for TextDocument {
         *cursor
     }
 
+    fn yank_content<W: std::io::Write>(
+        &self,
+        mut output: W,
+        cursor: &Cursor,
+        target: char,
+    ) -> Result<(), String> {
+        if target != 'y' {
+            return Err(format!("Unknown yank target {target:?}"));
+        }
+
+        let current_line_content = &self.data[self.complete_line_ranges[*cursor].clone()];
+        output
+            .write_all(current_line_content)
+            .map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
     // Soon: Uncomment this.
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &ScreenLine, _cursor: &Cursor) -> Vec<u8> {

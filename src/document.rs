@@ -1,3 +1,4 @@
+use std::fmt::Debug;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
@@ -16,8 +17,8 @@ use crate::search::{InvertedPairedDelimeters, SearchMatchHighlighter};
 pub trait Document {
     // `Ord` implementation for `ScreenLine` may panic if we accidentally compare
     // values before/after a resize.
-    type ScreenLine: Clone + Eq + Ord + std::fmt::Debug;
-    type Cursor: Clone + Ord + std::fmt::Debug;
+    type ScreenLine: Clone + Eq + Ord + Debug;
+    type Cursor: Clone + Ord + Debug;
 
     fn new() -> Self;
     fn width(&self) -> usize;
@@ -231,6 +232,15 @@ pub trait Document {
     fn raw_byte_index_to_visible_cursor(&self, index: usize) -> Self::Cursor {
         self.closest_visible_cursor(&self.raw_byte_index_to_cursor(index))
     }
+
+    // Copying to clipboard
+
+    fn yank_content<W: std::io::Write>(
+        &self,
+        output: W,
+        cursor: &Self::Cursor,
+        target: char,
+    ) -> Result<(), String>;
 
     // Rendering
 

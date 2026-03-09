@@ -12,6 +12,7 @@ use termion::event::{Event as TermionEvent, Key};
 use termion::raw::RawTerminal;
 
 use crate::action::{Action, MovementMethod};
+use crate::clipboard;
 use crate::dimensions::Dimensions;
 use crate::document::Document;
 use crate::document_viewer::DocumentViewer;
@@ -43,6 +44,7 @@ pub struct App<W: std::io::Write + AsFd, D: Document> {
 
     input_filename: Option<Rc<String>>,
     stdout: RawTerminal<W>,
+    clipboard_access_method: Option<clipboard::AccessMethod>,
 }
 
 // State to determine how to process the next event input.
@@ -50,6 +52,7 @@ pub struct App<W: std::io::Write + AsFd, D: Document> {
 enum InputState {
     Default,
     PendingZCommand,
+    PendingYCommand,
 }
 
 pub struct Break;
@@ -93,6 +96,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             readline_editor,
             input_filename: input_filename.map(Rc::new),
             stdout,
+            clipboard_access_method: clipboard::default_access_method(),
         }
     }
 
@@ -125,6 +129,16 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                         _ => None,
                     }
                 }
+                InputState::PendingYCommand => {
+                    self.input_state = InputState::Default;
+                    self.input_buffer.clear();
+
+                    if let Key::Char(ch) = key_event {
+                        self.copy_content(ch);
+                    }
+
+                    None
+                }
                 InputState::Default => match key_event {
                     Key::Char('q') | Key::Ctrl('c') => {
                         // Immediately return; we are quitting the program.
@@ -142,6 +156,12 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                         self.input_state = InputState::PendingZCommand;
                         self.input_buffer.clear();
                         self.buffer_input(b'z');
+                        None
+                    }
+                    Key::Char('y') => {
+                        self.input_state = InputState::PendingYCommand;
+                        self.input_buffer.clear();
+                        self.buffer_input(b'y');
                         None
                     }
                     // These inputs always clear [input_buffer]. (Some of them may use it.)
@@ -570,6 +590,38 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         let _ = write!(self.stdout, "{}", termion::cursor::Hide);
 
         Some(result)
+    }
+
+    fn copy_content(&mut self, ch: char) {
+        use std::io::Write;
+
+        let Some(access_method) = &self.clipboard_access_method else {
+            // TODO: Display error: "Don't know how to access clipboard"
+            return;
+        };
+
+        let mut sink = match clipboard::start_copy(access_method) {
+            Ok(sink) => sink,
+            Err(_) => {
+                // TODO: Display error: Can't start clipboard cmd
+                return;
+            }
+        };
+
+        match &self.viewer {
+            None => {
+                let _ = write!(sink, "can't copy, still waiting for input");
+            }
+            Some(viewer) => {
+                // TODO: Handle errors here.
+                let _ = viewer
+                    .doc
+                    .yank_content(&mut sink, &viewer.current_focus, ch);
+            }
+        }
+
+        // TODO: Display error: Copy may have failed
+        let _ = sink.finish_copy();
     }
 
     fn draw_screen(&mut self) {

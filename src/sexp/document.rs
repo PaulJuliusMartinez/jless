@@ -216,6 +216,18 @@ impl ScreenLine {
     }
 }
 
+enum CopyTarget {
+    PrettyPrintedValue,
+    MachineValue,
+    RecordField,
+    MachineRecordField,
+    Key,
+    Constructor,
+    String,
+    QueryPath,
+    GetPath,
+}
+
 impl SexpDocument {
     fn process_additional_data(&mut self, current_data: Option<&[u8]>, seen_eof: bool) {
         while let Some(witness) = self.tokenizer.has_enough_data_to_produce_tokens() {
@@ -1069,6 +1081,214 @@ impl SexpDocument {
         let screen_line = self.first_typeset_screen_line_for_logical_line(logical_line);
         screen_line.into_last_typeset_line()
     }
+
+    fn yank_content<W: std::io::Write>(
+        &self,
+        mut output: W,
+        node_index: NodeIndex,
+        target: CopyTarget,
+    ) -> Result<(), String> {
+        let record_field_value_node_index = self.core.value_of_record_field(node_index);
+        let value_node_index = record_field_value_node_index.unwrap_or(node_index);
+
+        let res = match target {
+            CopyTarget::PrettyPrintedValue => {
+                self.yank_pretty_printed_node(output, value_node_index)
+            }
+            CopyTarget::MachineValue => self.yank_machine_node(output, value_node_index),
+            CopyTarget::RecordField | CopyTarget::MachineRecordField => {
+                if matches!(
+                    self.core.token(node_index).list_kind(),
+                    Some(ListKind::RecordField),
+                ) {
+                    if matches!(target, CopyTarget::MachineRecordField) {
+                        self.yank_machine_node(output, node_index)
+                    } else {
+                        self.yank_pretty_printed_node(output, node_index)
+                    }
+                } else {
+                    return Err("Can't yank record field; not focused on record field".to_string());
+                }
+            }
+            CopyTarget::Key => {
+                if matches!(
+                    self.core.token(node_index).list_kind(),
+                    Some(ListKind::RecordField),
+                ) {
+                    let key_node_index = self.core.first_data_elem(node_index).unwrap();
+                    output.write_all(self.core.raw_bytes_for_node(key_node_index))
+                } else {
+                    return Err("Can't yank key; not focused on record field".to_string());
+                }
+            }
+            CopyTarget::Constructor => {
+                if matches!(
+                    self.core.token(value_node_index).list_kind(),
+                    Some(ListKind::VariantRecord | ListKind::VariantTuple),
+                ) {
+                    let constructor_node_index =
+                        self.core.first_data_elem(value_node_index).unwrap();
+                    output.write_all(self.core.raw_bytes_for_node(constructor_node_index))
+                } else {
+                    return Err("Can't yank key; not focused on record field".to_string());
+                }
+            }
+            CopyTarget::String => match self.core.token(value_node_index) {
+                DocumentToken::Atom(AtomMetadata { quoted, valid, .. }) => {
+                    if *valid {
+                        if !*quoted {
+                            output.write_all(self.core.raw_bytes_for_node(value_node_index))
+                        } else {
+                            unimplemented!("Don't know how to unescape quoted values yet");
+                        }
+                    } else {
+                        return Err(
+                            "Can't yank raw atom value; atom contains invalid escapes".to_string()
+                        );
+                    }
+                }
+                _ => {
+                    return Err("Can't yank raw atom value; not focused on an atom".to_string());
+                }
+            },
+            CopyTarget::QueryPath => Ok(()),
+            CopyTarget::GetPath => Ok(()),
+        };
+
+        res.map_err(|e| e.to_string())
+    }
+
+    fn yank_pretty_printed_node<W: std::io::Write>(
+        &self,
+        mut output: W,
+        node_index: NodeIndex,
+    ) -> std::io::Result<()> {
+        let pretty_printed_logical_lines =
+            layout::layout_fully_expanded_node(&self.core, node_index);
+
+        let multiple_lines = pretty_printed_logical_lines.len() > 1;
+
+        for line in pretty_printed_logical_lines.into_iter() {
+            for _ in 0..line.indentation {
+                output.write_all(b" ")?;
+            }
+
+            let mut need_space_before_next_node = false;
+            for node_index in line.node_indexes() {
+                let token_content = self.core.raw_bytes_for_node(node_index);
+
+                match self.core.token(node_index) {
+                    DocumentToken::StartOfList(_) => {
+                        if need_space_before_next_node {
+                            output.write_all(b" (")?;
+                        } else {
+                            output.write_all(b"(")?;
+                        }
+                        need_space_before_next_node = false;
+                    }
+                    DocumentToken::EndOfList(_) => {
+                        output.write_all(b")")?;
+                        need_space_before_next_node = true;
+                    }
+                    DocumentToken::Atom(_) | DocumentToken::Unit { .. } => {
+                        if need_space_before_next_node {
+                            output.write_all(b" ")?;
+                        }
+                        output.write_all(token_content)?;
+                        need_space_before_next_node = true;
+                    }
+                    DocumentToken::LineComment | DocumentToken::BlockComment => {
+                        if need_space_before_next_node {
+                            output.write_all(b" ")?;
+                        }
+                        output.write_all(token_content)?;
+                    }
+                    DocumentToken::Error(e) => {
+                        output.write_all(b"; ERROR: ")?;
+                        output.write_all(e.message.as_bytes())?;
+                    }
+                }
+            }
+
+            if multiple_lines {
+                let _ = output.write_all(b"\n");
+            }
+        }
+
+        Ok(())
+    }
+
+    fn yank_machine_node<W: std::io::Write>(
+        &self,
+        mut output: W,
+        mut node_index: NodeIndex,
+    ) -> std::io::Result<()> {
+        let end_node_index_incl = match self.core.token(node_index) {
+            DocumentToken::StartOfList(list_metadata) => list_metadata
+                .end_index()
+                .expect("list that we're yanking to be complete"),
+            _ => node_index,
+        };
+
+        let mut need_space_before_next_node = false;
+        let first_node_index = node_index;
+        while node_index <= end_node_index_incl {
+            let token_content = self.core.raw_bytes_for_node(node_index);
+
+            match self.core.token(node_index) {
+                DocumentToken::StartOfList(list_metadata) => {
+                    // Skip commented out nodes, unless we're focused on the commented out node
+                    // itself.
+                    if list_metadata.sexp_commented_out && node_index != first_node_index {
+                        if let Some(list_end_index) = list_metadata.end_index() {
+                            node_index = list_end_index + 1;
+                            continue;
+                        } else {
+                            break;
+                        }
+                    }
+
+                    if need_space_before_next_node {
+                        output.write_all(b" (")?;
+                    } else {
+                        output.write_all(b"(")?;
+                    }
+
+                    need_space_before_next_node = false;
+                }
+                DocumentToken::EndOfList(_) => {
+                    output.write_all(b")")?;
+                    need_space_before_next_node = true;
+                }
+                DocumentToken::Atom(AtomMetadata {
+                    sexp_commented_out, ..
+                })
+                | DocumentToken::Unit { sexp_commented_out } => {
+                    // Skip commented out nodes, unless we're focused on the commented out node
+                    // itself.
+                    if *sexp_commented_out && node_index != first_node_index {
+                        node_index = node_index + 1;
+                        continue;
+                    }
+
+                    if need_space_before_next_node {
+                        output.write_all(b" ")?;
+                    }
+
+                    output.write_all(token_content)?;
+                    need_space_before_next_node = true;
+                }
+                // Don't print comments or errors
+                DocumentToken::LineComment
+                | DocumentToken::BlockComment
+                | DocumentToken::Error(_) => (),
+            }
+
+            node_index = node_index + 1;
+        }
+
+        Ok(())
+    }
 }
 
 impl Document for SexpDocument {
@@ -1887,6 +2107,28 @@ impl Document for SexpDocument {
     fn closest_visible_cursor(&self, cursor: &NodeIndex) -> NodeIndex {
         let closest_visible_ancestor = self.closest_visible_ancestor(cursor);
         self.first_normal_focusable_node_to_left_of_node_or_node(closest_visible_ancestor)
+    }
+
+    fn yank_content<W: std::io::Write>(
+        &self,
+        output: W,
+        cursor: &NodeIndex,
+        target: char,
+    ) -> Result<(), String> {
+        let copy_target = match target {
+            'y' => CopyTarget::PrettyPrintedValue,
+            'm' => CopyTarget::MachineValue,
+            't' | 'r' => CopyTarget::RecordField,
+            'T' | 'R' => CopyTarget::MachineRecordField,
+            'k' => CopyTarget::Key,
+            'c' => CopyTarget::Constructor,
+            's' => CopyTarget::String,
+            'g' => CopyTarget::GetPath,
+            'q' => CopyTarget::QueryPath,
+            _ => return Err(format!("Unknown yank target {target:?}")),
+        };
+
+        self.yank_content(output, *cursor, copy_target)
     }
 }
 
