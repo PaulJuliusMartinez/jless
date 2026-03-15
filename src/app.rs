@@ -6,7 +6,7 @@ use rustyline::history::MemHistory;
 use rustyline::Editor;
 use termion::event::{Event as TermionEvent, Key};
 
-use crate::action::Action;
+use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::Document;
 use crate::document_viewer::DocumentViewer;
@@ -133,12 +133,26 @@ impl<D: Document> App<D> {
                                 SearchDirection::Reverse,
                                 count_or_1,
                             ),
-                            Key::Char('n') => {
-                                self.jump_to_search_match(JumpDirection::Next, count_or_1)
-                            }
-                            Key::Char('N') => {
-                                self.jump_to_search_match(JumpDirection::Prev, count_or_1)
-                            }
+                            Key::Char('n') => self.move_to_search_match(
+                                MovementMethod::MoveCursor,
+                                JumpDirection::Next,
+                                count_or_1,
+                            ),
+                            Key::Char('N') => self.move_to_search_match(
+                                MovementMethod::MoveCursor,
+                                JumpDirection::Prev,
+                                count_or_1,
+                            ),
+                            Key::Ctrl('f') => self.move_to_search_match(
+                                MovementMethod::ScrollViewport,
+                                JumpDirection::Next,
+                                count_or_1,
+                            ),
+                            Key::Ctrl('g') => self.move_to_search_match(
+                                MovementMethod::ScrollViewport,
+                                JumpDirection::Prev,
+                                count_or_1,
+                            ),
                             Key::Esc => None,
                             _ => None,
                         };
@@ -267,7 +281,11 @@ impl<D: Document> App<D> {
         if search_input.is_empty() {
             if viewer.has_initialized_search_state() {
                 viewer.set_search_direction(search_direction);
-                return self.jump_to_search_match(JumpDirection::Next, count);
+                return self.move_to_search_match(
+                    MovementMethod::MoveCursor,
+                    JumpDirection::Next,
+                    count,
+                );
             } else {
                 // TODO: Display error: "No current search input"
                 return None;
@@ -275,7 +293,9 @@ impl<D: Document> App<D> {
         }
 
         match viewer.initialize_search(search_input, search_direction) {
-            Ok(()) => self.jump_to_search_match(JumpDirection::Next, count),
+            Ok(()) => {
+                self.move_to_search_match(MovementMethod::MoveCursor, JumpDirection::Next, count)
+            }
             Err(_err) => {
                 // TODO: Display this error
                 None
@@ -283,8 +303,9 @@ impl<D: Document> App<D> {
         }
     }
 
-    fn jump_to_search_match(
+    fn move_to_search_match(
         &mut self,
+        movement_method: MovementMethod,
         jump_direction: JumpDirection,
         jumps: usize,
     ) -> Option<Action> {
@@ -302,7 +323,11 @@ impl<D: Document> App<D> {
                 // TODO: Display error: "Pattern not found: {}"
                 None
             }
-            Some(_) => Some(Action::JumpToSearchMatch(jump_direction, jumps)),
+            Some(_) => Some(Action::MoveToSearchMatch(
+                movement_method,
+                jump_direction,
+                jumps,
+            )),
         }
     }
 

@@ -63,6 +63,20 @@ pub trait Document {
         start <= *screen_line && *screen_line <= end
     }
 
+    fn center_of_content_range(
+        &self,
+        content_range: &ContentRange<Self::ScreenLine>,
+    ) -> Self::ScreenLine {
+        let diff = (content_range.num_screen_lines - 1) / 2;
+        let mut screen_line = content_range.start.clone();
+        while diff > 0 {
+            screen_line = self
+                .next_screen_line(&screen_line)
+                .expect("must be `ScreenLine`s between start and end of `ContentRange`");
+        }
+        screen_line
+    }
+
     // If a `Document` supports multiple focused nodes within a single `ScreenLine`, then it
     // should return a new cursor with similar horizontal positioning as `prev_cursor`.
     fn convert_screen_line_to_cursor(

@@ -3,6 +3,12 @@ use std::num::NonZeroUsize;
 use crate::search::JumpDirection;
 
 #[derive(Debug, Copy, Clone)]
+pub enum MovementMethod {
+    MoveCursor,
+    ScrollViewport,
+}
+
+#[derive(Debug, Copy, Clone)]
 pub enum Action {
     // Does nothing, for debugging, shouldn't modify any state.
     #[allow(dead_code)]
@@ -39,7 +45,7 @@ pub enum Action {
     JumpDown(Option<NonZeroUsize>),
     JumpUp(Option<NonZeroUsize>),
 
-    JumpToSearchMatch(JumpDirection, usize),
+    MoveToSearchMatch(MovementMethod, JumpDirection, usize),
 
     FocusTop,
     FocusBottom,

@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::ops::{Range, RangeInclusive};
 
-use crate::action::Action;
+use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::{ContentRange, Document};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
@@ -78,7 +78,7 @@ enum PositionOfScreenLine {
 }
 
 #[derive(Debug, Copy, Clone)]
-enum PositionOfCursorInViewport {
+enum PositionOfContentInViewport {
     EntirelyInViewport {
         start_index: usize,
         end_index: usize,
@@ -191,10 +191,10 @@ impl<D: Document> DocumentViewer<D> {
         PositionOfScreenLine::BelowBottomLine
     }
 
-    fn position_of_cursor_in_viewport(
+    fn position_of_content_in_viewport(
         &self,
         cursor_range: &ContentRange<D::ScreenLine>,
-    ) -> PositionOfCursorInViewport {
+    ) -> PositionOfContentInViewport {
         let start_position = self.position_of_screen_line(&cursor_range.start);
         let end_position = self.position_of_screen_line(&cursor_range.end);
 
@@ -205,9 +205,9 @@ impl<D: Document> DocumentViewer<D> {
             (
                 PositionOfScreenLine::AboveTopLine,
                 PositionOfScreenLine::AtScreenIndex(end_index),
-            ) => PositionOfCursorInViewport::StartsAboveViewport { end_index },
+            ) => PositionOfContentInViewport::StartsAboveViewport { end_index },
             (PositionOfScreenLine::AboveTopLine, PositionOfScreenLine::BelowBottomLine) => {
-                PositionOfCursorInViewport::StartsAndEndsOutsideViewport
+                PositionOfContentInViewport::StartsAndEndsOutsideViewport
             }
             (PositionOfScreenLine::AtScreenIndex(_), PositionOfScreenLine::AboveTopLine) => {
                 panic!("start of cursor is in viewport, but bottom is above the top line");
@@ -215,14 +215,14 @@ impl<D: Document> DocumentViewer<D> {
             (
                 PositionOfScreenLine::AtScreenIndex(start_index),
                 PositionOfScreenLine::AtScreenIndex(end_index),
-            ) => PositionOfCursorInViewport::EntirelyInViewport {
+            ) => PositionOfContentInViewport::EntirelyInViewport {
                 start_index,
                 end_index,
             },
             (
                 PositionOfScreenLine::AtScreenIndex(start_index),
                 PositionOfScreenLine::BelowBottomLine,
-            ) => PositionOfCursorInViewport::EndsBelowViewport { start_index },
+            ) => PositionOfContentInViewport::EndsBelowViewport { start_index },
             (PositionOfScreenLine::BelowBottomLine, PositionOfScreenLine::AboveTopLine) => {
                 panic!("end of cursor is below viewport, but start is above viewport");
             }
@@ -236,34 +236,47 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     fn move_cursor_down(&mut self, lines: usize) {
-        let new_cursor = self.doc.move_cursor_down(lines, &self.current_focus);
-        self.update_so_new_cursor_is_visible(new_cursor);
+        if let Some(new_cursor) = self.doc.move_cursor_down(lines, &self.current_focus) {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
     }
 
     fn move_cursor_up(&mut self, lines: usize) {
-        let new_cursor = self.doc.move_cursor_up(lines, &self.current_focus);
-        self.update_so_new_cursor_is_visible(new_cursor);
+        if let Some(new_cursor) = self.doc.move_cursor_up(lines, &self.current_focus) {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
     }
 
     fn expand_or_move_cursor_right_or_down(&mut self) {
-        let new_cursor = self
+        if let Some(new_cursor) = self
             .doc
-            .expand_or_move_cursor_right_or_down(&self.current_focus);
-        self.update_so_new_cursor_is_visible(new_cursor);
+            .expand_or_move_cursor_right_or_down(&self.current_focus)
+        {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
     }
 
     fn collapse_or_move_cursor_left_or_up(&mut self) {
-        let new_cursor = self
+        if let Some(new_cursor) = self
             .doc
-            .collapse_or_move_cursor_left_or_up(&self.current_focus);
-        self.update_so_new_cursor_is_visible(new_cursor);
+            .collapse_or_move_cursor_left_or_up(&self.current_focus)
+        {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
     }
 
     fn move_cursor_left_or_up_without_collapsing(&mut self) {
-        let new_cursor = self
+        if let Some(new_cursor) = self
             .doc
-            .move_cursor_left_or_up_without_collapsing(&self.current_focus);
-        self.update_so_new_cursor_is_visible(new_cursor);
+            .move_cursor_left_or_up_without_collapsing(&self.current_focus)
+        {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
     }
 
     fn focus_top(&mut self) {
@@ -406,11 +419,11 @@ impl<D: Document> DocumentViewer<D> {
         // it doesn't really matter.
         //
         // Using the start/end index might also mean there will be a tiny bit less visual jitter.
-        let focus_index = match self.position_of_cursor_in_viewport(&focused_range) {
-            PositionOfCursorInViewport::StartsAboveViewport { end_index } => end_index,
-            PositionOfCursorInViewport::EndsBelowViewport { start_index } => start_index,
-            PositionOfCursorInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
-            PositionOfCursorInViewport::EntirelyInViewport { end_index, .. } => end_index,
+        let focus_index = match self.position_of_content_in_viewport(&focused_range) {
+            PositionOfContentInViewport::StartsAboveViewport { end_index } => end_index,
+            PositionOfContentInViewport::EndsBelowViewport { start_index } => start_index,
+            PositionOfContentInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
+            PositionOfContentInViewport::EntirelyInViewport { end_index, .. } => end_index,
         };
 
         let lines_to_move =
@@ -468,11 +481,11 @@ impl<D: Document> DocumentViewer<D> {
 
         // Note that we pick the `start_index` in the `EntirelyInViewport` case. (See comment
         // below.)
-        let focus_index = match self.position_of_cursor_in_viewport(&focused_range) {
-            PositionOfCursorInViewport::StartsAboveViewport { end_index } => end_index,
-            PositionOfCursorInViewport::EndsBelowViewport { start_index } => start_index,
-            PositionOfCursorInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
-            PositionOfCursorInViewport::EntirelyInViewport { start_index, .. } => start_index,
+        let focus_index = match self.position_of_content_in_viewport(&focused_range) {
+            PositionOfContentInViewport::StartsAboveViewport { end_index } => end_index,
+            PositionOfContentInViewport::EndsBelowViewport { start_index } => start_index,
+            PositionOfContentInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
+            PositionOfContentInViewport::EntirelyInViewport { start_index, .. } => start_index,
         };
 
         let lines_to_move = self
@@ -528,15 +541,7 @@ impl<D: Document> DocumentViewer<D> {
         NonZeroUsize::new(usize::max(self.dimensions.height / 2, 1)).unwrap()
     }
 
-    fn update_so_new_cursor_is_visible(&mut self, new_cursor: Option<D::Cursor>) {
-        // If an operation doesn't move the cursor, it will return `None`, so there's
-        // nothing to do.
-        let Some(new_cursor) = new_cursor else {
-            return;
-        };
-
-        self.current_focus = new_cursor;
-
+    fn update_so_current_focus_is_visible(&mut self) {
         let cursor_range = self.doc.cursor_range(&self.current_focus);
         self.update_so_content_range_is_visible(cursor_range);
     }
@@ -862,8 +867,8 @@ impl<D: Document> DocumentViewer<D> {
 
         let old_cursor_range = self.doc.cursor_range(&self.current_focus);
 
-        match self.position_of_cursor_in_viewport(&old_cursor_range) {
-            PositionOfCursorInViewport::StartsAboveViewport { end_index } => {
+        match self.position_of_content_in_viewport(&old_cursor_range) {
+            PositionOfContentInViewport::StartsAboveViewport { end_index } => {
                 // Don't top line to keep anchored, so we'll keep the end of the line
                 // in the same place.
                 self.update_dimensions_and_resize_doc(new_dimensions);
@@ -871,7 +876,7 @@ impl<D: Document> DocumentViewer<D> {
                 self.top_line =
                     self.n_screen_lines_before_or_top_of_doc(new_cursor_range.end, end_index);
             }
-            PositionOfCursorInViewport::StartsAndEndsOutsideViewport => {
+            PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
                 let lines_above_top_of_screen = self
                     .doc
                     .diff_screen_lines(&self.top_line, &old_cursor_range.start);
@@ -913,8 +918,8 @@ impl<D: Document> DocumentViewer<D> {
                     );
                 }
             }
-            PositionOfCursorInViewport::EntirelyInViewport { start_index, .. }
-            | PositionOfCursorInViewport::EndsBelowViewport { start_index } => {
+            PositionOfContentInViewport::EntirelyInViewport { start_index, .. }
+            | PositionOfContentInViewport::EndsBelowViewport { start_index } => {
                 self.update_dimensions_and_resize_doc(new_dimensions);
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
                 self.top_line =
@@ -947,19 +952,19 @@ impl<D: Document> DocumentViewer<D> {
 
         let cursor_range = self.doc.cursor_range(&self.current_focus);
 
-        match self.position_of_cursor_in_viewport(&cursor_range) {
-            PositionOfCursorInViewport::StartsAboveViewport { end_index } => {
+        match self.position_of_content_in_viewport(&cursor_range) {
+            PositionOfContentInViewport::StartsAboveViewport { end_index } => {
                 // Keep the end of focused node in the same percentile
                 anchor_screen_line = cursor_range.end;
                 new_index = convert_old_index_to_new_index(end_index);
             }
-            PositionOfCursorInViewport::StartsAndEndsOutsideViewport => {
+            PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
                 // Keep middle of what's visible on screen in the middle.
                 let half_old_height = self.dimensions.height / 2;
                 anchor_screen_line = self.screen_line_at_screen_index(half_old_height).unwrap();
                 new_index = new_height / 2;
             }
-            PositionOfCursorInViewport::EntirelyInViewport {
+            PositionOfContentInViewport::EntirelyInViewport {
                 start_index,
                 end_index,
             } => {
@@ -968,7 +973,7 @@ impl<D: Document> DocumentViewer<D> {
                 anchor_screen_line = self.screen_line_at_screen_index(middle_index).unwrap();
                 new_index = convert_old_index_to_new_index(middle_index);
             }
-            PositionOfCursorInViewport::EndsBelowViewport { start_index } => {
+            PositionOfContentInViewport::EndsBelowViewport { start_index } => {
                 // Keep the start of focused node in the same percentile.
                 anchor_screen_line = cursor_range.start;
                 new_index = convert_old_index_to_new_index(start_index);
@@ -1097,9 +1102,9 @@ impl<D: Document> DocumentViewer<D> {
             Action::PageUp(n) => self.page_up(n),
             Action::JumpDown(n) => self.jump_down(n),
             Action::JumpUp(n) => self.jump_up(n),
-            Action::JumpToSearchMatch(jump_direction, n) => {
+            Action::MoveToSearchMatch(movement_method, jump_direction, n) => {
                 jumped_to_search_match = true;
-                self.jump_to_search_match(jump_direction, n)
+                self.move_to_search_match(movement_method, jump_direction, n)
             }
             Action::FocusTop => self.focus_top(),
             Action::FocusBottom => {
@@ -1202,11 +1207,84 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    fn jump_to_search_match(&mut self, jump_direction: JumpDirection, jumps: usize) {
-        let Some(search_state) = &mut self.search_state else {
-            debug_assert!(false, "Shouldn't jump to search match if no search state");
-            return;
-        };
+    fn move_to_search_match(
+        &mut self,
+        movement_method: MovementMethod,
+        jump_direction: JumpDirection,
+        jumps: usize,
+    ) {
+        assert!(
+            self.search_state.is_some(),
+            "Shouldn't move to search match if no search state"
+        );
+
+        match movement_method {
+            MovementMethod::MoveCursor => {
+                let (new_focus, content_range) = self.find_search_match(jump_direction, jumps);
+                self.current_focus = new_focus;
+                self.update_so_content_range_is_visible(content_range);
+            }
+            MovementMethod::ScrollViewport => {
+                // As we scroll through matches, we want the actual match to stay in the exact
+                // same spot on the screen, so, to handle matches within long lines, we want to
+                // get the location of the last match we jumped to, not just the current cursor.
+                let current_range = match self.search_state.as_ref().unwrap().last_match_range() {
+                    None => self.doc.cursor_range(&self.current_focus),
+                    Some(match_byte_range) => self
+                        .doc
+                        .raw_byte_range_to_visible_content_range(match_byte_range),
+                };
+
+                let (new_focus, content_range) = self.find_search_match(jump_direction, jumps);
+
+                let (ref_screen_line, at_screen_index) = match self
+                    .position_of_content_in_viewport(&current_range)
+                {
+                    PositionOfContentInViewport::EntirelyInViewport {
+                        start_index,
+                        end_index,
+                    } => {
+                        // If the sizes are the same, put it in exactly the same spot, otherwise,
+                        // make the centers line up.
+                        if end_index - start_index + 1 == content_range.num_screen_lines {
+                            (content_range.start, start_index)
+                        } else {
+                            let center_screen_line =
+                                self.doc.center_of_content_range(&content_range);
+                            let center_index = start_index + (end_index - start_index) / 2;
+                            (center_screen_line, center_index)
+                        }
+                    }
+                    PositionOfContentInViewport::StartsAboveViewport { end_index } => {
+                        // If the current match/cursor starts above the viewport, just line up
+                        // end of the new match with the end of the previous range.
+                        (content_range.end, end_index)
+                    }
+                    PositionOfContentInViewport::EndsBelowViewport { start_index } => {
+                        // Same thinking as `StartsAboveViewport` case.
+                        (content_range.start, start_index)
+                    }
+                    PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
+                        // Just focus the new match in the center.
+                        let center_screen_line = self.doc.center_of_content_range(&content_range);
+                        let center_index = self.dimensions.height / 2;
+                        (center_screen_line, center_index)
+                    }
+                };
+
+                self.current_focus = new_focus;
+                self.top_line =
+                    self.n_screen_lines_before_or_top_of_doc(ref_screen_line, at_screen_index);
+            }
+        }
+    }
+
+    fn find_search_match(
+        &mut self,
+        jump_direction: JumpDirection,
+        jumps: usize,
+    ) -> (D::Cursor, ContentRange<D::ScreenLine>) {
+        let search_state = self.search_state.as_mut().unwrap();
 
         // Only capture reference to doc/current focus, and not self, so we can still mutate
         // `search_state`.
@@ -1232,16 +1310,21 @@ impl<D: Document> DocumentViewer<D> {
         );
 
         let match_cursor = self.doc.raw_byte_index_to_cursor(match_byte_range.start);
-        let visible_cursor = self.doc.closest_visible_cursor(&match_cursor);
+        let closest_visible_cursor = self.doc.closest_visible_cursor(&match_cursor);
 
-        if match_cursor == visible_cursor {
-            self.current_focus = match_cursor;
+        if match_cursor == closest_visible_cursor {
+            // We explicitly make sure that the *match* is visible, as opposed to the cursor,
+            // to handle the case where we have a very, very long line that spans more than
+            // an entire screen, and we're jumping to specific matches in that line.
             let match_content_range = self
                 .doc
                 .raw_byte_range_to_visible_content_range(match_byte_range);
-            self.update_so_content_range_is_visible(match_content_range);
+            (match_cursor, match_content_range)
         } else {
-            self.update_so_new_cursor_is_visible(Some(visible_cursor));
+            // The match isn't visible, so we just move to the closest visible cursor
+            // (likely the container that contains the match).
+            let cursor_range = self.doc.cursor_range(&closest_visible_cursor);
+            (closest_visible_cursor, cursor_range)
         }
     }
 }
@@ -1333,7 +1416,20 @@ mod test {
     impl fmt::Display for Change {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
             match self {
-                Change::Action(action) => write!(f, "{:?}", action),
+                Change::Action(action) => {
+                    // Let's shink some of these
+                    match action {
+                        Action::MoveToSearchMatch(movement, dir, count) => match movement {
+                            MovementMethod::MoveCursor => {
+                                write!(f, "JumpToSearchMatch({dir:?}, {count})")
+                            }
+                            MovementMethod::ScrollViewport => {
+                                write!(f, "ScrollToSearchMatch({dir:?}, {count})")
+                            }
+                        },
+                        _ => write!(f, "{:?}", action),
+                    }
+                }
                 Change::ResizeWidth(width) => write!(f, "ResizeWidth({})", width),
                 Change::ResizeHeight(height) => write!(f, "ResizeHeight({})", height),
                 Change::Resize(Dimensions { width, height }) => {
@@ -1433,11 +1529,35 @@ mod test {
     }
 
     fn jump_to_next_match(jumps: usize) -> Change {
-        Change::Action(Action::JumpToSearchMatch(JumpDirection::Next, jumps))
+        Change::Action(Action::MoveToSearchMatch(
+            MovementMethod::MoveCursor,
+            JumpDirection::Next,
+            jumps,
+        ))
     }
 
     fn jump_to_prev_match(jumps: usize) -> Change {
-        Change::Action(Action::JumpToSearchMatch(JumpDirection::Prev, jumps))
+        Change::Action(Action::MoveToSearchMatch(
+            MovementMethod::MoveCursor,
+            JumpDirection::Prev,
+            jumps,
+        ))
+    }
+
+    fn scroll_to_next_match(jumps: usize) -> Change {
+        Change::Action(Action::MoveToSearchMatch(
+            MovementMethod::ScrollViewport,
+            JumpDirection::Next,
+            jumps,
+        ))
+    }
+
+    fn scroll_to_prev_match(jumps: usize) -> Change {
+        Change::Action(Action::MoveToSearchMatch(
+            MovementMethod::ScrollViewport,
+            JumpDirection::Prev,
+            jumps,
+        ))
     }
 
     impl<D: Document> DocumentViewer<D> {
@@ -2475,6 +2595,39 @@ mod test {
         │ 3│*6 │↪14H ↩│ │ 3│*8 │ w    │   │ 3│*6 │↪12  ↩│            │ 3│*6 │↪4   ↩│
         │ 4│*6 │↪15   │ │ 4│ 9 │ x    │   │ 4│*6 │↪14H ↩│            │ 4│*6 │↪5   ↩│
         └──┴───┴──────┘ └──┴───┴──────┘   └──┴───┴──────┘            └──┴───┴──────┘
+        ");
+    }
+
+    #[test]
+    fn test_scroll_to_search_matches() {
+        let text = b"a\nb\nc\nd H\ne\n1   2 H 3   4   5   6 H 7   8   9   10  11H\n";
+        let mut viewer = init(text, 4, 5, 2);
+        viewer.move_cursor_down(1);
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("H", SearchDirection::Forward),
+                    scroll_to_next_match(1),
+                ],
+                vec![scroll_to_next_match(2)],
+                vec![scroll_to_prev_match(2)],
+                vec![scroll_to_prev_match(1)],
+            ],
+        );
+
+        // Note that we violate scrolloff when jumping to the first match. This is intentional, to
+        // support scrolling when starting on one of the first few lines of the file.
+        assert_snapshot!(output, @r"
+                        /H                           ScrollToSearchMatch(Next, 2) ScrollToSearchMatch(Prev, 2) ScrollToSearchMatch(Prev, 1)
+                        ScrollToSearchMatch(Next, 1)
+        ┌SI┬─L#┬──────┐ ┌SI┬─L#┬──────┐              ┌SI┬─L#┬──────┐              ┌SI┬─L#┬──────┐              ┌SI┬─L#┬──────┐
+        │ 0│ 1 │ a    │ │ 0│ 3 │ c    │              │ 0│*6 │↪5   ↩│              │ 0│ 3 │ c    │              │ 0│*6 │↪10  ↩│
+        │ 1│*2 │ b    │ │ 1│*4 │ d H  │              │ 1│*6 │↪6 H ↩│              │ 1│*4 │ d H  │              │ 1│*6 │↪11H  │
+        │ 2│ 3 │ c    │ │ 2│ 5 │ e    │              │ 2│*6 │↪7   ↩│              │ 2│ 5 │ e    │              │ 2│ ~ │      │
+        │ 3│ 4 │ d H  │ │ 3│ 6 │ 1   ↩│              │ 3│*6 │↪8   ↩│              │ 3│ 6 │ 1   ↩│              │ 3│ ~ │      │
+        │ 4│ 5 │ e    │ │ 4│ 6 │↪2 H ↩│              │ 4│*6 │↪9   ↩│              │ 4│ 6 │↪2 H ↩│              │ 4│ ~ │      │
+        └──┴───┴──────┘ └──┴───┴──────┘              └──┴───┴──────┘              └──┴───┴──────┘              └──┴───┴──────┘
         ");
     }
 
