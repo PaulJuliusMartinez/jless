@@ -4,6 +4,8 @@ use std::ops::Range;
 use regex::bytes::{Regex as ByteRegex, RegexBuilder as ByteRegexBuilder};
 use regex::{Captures as StrCaptures, Regex as StrRegex};
 
+use crate::sorted_ranges::SortedRanges;
+
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
 pub enum SearchDirection {
     Forward,
@@ -364,8 +366,6 @@ impl SearchState {
         range: Range<usize>,
         search_direction: SearchDirection,
     ) -> (usize, bool) {
-        // Note: `partition_point` is awkward and returns the first index
-        // where the predicate returns *false*.
         match search_direction {
             SearchDirection::Forward => {
                 // When searching forwards, we want the first match that starts
@@ -377,40 +377,29 @@ impl SearchState {
                 // complexities of turning the current cursor into a reasonable range,
                 // and assume that it does something like returning the range of the
                 // key, but the range doesn't include the value.
-                let next_match = self.matches.partition_point(|match_range| {
-                    // This condition starts false, then becomes true, so we have
-                    // to invert it for `partition_point`.
-                    let match_starts_after_focused_range = range.end <= match_range.start;
-                    !match_starts_after_focused_range
-                });
+                let next_match = self
+                    .matches
+                    .index_of_first_elem_starting_at_or_after(range.end);
 
-                // If NONE of the matches start after the end of the focused row,
-                // partition_point returns the length of the array, but then we
+                // If NONE of the matches start after the end of the focused node, then we
                 // want to jump back to the start in that case.
-                if next_match == self.matches.len() {
-                    (0, true)
-                } else {
-                    (next_match, false)
+                match next_match {
+                    None => (0, true),
+                    Some(index) => (index, false),
                 }
             }
             SearchDirection::Reverse => {
                 // When searching backwards, we want the last match that
                 // ends before the start of focused range.
-                //
-                // `partition_point` returns the first index where the condition
-                // is false, so it will return the match after the one we actually
-                // want.
-                let match_after_prev_match = self
+                let prev_match = self
                     .matches
-                    .partition_point(|match_range| match_range.end < range.start);
+                    .index_of_last_elem_ending_at_or_before(range.start);
 
-                // If the very first match ends the start of the focused row,
-                // then partition_point will return 0, and we need to wrap
-                // around to the end of the file.
-                if match_after_prev_match == 0 {
-                    (self.matches.len() - 1, true)
-                } else {
-                    (match_after_prev_match - 1, false)
+                // If there are no matches before the start of the focused node, we need to
+                // wrap around to the end of the file.
+                match prev_match {
+                    None => (self.matches.len() - 1, true),
+                    Some(index) => (index, false),
                 }
             }
         }

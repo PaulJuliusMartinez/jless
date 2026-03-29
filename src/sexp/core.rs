@@ -9,6 +9,7 @@ use ocaml_sexplib::input::InputRef;
 use ocaml_sexplib::tokenizer::{RawBytes, RawToken, UnescapedBytes};
 
 use crate::sexp::pretty::PrettyPrinted;
+use crate::sorted_ranges::SortedRanges;
 
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -789,10 +790,25 @@ impl DocCore {
 
     pub fn closest_node_to_byte_index(&self, byte_index: usize) -> NodeIndex {
         debug_assert!(byte_index < self.pretty_printed.len());
-        NodeIndex(
-            self.all_nodes
-                .partition_point(|node| node.data_range.end <= byte_index),
-        )
+        // The last element will always end at `self.pretty_printed.len()`, so we will
+        // always find a value and can unwrap safely.
+        NodeIndex(self.index_of_first_elem_ending_after(byte_index).unwrap())
+    }
+}
+
+impl SortedRanges for DocCore {
+    type Elem = DocumentNode;
+
+    fn elems(&self) -> &[Self::Elem] {
+        &self.all_nodes
+    }
+
+    fn elem_start(elem: &Self::Elem) -> usize {
+        elem.data_range.start
+    }
+
+    fn elem_end(elem: &Self::Elem) -> usize {
+        elem.data_range.end
     }
 }
 
@@ -1057,6 +1073,7 @@ mod tests {
         assert_eq!(doc.closest_node_to_byte_index(4), NodeIndex(2));
         assert_eq!(doc.closest_node_to_byte_index(5), NodeIndex(3));
         assert_eq!(doc.closest_node_to_byte_index(10), NodeIndex(5));
+        assert_eq!(doc.closest_node_to_byte_index(12), NodeIndex(5));
         assert_eq!(doc.closest_node_to_byte_index(27), NodeIndex(7));
         assert_eq!(doc.pretty_printed.len(), 28);
 

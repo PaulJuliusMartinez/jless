@@ -20,6 +20,7 @@ mod dimensions;
 mod document;
 mod document_viewer;
 mod search;
+mod sorted_ranges;
 mod text_document;
 // Someday: This is temporary, will probably want to rewrite this.
 mod terminal;
