@@ -19,6 +19,7 @@ mod app;
 mod dimensions;
 mod document;
 mod document_viewer;
+mod rendering;
 mod search;
 mod sorted_ranges;
 mod text_document;

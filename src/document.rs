@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+use crate::rendering::PreHighlightingStyledSegment;
 use crate::search::InvertedPairedDelimeters;
 
 // Misc. notes:
@@ -113,10 +114,6 @@ pub trait Document {
         cursor: &Self::Cursor,
     ) -> Option<Self::Cursor>;
 
-    // Soon: Uncomment this.
-    // #[cfg(test)]
-    fn debug_text_content(&self, screen_line: &Self::ScreenLine, cursor: &Self::Cursor) -> Vec<u8>;
-
     // Search
 
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
@@ -163,6 +160,18 @@ pub trait Document {
     /// If the given cursor is hidden because it is collapsed, returns the first
     /// visible cursor before it. If the given cursor is visible, it just returns it.
     fn closest_visible_cursor(&self, cursor: &Self::Cursor) -> Self::Cursor;
+
+    // Rendering
+
+    // Soon: Uncomment this.
+    // #[cfg(test)]
+    fn debug_text_content(&self, screen_line: &Self::ScreenLine, cursor: &Self::Cursor) -> Vec<u8>;
+
+    fn render_screen_line(
+        &self,
+        screen_line: &Self::ScreenLine,
+        cursor: &Self::Cursor,
+    ) -> Option<Vec<PreHighlightingStyledSegment>>;
 }
 
 pub struct ContentRange<SL> {

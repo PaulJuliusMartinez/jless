@@ -10,6 +10,7 @@ use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::Document;
 use crate::document_viewer::DocumentViewer;
+use crate::rendering::StyledSegment;
 use crate::search::{JumpDirection, SearchDirection};
 use crate::terminal::{AnsiTerminal, Terminal};
 
@@ -359,32 +360,30 @@ impl<D: Document> App<D> {
                 let _ = write!(terminal, "{}", state);
             }
             Some(viewer) => {
+                let (rows, doc_content) = viewer.render();
+
                 let mut row = 1;
-                for screen_line in viewer.viewport_lines() {
+                for row_segments in rows.into_iter() {
                     let _ = terminal.position_cursor(1, row);
                     let _ = terminal.clear_line();
                     let _ = terminal.reset_style();
-                    match screen_line {
-                        None => {
-                            let _ = write!(terminal, "~");
-                        }
-                        Some(screen_line) => {
-                            if viewer.doc.does_screen_line_intersect_cursor(
-                                &screen_line,
-                                &viewer.current_focus,
-                            ) {
-                                let _ = terminal.set_inverted(true);
-                            };
 
-                            let line = viewer
-                                .doc
-                                .debug_text_content(&screen_line, &viewer.current_focus);
-                            let _ = match std::str::from_utf8(&line) {
-                                Ok(s) => write!(terminal, "{s}"),
-                                Err(_) => write!(terminal, "line is not valid UTF-8"),
-                            };
-                        }
+                    for row_segment in row_segments.into_iter() {
+                        let StyledSegment { attrs, content } = row_segment;
+
+                        let _ = terminal.set_fg(attrs.fg.to_terminal_color());
+                        let _ = terminal.set_bg(attrs.bg.to_terminal_color());
+                        let _ = terminal.set_bold(attrs.bold);
+                        let _ = terminal.set_dimmed(attrs.dimmed);
+                        let _ = terminal.set_inverted(attrs.inverted);
+
+                        let bytes = content.bytes(doc_content);
+                        let _ = match std::str::from_utf8(&*bytes) {
+                            Ok(s) => write!(terminal, "{s}"),
+                            Err(_) => write!(terminal, "INVALID SEGMENT"),
+                        };
                     }
+
                     row += 1;
                 }
             }

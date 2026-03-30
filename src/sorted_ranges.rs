@@ -40,7 +40,7 @@ where
 }
 
 // If `pred(elem)` returns true, it must return true for all elements before `elem` as well.
-fn index_of_last<E, P>(elems: &[E], mut pred: P) -> Option<usize>
+fn index_of_last<E, P>(elems: &[E], pred: P) -> Option<usize>
 where
     P: FnMut(&E) -> bool,
 {
@@ -176,7 +176,7 @@ pub trait SortedRanges {
     }
 }
 
-impl SortedRanges for Vec<Range<usize>> {
+impl SortedRanges for [Range<usize>] {
     type Elem = Range<usize>;
 
     fn elems(&self) -> &[Self::Elem] {

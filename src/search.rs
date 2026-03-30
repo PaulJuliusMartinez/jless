@@ -243,6 +243,10 @@ impl SearchState {
             .map(|lj| self.matches[lj.match_jumped_to].clone())
     }
 
+    pub fn search_match_ranges(&self) -> &[Range<usize>] {
+        &self.matches
+    }
+
     pub fn clear_last_jump(&mut self) {
         self.last_jump = None;
     }

@@ -3,18 +3,21 @@ use std::iter::DoubleEndedIterator;
 use std::ops::{Range, RangeInclusive};
 
 use crate::document::{ContentRange, Document};
+use crate::rendering::PreHighlightingStyledSegment;
 use crate::search::InvertedPairedDelimeters;
+use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, ErrorMetadata, ListKind,
     ListMetadata, NodeIndex,
 };
 use crate::sexp::layout::{self as layout, LogicalLine};
+use crate::sexp::renderer::{render_line, RenderContext};
 
 use ocaml_sexplib::input::InputRef;
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum CollapseState {
+pub enum CollapseState {
     Collapsed,
     Expanded,
 }
@@ -636,6 +639,14 @@ impl SexpDocument {
 
         None
     }
+
+    pub fn render_context_with_color_scheme<'a>(
+        &'a self,
+        color_scheme: &'a ColorScheme,
+        focus: NodeIndex,
+    ) -> RenderContext<'a> {
+        RenderContext::new(&color_scheme, &self.core, &self.collapsible_nodes, focus)
+    }
 }
 
 impl Document for SexpDocument {
@@ -1000,6 +1011,16 @@ impl Document for SexpDocument {
         output.into_bytes()
     }
 
+    fn render_screen_line(
+        &self,
+        screen_line: &Self::ScreenLine,
+        cursor: &Self::Cursor,
+    ) -> Option<Vec<PreHighlightingStyledSegment>> {
+        let color_scheme = ColorScheme::default();
+        let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
+        Some(render_line(&render_context, screen_line))
+    }
+
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
         InvertedPairedDelimeters {
             square_brackets: false,
@@ -1054,27 +1075,25 @@ impl Document for SexpDocument {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod test_helpers {
     use super::*;
 
     use crate::document::Document;
-    use crate::sexp::core::NodeIndex;
 
     use std::fmt::Write;
 
     use bstr::ByteSlice;
-    use insta::{assert_debug_snapshot, assert_snapshot};
 
     const FAR_AWAY_CURSOR: NodeIndex = NodeIndex(usize::MAX);
 
-    fn new_doc(bytes: &'static [u8]) -> SexpDocument {
+    pub fn new_doc(bytes: &'static [u8]) -> SexpDocument {
         let mut doc = SexpDocument::new(100);
         doc.append(bytes);
         doc.eof();
         doc
     }
 
-    fn logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
+    pub fn logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
         doc.starts_of_logical_lines
             .iter()
             .map(|(start_index, (end_index, indentation))| LogicalLine {
@@ -1085,17 +1104,17 @@ mod tests {
             .collect()
     }
 
-    fn dump(doc: &SexpDocument) -> String {
+    pub fn dump(doc: &SexpDocument) -> String {
         let logical_lines = logical_lines(doc);
         crate::sexp::layout::tests::show_logical_lines(&doc.core, logical_lines)
     }
 
-    fn dump_with_byte_indexes(doc: &SexpDocument) -> String {
+    pub fn dump_with_byte_indexes(doc: &SexpDocument) -> String {
         let logical_lines = logical_lines(doc);
         crate::sexp::layout::tests::show_logical_lines_with_byte_indexes(&doc.core, logical_lines)
     }
 
-    fn show_visible_lines(doc: &SexpDocument) -> String {
+    pub fn show_visible_lines(doc: &SexpDocument) -> String {
         let Some((top_screen_line, _)) = doc.top_screen_line_and_cursor() else {
             return "".to_string();
         };
@@ -1117,6 +1136,20 @@ mod tests {
 
         output
     }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::test_helpers::*;
+    use super::*;
+
+    use crate::document::Document;
+    use crate::sexp::core::NodeIndex;
+
+    use std::fmt::Write;
+
+    use bstr::ByteSlice;
+    use insta::{assert_debug_snapshot, assert_snapshot};
 
     #[test]
     fn add_new_top_level_nodes_as_they_are_available() {

@@ -3,6 +3,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::document::{ContentRange, Document};
+use crate::rendering::PreHighlightingStyledSegment;
 
 // Precalculated break points when displaying a long line. Each values represents
 // the starting byte offset of one line.
@@ -495,12 +496,6 @@ impl Document for TextDocument {
         None
     }
 
-    // Soon: Uncomment this.
-    // #[cfg(test)]
-    fn debug_text_content(&self, screen_line: &ScreenLine, _cursor: &Cursor) -> Vec<u8> {
-        self.screen_line_contents(screen_line).to_vec()
-    }
-
     fn raw_bytes_for_searching(&self) -> &[u8] {
         // This indicates whether we're going to accept any more input or not.
         if self.trailing_newline.is_some() {
@@ -539,6 +534,21 @@ impl Document for TextDocument {
     fn closest_visible_cursor(&self, cursor: &Cursor) -> Cursor {
         // All lines are always visible
         *cursor
+    }
+
+    // Soon: Uncomment this.
+    // #[cfg(test)]
+    fn debug_text_content(&self, screen_line: &ScreenLine, _cursor: &Cursor) -> Vec<u8> {
+        self.screen_line_contents(screen_line).to_vec()
+    }
+
+    fn render_screen_line(
+        &self,
+        _screen_line: &Self::ScreenLine,
+        _cursor: &Self::Cursor,
+    ) -> Option<Vec<PreHighlightingStyledSegment>> {
+        // Someday: implement this
+        None
     }
 }
 

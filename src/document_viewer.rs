@@ -1,9 +1,11 @@
 use std::num::NonZeroUsize;
 use std::ops::{Range, RangeInclusive};
+use std::rc::Rc;
 
 use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::{ContentRange, Document};
+use crate::rendering::{Attrs, StyledSegment, Text};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 
 /// The `DocumentViewer` manages what part of a document is displayed on screen
@@ -1148,14 +1150,6 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn viewport_lines<'a>(&'a self) -> impl Iterator<Item = Option<D::ScreenLine>> + 'a {
-        ViewportLinesIterator {
-            document: &self.doc,
-            next_line: Some(self.top_line.clone()),
-            remaining_height: self.dimensions.height,
-        }
-    }
-
     ////////////
     // Search //
     ////////////
@@ -1326,6 +1320,87 @@ impl<D: Document> DocumentViewer<D> {
             let cursor_range = self.doc.cursor_range(&closest_visible_cursor);
             (closest_visible_cursor, cursor_range)
         }
+    }
+
+    ///////////////
+    // Rendering //
+    ///////////////
+
+    pub fn viewport_lines<'a>(&'a self) -> impl Iterator<Item = Option<D::ScreenLine>> + 'a {
+        ViewportLinesIterator {
+            document: &self.doc,
+            next_line: Some(self.top_line.clone()),
+            remaining_height: self.dimensions.height,
+        }
+    }
+
+    pub fn render(&self) -> (Vec<Vec<crate::rendering::StyledSegment>>, &[u8]) {
+        let mut rendered_lines = vec![];
+        let empty_line = Rc::new("~".to_string());
+        let default = Attrs::default();
+        let inverted = default.invert();
+        let dimmed = Attrs {
+            dimmed: true,
+            ..default
+        };
+
+        let search_match_ranges = match &self.search_state {
+            None => &[],
+            Some(search_state) => search_state.search_match_ranges(),
+        };
+
+        for screen_line in self.viewport_lines() {
+            match screen_line {
+                None => {
+                    let empty_line_segment = StyledSegment {
+                        attrs: dimmed,
+                        content: Text::String(empty_line.clone()),
+                    };
+                    rendered_lines.push(vec![empty_line_segment]);
+                }
+                Some(screen_line) => {
+                    match self
+                        .doc
+                        .render_screen_line(&screen_line, &self.current_focus)
+                    {
+                        Some(unhighlighted_segments) => {
+                            let highlighted_segments: Vec<StyledSegment> = unhighlighted_segments
+                                .into_iter()
+                                .map(|segment| {
+                                    segment.highlight_search_matches(search_match_ranges)
+                                })
+                                .flatten()
+                                .collect();
+
+                            rendered_lines.push(highlighted_segments);
+                        }
+                        None => {
+                            // Fallback to `debug_text_content`
+                            let fallback = self
+                                .doc
+                                .debug_text_content(&screen_line, &self.current_focus);
+                            let s = String::from_utf8_lossy(&fallback).to_string();
+                            let attrs = if self.doc.does_screen_line_intersect_cursor(
+                                &screen_line,
+                                &self.current_focus,
+                            ) {
+                                inverted
+                            } else {
+                                default
+                            };
+
+                            let debug_segment = StyledSegment {
+                                attrs,
+                                content: Text::String(Rc::new(s)),
+                            };
+                            rendered_lines.push(vec![debug_segment]);
+                        }
+                    }
+                }
+            }
+        }
+
+        (rendered_lines, self.doc.raw_bytes_for_searching())
     }
 }
 
@@ -1561,7 +1636,7 @@ mod test {
     }
 
     impl<D: Document> DocumentViewer<D> {
-        fn render(&self) -> String {
+        fn debug_render(&self) -> String {
             // |12345678       9|
             // | ##|##| <width> |
             let content_width = self.dimensions.width;
@@ -1633,7 +1708,7 @@ mod test {
                 for change in changes.into_iter() {
                     viewer.do_change(change);
                 }
-                viewer.render()
+                viewer.debug_render()
             })
             .collect();
 
@@ -1668,7 +1743,7 @@ mod test {
     #[test]
     fn test_acceptable_start_screen_indexes() {
         let mut viewer = init(b"a\nbbbb\nc\nd\ne\nf\ng\n", 1, 10, 0);
-        assert_snapshot!(viewer.render(), @r"
+        assert_snapshot!(viewer.debug_render(), @r"
         ┌SI┬─L#┬───┐
         │ 0│*1 │ a │
         │ 1│ 2 │ b↩│
@@ -1714,7 +1789,7 @@ mod test {
         // Example from the comment in
         // `calculate_acceptable_start_screen_indexes_to_show_entire_content_range`:
         let viewer = init(b"a\nbbbbbbbb\nc\nd\ne\nf\n", 1, 10, 4);
-        assert_snapshot!(viewer.render(), @r"
+        assert_snapshot!(viewer.debug_render(), @r"
         ┌SI┬─L#┬───┐
         │ 0│*1 │ a │
         │ 1│ 2 │ b↩│

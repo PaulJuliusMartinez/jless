@@ -39,6 +39,7 @@ pub struct DocCore {
     pub pretty_printed: PrettyPrinted,
     data_len_of_completed_sexps: usize,
     pub node_index_of_last_completed_top_level_sexp: Option<NodeIndex>,
+    pub last_node_index_of_part_of_completed_sexp: Option<NodeIndex>,
 
     // Structural data about the document
     all_nodes: Vec<DocumentNode>,
@@ -180,7 +181,7 @@ pub struct AtomMetadata {
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Debug)]
 pub struct EndOfListMetadata {
-    list_start_index: NodeIndex,
+    pub list_start_index: NodeIndex,
     // We display closing parens on their own line if:
     // 1) the last element of the list is a line comment (so we're forced to), or
     // 2) the last element of the list is an error
@@ -312,6 +313,7 @@ impl DocCore {
             pretty_printed: PrettyPrinted::new(),
             data_len_of_completed_sexps: 0,
             node_index_of_last_completed_top_level_sexp: None,
+            last_node_index_of_part_of_completed_sexp: None,
             all_nodes: vec![],
             last_top_level_node_index: None,
             num_top_level_data_nodes: 0,
@@ -469,10 +471,13 @@ impl DocCore {
             RawToken::SexpComment => self.add_sexp_comment(),
         }
 
+        // TODO: Is the second part of this condition necessary?
         if self.starts_of_unterminated_lists.is_empty() && self.num_pending_sexp_comments == 0 {
             self.pretty_printed.complete_top_level_node();
             self.data_len_of_completed_sexps = self.pretty_printed.len();
-            self.node_index_of_last_completed_top_level_sexp = self.last_top_level_node_index
+            self.node_index_of_last_completed_top_level_sexp = self.last_top_level_node_index;
+            self.last_node_index_of_part_of_completed_sexp =
+                Some(NodeIndex(self.all_nodes.len() - 1));
         }
     }
 
