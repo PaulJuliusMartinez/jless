@@ -114,6 +114,18 @@ pub trait Document {
         cursor: &Self::Cursor,
     ) -> Option<Self::Cursor>;
 
+    fn collapse_node_and_siblings(
+        &mut self,
+        cursor: &Self::Cursor,
+        depth: Option<usize>,
+    ) -> Option<Self::Cursor>;
+
+    fn expand_node_and_siblings(
+        &mut self,
+        cursor: &Self::Cursor,
+        depth: Option<usize>,
+    ) -> Option<Self::Cursor>;
+
     // Search
 
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {

@@ -496,6 +496,22 @@ impl Document for TextDocument {
         None
     }
 
+    fn collapse_node_and_siblings(
+        &mut self,
+        _cursor: &Cursor,
+        _depth: Option<usize>,
+    ) -> Option<Cursor> {
+        None
+    }
+
+    fn expand_node_and_siblings(
+        &mut self,
+        _cursor: &Cursor,
+        _depth: Option<usize>,
+    ) -> Option<Cursor> {
+        None
+    }
+
     fn raw_bytes_for_searching(&self) -> &[u8] {
         // This indicates whether we're going to accept any more input or not.
         if self.trailing_newline.is_some() {

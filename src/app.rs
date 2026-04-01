@@ -112,6 +112,18 @@ impl<D: Document> App<D> {
                                 Some(Action::CollapseOrMoveCursorLeftOrUp)
                             }
                             Key::Char('H') => Some(Action::MoveCursorLeftOrUpWithoutCollapsing),
+                            // e by default will expand one level, while E will deeply
+                            // expand to the maximum depth. Prefixing either command with
+                            // a count will expand n levels.
+                            //
+                            // Same with c / C, though it's harder to imagine wanting to
+                            // collapse to a specific level.
+                            Key::Char('e') => Some(Action::ExpandNodeAndSiblings(Some(count_or_1))),
+                            Key::Char('E') => Some(Action::ExpandNodeAndSiblings(count)),
+                            Key::Char('c') => {
+                                Some(Action::CollapseNodeAndSiblings(Some(count_or_1)))
+                            }
+                            Key::Char('C') => Some(Action::CollapseNodeAndSiblings(count)),
                             Key::Home | Key::Char('g') => Some(Action::FocusTop),
                             Key::End | Key::Char('G') => Some(Action::FocusBottom),
                             Key::Ctrl('e') => Some(Action::ScrollViewportDown(count_or_1)),

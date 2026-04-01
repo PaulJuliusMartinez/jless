@@ -281,6 +281,26 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
+    fn collapse_node_and_siblings(&mut self, depth: Option<usize>) {
+        if let Some(new_cursor) = self
+            .doc
+            .collapse_node_and_siblings(&self.current_focus, depth)
+        {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
+    }
+
+    fn expand_node_and_siblings(&mut self, depth: Option<usize>) {
+        if let Some(new_cursor) = self
+            .doc
+            .expand_node_and_siblings(&self.current_focus, depth)
+        {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
+    }
+
     fn focus_top(&mut self) {
         let (top_screen_line, cursor) = self
             .doc
@@ -1098,6 +1118,8 @@ impl<D: Document> DocumentViewer<D> {
             Action::MoveCursorLeftOrUpWithoutCollapsing => {
                 self.move_cursor_left_or_up_without_collapsing()
             }
+            Action::CollapseNodeAndSiblings(depth) => self.collapse_node_and_siblings(depth),
+            Action::ExpandNodeAndSiblings(depth) => self.expand_node_and_siblings(depth),
             Action::ScrollViewportDown(n) => self.scroll_viewport_down(n),
             Action::ScrollViewportUp(n) => self.scroll_viewport_up(n),
             Action::PageDown(n) => self.page_down(n),

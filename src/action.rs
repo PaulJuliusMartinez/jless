@@ -20,6 +20,9 @@ pub enum Action {
     CollapseOrMoveCursorLeftOrUp,
     MoveCursorLeftOrUpWithoutCollapsing,
 
+    CollapseNodeAndSiblings(Option<usize>),
+    ExpandNodeAndSiblings(Option<usize>),
+
     ScrollViewportDown(usize),
     ScrollViewportUp(usize),
     PageDown(usize),
