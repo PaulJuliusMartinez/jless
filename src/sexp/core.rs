@@ -38,6 +38,11 @@ pub struct DocCore {
     // Pretty-printed data
     pub pretty_printed: PrettyPrinted,
     data_len_of_completed_sexps: usize,
+    // Imagine we've ingested two and a half sexps:
+    // > (a) (b) (
+    // > 012 345 6 (node indexes)
+    // then `node_index_of_last_completed_top_level_sexp` will be 3,
+    // and `last_node_index_of_part_of_completed_sexp` will be 5.
     pub node_index_of_last_completed_top_level_sexp: Option<NodeIndex>,
     pub last_node_index_of_part_of_completed_sexp: Option<NodeIndex>,
 
@@ -360,11 +365,11 @@ impl DocCore {
     //   - last child index
     //   - # of data nodes
     // - On previous sibling:
-    //   - next sibling
+    //   - next sibling (if not adding a top-level node)
     // - On new node
     //   - parent index
     //   - data index in parent
-    //   - prev sibling
+    //   - prev sibling (if not adding a top-level node)
     //
     // This should _not_ be called when adding a new `EndOfList` token.
     fn push_new_document_node(
@@ -375,6 +380,8 @@ impl DocCore {
         assert!(!matches!(token, DocumentToken::EndOfList(_)));
 
         let new_node_index = NodeIndex(self.all_nodes.len());
+        let token_is_start_of_list = matches!(token, DocumentToken::StartOfList(_));
+        let token_is_error = matches!(token, DocumentToken::Error(_));
 
         let parent_index;
         let prev_sibling;
@@ -382,12 +389,13 @@ impl DocCore {
 
         match self.starts_of_unterminated_lists.last() {
             None => {
-                // We're adding a top-level node with no parent; we'll update fields
-                // in `self` directly.
+                // We're adding a new top-level node.
+                self.last_top_level_node_index = Some(new_node_index);
                 parent_index = None;
 
-                prev_sibling = self.last_top_level_node_index;
-                self.last_top_level_node_index = Some(new_node_index);
+                // We'll connect this new node to the previous top-level sexp in
+                // `complete_top_level_node`.
+                prev_sibling = None;
 
                 data_index_in_parent = if token.is_data_node() && !token.is_commented_out() {
                     let index = self.num_top_level_data_nodes;
@@ -423,7 +431,7 @@ impl DocCore {
             self.node_mut(sibling_index).next_sibling = Some(new_node_index);
         }
 
-        if matches!(token, DocumentToken::Error(_)) {
+        if token_is_error {
             self.error_indexes.push(new_node_index);
         }
 
@@ -438,7 +446,49 @@ impl DocCore {
 
         self.all_nodes.push(document_node);
 
+        // When we start a new list, we don't add it to `starts_of_unterminated_lists`
+        // until we call this function and get the index, so it will be empty, and we
+        // obviously don't want to complete a top-level node in that case, hence the
+        // `!token_is_start_of_list`.
+        if self.starts_of_unterminated_lists.is_empty() && !token_is_start_of_list {
+            self.complete_top_level_node();
+        }
+
         new_node_index
+    }
+
+    fn complete_top_level_node(&mut self) {
+        // We can't have a completed node if we still have unterminated lists.
+        assert!(self.starts_of_unterminated_lists.is_empty());
+
+        // This means we've tried completing this node twice.
+        assert!(self.last_node_index_of_part_of_completed_sexp != self.last_top_level_node_index);
+
+        let new_completed_top_level_node = self
+            .last_top_level_node_index
+            .expect("must have created a top-level node before calling `complete_top_level_node`");
+
+        self.pretty_printed.complete_top_level_node();
+        self.data_len_of_completed_sexps = self.pretty_printed.len();
+
+        // Wire up sibling connection between the new top-level node and the previous one.
+        if let Some(prev_top_level_node_index) = self.node_index_of_last_completed_top_level_sexp {
+            self.all_nodes[prev_top_level_node_index.0].next_sibling =
+                Some(new_completed_top_level_node);
+            self.all_nodes[new_completed_top_level_node.0].prev_sibling =
+                Some(prev_top_level_node_index);
+
+            // If the new top level node is a list, also set prev_sibling on the end of the list.
+            if let Some(list_end_index) = self.all_nodes[new_completed_top_level_node.0]
+                .token
+                .list_end_index()
+            {
+                self.all_nodes[list_end_index.0].prev_sibling = Some(prev_top_level_node_index);
+            }
+        }
+
+        self.node_index_of_last_completed_top_level_sexp = Some(new_completed_top_level_node);
+        self.last_node_index_of_part_of_completed_sexp = Some(NodeIndex(self.all_nodes.len() - 1));
     }
 
     fn push_new_error_node(&mut self, error_metadata: ErrorMetadata) {
@@ -470,19 +520,11 @@ impl DocCore {
             }
             RawToken::SexpComment => self.add_sexp_comment(),
         }
-
-        // TODO: Is the second part of this condition necessary?
-        if self.starts_of_unterminated_lists.is_empty() && self.num_pending_sexp_comments == 0 {
-            self.pretty_printed.complete_top_level_node();
-            self.data_len_of_completed_sexps = self.pretty_printed.len();
-            self.node_index_of_last_completed_top_level_sexp = self.last_top_level_node_index;
-            self.last_node_index_of_part_of_completed_sexp =
-                Some(NodeIndex(self.all_nodes.len() - 1));
-        }
     }
 
     pub fn append_eof(&mut self) {
         // We just have to check for errors here, pending sexp comments and unterminated lists.
+
         if self.num_pending_sexp_comments > 0 {
             self.num_pending_sexp_comments = 0;
 
@@ -535,16 +577,6 @@ impl DocCore {
     }
 
     fn complete_list(&mut self) {
-        let Some(list_start_index) = self.starts_of_unterminated_lists.pop() else {
-            // Saw a ')' while not in a list!
-            self.push_new_error_node(ErrorMetadata {
-                message: "Saw unexpected ')' while parsing top-level sexp".to_string(),
-            });
-
-            // Don't add the ')' to `pretty_printed`; it's invalid
-            return;
-        };
-
         if self.num_pending_sexp_comments > 0 {
             // We didn't see a another list or an atom after a sexp-comment. We'll
             // clear it back to 0 to prevent further problems.
@@ -554,6 +586,16 @@ impl DocCore {
                 message: "Saw unexpected ')' after sexp comment \"#;\"".to_string(),
             });
         }
+
+        let Some(list_start_index) = self.starts_of_unterminated_lists.pop() else {
+            // Saw a ')' while not in a list!
+            self.push_new_error_node(ErrorMetadata {
+                message: "Saw unexpected ')' while parsing top-level sexp".to_string(),
+            });
+
+            // Don't add the ')' to `pretty_printed`; it's invalid
+            return;
+        };
 
         let list_metadata = self.token(list_start_index).list_metadata();
 
@@ -566,6 +608,11 @@ impl DocCore {
             let unit_start = self.pretty_printed.len() - 1;
             let _end_list_range = self.pretty_printed.end_list();
             curr_node.data_range = unit_start..(unit_start + 2);
+
+            // If we have no parent, then we just completed a top-level node.
+            if curr_node.parent_index.is_none() {
+                self.complete_top_level_node();
+            }
 
             return;
         };
@@ -623,6 +670,10 @@ impl DocCore {
         };
 
         self.all_nodes.push(end_of_list_document_node);
+
+        if self.starts_of_unterminated_lists.is_empty() {
+            self.complete_top_level_node();
+        }
     }
 
     fn analyze_list(&self, list_start_index: NodeIndex) -> ListKind {
@@ -973,17 +1024,15 @@ mod tests {
 
         doc.append_raw_token(RawToken::LeftParen);
 
-        // FIXME: The next/prev sibling connections between 0 and 3 shouldn't be set yet
-        // the second top-level node is not complete.
         assert_snapshot!(dump_doc(&doc), @r#"
         Raw document:
         (atom)
         (
 
-        0   0..1     <-- ^--[0 ]  3> StartOfList(Singleton)   : "("
+        0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
         1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
         2   5..6     <-- ^--[--] --> EndOfList                : ")"
-        3   7..8     <0  ^--[1 ] --> StartOfList(Plain)       : "("
+        3   7..8     <-- ^--[1 ] --> StartOfList(Plain)       : "("
         "#);
 
         doc.append_raw_token(RawToken::RightParen);
@@ -1006,14 +1055,13 @@ mod tests {
         doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
         doc.append_raw_token(RawToken::LeftParen);
 
-        // FIXME: prev/next siblings shouldn't be set yet.
         assert_snapshot!(dump_doc(&doc), @r#"
         Raw document:
         atom
         (
 
-        0   0..4     <-- ^--[0 ]  1> Atom(RecordKey)          : "atom"
-        1   5..6     <0  ^--[1 ] --> StartOfList(Plain)       : "("
+        0   0..4     <-- ^--[0 ] --> Atom(RecordKey)          : "atom"
+        1   5..6     <-- ^--[1 ] --> StartOfList(Plain)       : "("
         "#);
 
         doc.append_raw_token(RawToken::RightParen);
@@ -1170,26 +1218,26 @@ mod tests {
         "##);
 
         let pending_sexp_comment_at_end_of_list = dump(b"a (1 #;)");
-        // FIXME: next sibling on the start and end of list is totally wrong.
         assert_snapshot!(pending_sexp_comment_at_end_of_list, @r##"
         Raw document:
         a
         (1 #;)
 
         0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
-        1   2..3     <0  ^--[1 ]  3> StartOfList(Singleton)   : "("
-        2   3..4     <-- ^ 1[0 ] --> Atom(Number)             : "1"
-        3   7..7     <1  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
-        4   7..8     <0  ^--[--]  3> EndOfList                : ")"
+        1   2..3     <0  ^--[1 ] --> StartOfList(Plain)       : "("
+        2   3..4     <-- ^ 1[0 ]  3> Atom(Number)             : "1"
+        3   7..7     <2  ^ 1[--] --> Error: Saw unexpected ')' after sexp comment "#;"
+        4   7..8     <0  ^--[--] --> EndOfList                : ")"
         "##);
 
         let invalid_atom_escape = dump(br#""\xGG""#);
         assert_snapshot!(invalid_atom_escape, @r#"
         Raw document:
+
         "\xGG"
 
         0   0..0     <-- ^--[--]  1> Error: Unable to unescape atom: InvalidHexadecimalEscape
-        1   0..6     <0  ^--[0 ] --> Atom(Plain)              : "\"\\xGG\""
+        1   1..7     <0  ^--[0 ] --> Atom(Plain)              : "\"\\xGG\""
         "#);
 
         let eof_before_list_end = dump(b"1 ((a z");
