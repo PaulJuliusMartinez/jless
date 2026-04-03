@@ -903,6 +903,132 @@ mod tests {
     }
 
     #[test]
+    fn test_incrementally_build_up_sexps() {
+        let mut doc = DocCore::new();
+        assert_snapshot!(dump_doc(&doc), @"Raw document:");
+
+        doc.append_raw_token(RawToken::LeftParen);
+        doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
+
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        "#);
+
+        doc.append_raw_token(RawToken::LeftParen);
+
+        // Next/prev sibling pointers are immediately setup for the atom and new list,
+        // even though the new list isn't complete yet.
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom (
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..5     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "atom"
+        2   6..7     <1  ^ 0[1 ] --> StartOfList(Plain)       : "("
+        "#);
+
+        doc.append_raw_token(RawToken::RightParen);
+
+        // The start of list is converted into a Unit.
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom ()
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..5     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "atom"
+        2   6..8     <1  ^ 0[1 ] --> Unit                     : "()"
+        "#);
+
+        doc.append_raw_token(RawToken::RightParen);
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom ())
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(RecordField) : "("
+        1   1..5     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "atom"
+        2   6..8     <1  ^ 0[1 ] --> Unit                     : "()"
+        3   8..9     <-- ^--[--] --> EndOfList                : ")"
+        "#);
+    }
+
+    #[test]
+    fn test_incrementally_build_up_multiple_top_level_sexps() {
+        let mut doc = DocCore::new();
+        doc.append_raw_token(RawToken::LeftParen);
+        doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
+        doc.append_raw_token(RawToken::RightParen);
+
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
+        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        2   5..6     <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        doc.append_raw_token(RawToken::LeftParen);
+
+        // FIXME: The next/prev sibling connections between 0 and 3 shouldn't be set yet
+        // the second top-level node is not complete.
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom)
+        (
+
+        0   0..1     <-- ^--[0 ]  3> StartOfList(Singleton)   : "("
+        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        2   5..6     <-- ^--[--] --> EndOfList                : ")"
+        3   7..8     <0  ^--[1 ] --> StartOfList(Plain)       : "("
+        "#);
+
+        doc.append_raw_token(RawToken::RightParen);
+
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        (atom)
+        ()
+
+        0   0..1     <-- ^--[0 ]  3> StartOfList(Singleton)   : "("
+        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        2   5..6     <-- ^--[--] --> EndOfList                : ")"
+        3   7..9     <0  ^--[1 ] --> Unit                     : "()"
+        "#);
+    }
+
+    #[test]
+    fn test_connect_top_level_nodes_when_one_is_unit() {
+        let mut doc = DocCore::new();
+        doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
+        doc.append_raw_token(RawToken::LeftParen);
+
+        // FIXME: prev/next siblings shouldn't be set yet.
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        atom
+        (
+
+        0   0..4     <-- ^--[0 ]  1> Atom(RecordKey)          : "atom"
+        1   5..6     <0  ^--[1 ] --> StartOfList(Plain)       : "("
+        "#);
+
+        doc.append_raw_token(RawToken::RightParen);
+
+        assert_snapshot!(dump_doc(&doc), @r#"
+        Raw document:
+        atom
+        ()
+
+        0   0..4     <-- ^--[0 ]  1> Atom(RecordKey)          : "atom"
+        1   5..7     <0  ^--[1 ] --> Unit                     : "()"
+        "#);
+    }
+
+    #[test]
     fn test_basic_atom_classification() {
         let doc = dump(br#"("Atom Kinds:" Constructor record_key 123_456 7.89e10 true false 2021-07-20 22:42:32.000000000)"#);
 
@@ -1020,15 +1146,41 @@ mod tests {
         1   3..3     <0  ^--[--] --> Error: Saw unexpected ')' while parsing top-level sexp
         "#);
 
-        let pending_sexp_comment_at_end_of_list = dump(b"(1 #;)");
+        let pending_sexp_comment_at_eof = dump(b"a #;");
+        assert_snapshot!(pending_sexp_comment_at_eof, @r##"
+        Raw document:
+        a
+        #;
+
+        0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
+        1   4..4     <0  ^--[--] --> Error: Unexpected EOF after sexp comment "#;"
+        "##);
+
+        let pending_sexp_comment_in_list_at_eof = dump(b"a (#;");
+        assert_snapshot!(pending_sexp_comment_in_list_at_eof, @r##"
+        Raw document:
+        a
+        (#;
+
+        0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
+        1   2..3     <0  ^--[1 ] --> StartOfList(Unit)        : "("
+        2   5..5     <-- ^ 1[--]  3> Error: Unexpected EOF after sexp comment "#;"
+        3   5..5     <2  ^ 1[--] --> Error: Unexpected EOF while parsing list
+        4   5..5     <0  ^--[--] --> EndOfList                : ""
+        "##);
+
+        let pending_sexp_comment_at_end_of_list = dump(b"a (1 #;)");
+        // FIXME: next sibling on the start and end of list is totally wrong.
         assert_snapshot!(pending_sexp_comment_at_end_of_list, @r##"
         Raw document:
+        a
         (1 #;)
 
-        0   0..1     <-- ^--[0 ]  2> StartOfList(Singleton)   : "("
-        1   1..2     <-- ^ 0[0 ] --> Atom(Number)             : "1"
-        2   5..5     <0  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
-        3   5..6     <-- ^--[--]  2> EndOfList                : ")"
+        0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
+        1   2..3     <0  ^--[1 ]  3> StartOfList(Singleton)   : "("
+        2   3..4     <-- ^ 1[0 ] --> Atom(Number)             : "1"
+        3   7..7     <1  ^--[--] --> Error: Saw unexpected ')' after sexp comment "#;"
+        4   7..8     <0  ^--[--]  3> EndOfList                : ")"
         "##);
 
         let invalid_atom_escape = dump(br#""\xGG""#);
@@ -1040,18 +1192,20 @@ mod tests {
         1   0..6     <0  ^--[0 ] --> Atom(Plain)              : "\"\\xGG\""
         "#);
 
-        let eof_before_list_end = dump(b"((a z");
+        let eof_before_list_end = dump(b"1 ((a z");
         assert_snapshot!(eof_before_list_end, @r#"
         Raw document:
+        1
         ((a z
 
-        0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
-        1   1..2     <-- ^ 0[0 ] --> StartOfList(RecordField) : "("
-        2   2..3     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "a"
-        3   4..5     <2  ^ 1[1 ]  4> Atom(RecordKey)          : "z"
-        4   5..5     <3  ^ 1[--] --> Error: Unexpected EOF while parsing list
-        5   5..5     <-- ^ 0[--] --> EndOfList                : ""
-        6   5..5     <-- ^--[--] --> EndOfList                : ""
+        0   0..1     <-- ^--[0 ]  1> Atom(Number)             : "1"
+        1   2..3     <0  ^--[1 ] --> StartOfList(Record)      : "("
+        2   3..4     <-- ^ 1[0 ] --> StartOfList(RecordField) : "("
+        3   4..5     <-- ^ 2[0 ]  4> Atom(RecordKey)          : "a"
+        4   6..7     <3  ^ 2[1 ]  5> Atom(RecordKey)          : "z"
+        5   7..7     <4  ^ 2[--] --> Error: Unexpected EOF while parsing list
+        6   7..7     <-- ^ 1[--] --> EndOfList                : ""
+        7   7..7     <0  ^--[--] --> EndOfList                : ""
         "#);
     }
 
