@@ -167,6 +167,10 @@ pub struct ListMetadata {
 }
 
 impl ListMetadata {
+    pub fn last_child_index(&self) -> Option<NodeIndex> {
+        self.last_child_index
+    }
+
     pub fn end_index(&self) -> Option<NodeIndex> {
         self.list_end_index
     }

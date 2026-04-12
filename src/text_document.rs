@@ -496,6 +496,14 @@ impl Document for TextDocument {
         None
     }
 
+    fn move_cursor_to_first_sibling(&mut self, _cursor: &Self::Cursor) -> Option<Self::Cursor> {
+        None
+    }
+
+    fn move_cursor_to_last_sibling(&mut self, _cursor: &Self::Cursor) -> Option<Self::Cursor> {
+        None
+    }
+
     fn collapse_node_and_siblings(
         &mut self,
         _cursor: &Cursor,

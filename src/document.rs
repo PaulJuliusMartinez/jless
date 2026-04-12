@@ -114,6 +114,9 @@ pub trait Document {
         cursor: &Self::Cursor,
     ) -> Option<Self::Cursor>;
 
+    fn move_cursor_to_first_sibling(&mut self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
+    fn move_cursor_to_last_sibling(&mut self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
+
     fn collapse_node_and_siblings(
         &mut self,
         cursor: &Self::Cursor,

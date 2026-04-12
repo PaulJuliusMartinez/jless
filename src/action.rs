@@ -20,6 +20,9 @@ pub enum Action {
     CollapseOrMoveCursorLeftOrUp,
     MoveCursorLeftOrUpWithoutCollapsing,
 
+    MoveCursorToFirstSibling,
+    MoveCursorToLastSibling,
+
     CollapseNodeAndSiblings(Option<usize>),
     ExpandNodeAndSiblings(Option<usize>),
 

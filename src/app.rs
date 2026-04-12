@@ -84,8 +84,7 @@ impl<D: Document> App<D> {
                     }
                     Key::Char(ch @ '0'..='9') => {
                         if ch == '0' && self.input_buffer.is_empty() {
-                            // Maybe a "focus first" action here someday
-                            None
+                            Some(Action::MoveCursorToFirstSibling)
                         } else {
                             self.buffer_input(ch as u8);
                             None
@@ -112,6 +111,7 @@ impl<D: Document> App<D> {
                                 Some(Action::CollapseOrMoveCursorLeftOrUp)
                             }
                             Key::Char('H') => Some(Action::MoveCursorLeftOrUpWithoutCollapsing),
+                            Key::Char('$') => Some(Action::MoveCursorToLastSibling),
                             // e by default will expand one level, while E will deeply
                             // expand to the maximum depth. Prefixing either command with
                             // a count will expand n levels.

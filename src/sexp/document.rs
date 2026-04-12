@@ -7,8 +7,8 @@ use crate::rendering::PreHighlightingStyledSegment;
 use crate::search::InvertedPairedDelimeters;
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
-    AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, EndOfListMetadata, ErrorMetadata,
-    ListKind, ListMetadata, NodeIndex,
+    invariants, AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, EndOfListMetadata,
+    ErrorMetadata, ListKind, ListMetadata, NodeIndex,
 };
 use crate::sexp::layout::{self as layout, LogicalLine};
 use crate::sexp::renderer::{render_line, RenderContext};
@@ -1132,6 +1132,50 @@ impl Document for SexpDocument {
         self.move_left_impl(cursor, should_collapse)
     }
 
+    fn move_cursor_to_first_sibling(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
+        let Some(parent_index) = self.core.node(*cursor).parent_index else {
+            // If we're focused on a top level sexp, we'll move to the first one.
+            return Some(NodeIndex(0));
+        };
+
+        let DocumentToken::StartOfList(parent_list_metadata) = self.core.token(parent_index) else {
+            panic!("parent_index didn't point to StartOfList");
+        };
+
+        let first_child = parent_index + 1;
+
+        match parent_list_metadata.list_kind {
+            ListKind::Record | ListKind::DateTime | ListKind::Singleton | ListKind::Plain => {
+                Some(first_child)
+            }
+            ListKind::RecordField => {
+                // This can only happen if the user deliberately hits right on a record field
+                // to focus a variant constructor or nested singleton list value. Taking them
+                // to the first child would take the to the record key alone, which is weird,
+                // so we'll focus the actual parent instead.
+                Some(parent_index)
+            }
+            ListKind::VariantRecord | ListKind::VariantTuple => {
+                // For variants, we actually want to focus the first thing after the constructor.
+                invariants::constructors_are_the_first_child_of_variants();
+                self.core.node(first_child).next_sibling
+            }
+        }
+    }
+
+    fn move_cursor_to_last_sibling(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
+        let Some(parent_index) = self.core.node(*cursor).parent_index else {
+            // If we're focused on a top level sexp, we'll move to the last one.
+            return self.core.node_index_of_last_completed_top_level_sexp;
+        };
+
+        let DocumentToken::StartOfList(list_metadata) = self.core.token(parent_index) else {
+            panic!("parent_index didn't point to StartOfList");
+        };
+
+        list_metadata.last_child_index()
+    }
+
     fn collapse_node_and_siblings(
         &mut self,
         cursor: &NodeIndex,
@@ -1408,6 +1452,8 @@ mod tests {
         Right,
         Left,
         LeftNoCollapse,
+        FirstSibling,
+        LastSibling,
         FocusBottom,
         Collapse(Option<usize>),
         Expand(Option<usize>),
@@ -1427,6 +1473,8 @@ mod tests {
                 Right => self.expand_or_move_cursor_right_or_down(&current_cursor),
                 Left => self.collapse_or_move_cursor_left_or_up(&current_cursor),
                 LeftNoCollapse => self.move_cursor_left_or_up_without_collapsing(&current_cursor),
+                FirstSibling => self.move_cursor_to_first_sibling(&current_cursor),
+                LastSibling => self.move_cursor_to_last_sibling(&current_cursor),
                 FocusBottom => self
                     .bottom_screen_line_and_cursor()
                     .map(|(_, cursor)| cursor),
@@ -1812,6 +1860,45 @@ mod tests {
         Left => NodeIndex(5)
         Left => NodeIndex(5) Collapsed(7)
         Left => NodeIndex(0)
+        ");
+    }
+
+    #[test]
+    fn test_focusing_first_and_last_siblings() {
+        let mut doc = new_doc(b"((k1 a)(k2 b)(k3 (Variant 1 2 3))) x y z");
+        assert_snapshot!(dump(&doc), @r"
+         0..=4  : ((k1 a)
+         5..=8  :  (k2 b)
+         9..=12 :  (k3 (Variant
+        13..=13 :    1
+        14..=14 :    2
+        15..=18 :    3)))
+        19..=19 : x
+        20..=20 : y
+        21..=21 : z
+        ");
+
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(5), vec![LastSibling, FirstSibling]);
+        assert_snapshot!(movements, @r"
+        LastSibling =>  NodeIndex(9)
+        FirstSibling => NodeIndex(1)
+        ");
+
+        // First sibling on variants goes to the first argument, not to the constructor
+        let movements = show_cursor_movements(&mut doc, NodeIndex(14), vec![FirstSibling]);
+        assert_snapshot!(movements, @"FirstSibling => NodeIndex(13)");
+
+        // First sibling on the value of a record field goes the record field, not the record key.
+        let movements = show_cursor_movements(&mut doc, NodeIndex(11), vec![FirstSibling]);
+        assert_snapshot!(movements, @"FirstSibling => NodeIndex(9)");
+
+        // Move between top-level nodes
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(19), vec![FirstSibling, LastSibling]);
+        assert_snapshot!(movements, @r"
+        FirstSibling => NodeIndex(0)
+        LastSibling =>  NodeIndex(21)
         ");
     }
 
