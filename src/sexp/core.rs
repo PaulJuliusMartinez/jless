@@ -84,7 +84,7 @@ pub enum DocumentToken {
 }
 
 impl DocumentToken {
-    fn is_data_node(&self) -> bool {
+    fn is_data(&self) -> bool {
         match self {
             DocumentToken::StartOfList(_) | DocumentToken::Atom(_) | DocumentToken::Unit { .. } => {
                 true
@@ -141,7 +141,7 @@ impl DocumentToken {
     pub fn list_kind(&self) -> Option<ListKind> {
         match self {
             DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => Some(*list_kind),
-            DocumentToken::Unit { .. } => Some(ListKind::Unit),
+            DocumentToken::Unit { .. } => Some(ListKind::Plain),
             _ => None,
         }
     }
@@ -188,8 +188,8 @@ pub struct AtomMetadata {
 pub struct EndOfListMetadata {
     pub list_start_index: NodeIndex,
     // We display closing parens on their own line if:
-    // 1) the last element of the list is a line comment (so we're forced to), or
-    // 2) the last element of the list is an error
+    // 1) the last child of the list is a line comment (so we're forced to), or
+    // 2) the last child of the list is an error
     should_display_on_own_line: bool,
 }
 
@@ -283,6 +283,23 @@ lazy_static::lazy_static! {
     ").unwrap();
 }
 
+// Invariants about list kind classification that can be referenced when making
+// certain assumptions about, e.g., lengths of lists, or whether comments can
+// appear somewhere.
+pub mod invariants {
+    #[inline(always)]
+    pub fn date_times_have_no_comments_errors_or_commented_out_sexps() {}
+
+    #[inline(always)]
+    pub fn constructors_are_the_first_child_of_variants() {}
+
+    #[inline(always)]
+    pub fn record_keys_are_the_first_child_of_record_fields() {}
+
+    #[inline(always)]
+    pub fn variants_have_at_least_one_argument() {}
+}
+
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Copy, Clone, Debug)]
 pub enum ListKind {
@@ -300,8 +317,6 @@ pub enum ListKind {
     DateTime,
     /// A list of exactly length 1, with no comments.
     Singleton,
-    /// Unit; a list with data length 0
-    Unit,
     /// Anything else.
     Plain,
 }
@@ -397,7 +412,7 @@ impl DocCore {
                 // `complete_top_level_node`.
                 prev_sibling = None;
 
-                data_index_in_parent = if token.is_data_node() && !token.is_commented_out() {
+                data_index_in_parent = if token.is_data() && !token.is_commented_out() {
                     let index = self.num_top_level_data_nodes;
                     self.num_top_level_data_nodes += 1;
                     Some(index)
@@ -416,7 +431,7 @@ impl DocCore {
                 prev_sibling = parent_metadata.last_child_index;
                 parent_metadata.last_child_index = Some(new_node_index);
 
-                data_index_in_parent = if token.is_data_node() && !token.is_commented_out() {
+                data_index_in_parent = if token.is_data() && !token.is_commented_out() {
                     let index = parent_metadata.data_length;
                     parent_metadata.data_length += 1;
                     Some(index)
@@ -682,49 +697,64 @@ impl DocCore {
         let mut second_elem_atom_kind = None;
         let mut all_elems_after_first_are_record_fields = true;
         let mut all_elems_are_constructors = true;
+        let mut list_contains_non_data_before_first_elem = false;
         let mut list_contains_non_data = false;
 
         let mut next_child_index = Some(list_start_index + 1);
-        let mut list_length = 0;
-        let mut uncommented_list_length = 0;
+        let mut list_length_including_commented_out_sexps = 0;
+        let mut list_length_not_including_commented_out_sexps = 0;
 
         while let Some(node_index) = next_child_index {
             let node = &self.node(node_index);
             next_child_index = node.next_sibling;
 
-            if !node.token.is_data_node() {
+            if !node.token.is_data() {
                 list_contains_non_data = true;
+                if list_length_including_commented_out_sexps == 0 {
+                    list_contains_non_data_before_first_elem = true;
+                }
                 continue;
             }
 
             let atom_kind = node.token.atom_kind();
 
-            // Don't consider commented out sexps for classification, so we don't say
-            // something like "( #; Variant_record (x 1) (x 3))" is a variant record.
+            // Commented-out sexps are tricky. We'll assume that users normally
+            // only comment out parts of valid data structures, so they should be
+            // be used to e.g. disqualify something from being a record field
+            // (e.g. "(one #; two three)" is not a record field), but they also
+            // can't form a critical part of a structure, so "(#; one two)" isn't
+            // a record field either, and "( #; Constructor one two three)" isn't
+            // a variant tuple.
+            //
+            // We can accomplish this by excluding commented out sexps from the
+            // fields we use to identify certain structures, but including them
+            // when considering aggregate info.
+
             if !node.token.is_commented_out() {
-                if list_length == 0 {
+                if list_length_including_commented_out_sexps == 0 {
                     first_elem_atom_kind = atom_kind;
                     first_elem_list_kind = node.token.list_kind();
                 }
 
-                if list_length == 1 {
+                if list_length_including_commented_out_sexps == 1 {
                     second_elem_atom_kind = atom_kind;
                 }
 
-                uncommented_list_length += 1;
+                list_length_not_including_commented_out_sexps += 1;
             }
 
+            // This is a heuristic so that we don't consider a list of enums,
+            // e.g. "(Monday Tuesday Wednesday Thursday Friday)", a variant
+            // tuple.
             all_elems_are_constructors =
                 all_elems_are_constructors && matches!(atom_kind, Some(AtomKind::Constructor));
 
-            if list_length > 0 {
-                // We don't ignore commented out tokens here under the assumption that
-                // users will only comment out valid parts of data structures.
+            if list_length_including_commented_out_sexps > 0 {
                 all_elems_after_first_are_record_fields = all_elems_after_first_are_record_fields
                     && matches!(node.token.list_kind(), Some(ListKind::RecordField));
             }
 
-            list_length += 1;
+            list_length_including_commented_out_sexps += 1;
         }
 
         let first_elem_is_constructor = matches!(first_elem_atom_kind, Some(AtomKind::Constructor));
@@ -739,24 +769,40 @@ impl DocCore {
 
         if first_elem_is_record_field && all_elems_after_first_are_record_fields {
             ListKind::Record
-        } else if first_elem_is_constructor
+        } else if !list_contains_non_data_before_first_elem
+            && first_elem_is_constructor
             && all_elems_after_first_are_record_fields
-            && uncommented_list_length > 1
+            && list_length_not_including_commented_out_sexps > 1
         {
+            invariants::constructors_are_the_first_child_of_variants();
+            invariants::variants_have_at_least_one_argument();
             ListKind::VariantRecord
-        } else if first_elem_is_constructor
-            && uncommented_list_length > 1
+        } else if !list_contains_non_data_before_first_elem
+            && first_elem_is_constructor
+            && list_length_not_including_commented_out_sexps > 1
             && !all_elems_are_constructors
         {
+            invariants::constructors_are_the_first_child_of_variants();
+            invariants::variants_have_at_least_one_argument();
             ListKind::VariantTuple
-        } else if first_two_elems_are_date_time && list_length == 2 && !list_contains_non_data {
+        } else if first_two_elems_are_date_time
+            && list_length_including_commented_out_sexps == 2
+            && !list_contains_non_data
+        {
+            invariants::date_times_have_no_comments_errors_or_commented_out_sexps();
             ListKind::DateTime
-        } else if first_elem_is_record_key && list_length == 2 && uncommented_list_length == 2 {
+        } else if !list_contains_non_data_before_first_elem
+            && first_elem_is_record_key
+            && list_length_including_commented_out_sexps == 2
+            && list_length_not_including_commented_out_sexps == 2
+        {
+            invariants::record_keys_are_the_first_child_of_record_fields();
             ListKind::RecordField
-        } else if list_length == 1 && !list_contains_non_data {
+        } else if list_length_including_commented_out_sexps == 1
+            && list_length_not_including_commented_out_sexps == 1
+            && !list_contains_non_data
+        {
             ListKind::Singleton
-        } else if list_length == 0 {
-            ListKind::Unit
         } else {
             ListKind::Plain
         }
@@ -846,7 +892,7 @@ impl DocCore {
 
     pub fn closest_node_to_byte_index(&self, byte_index: usize) -> NodeIndex {
         debug_assert!(byte_index < self.pretty_printed.len());
-        // The last element will always end at `self.pretty_printed.len()`, so we will
+        // The last node will always end at `self.pretty_printed.len()`, so we will
         // always find a value and can unwrap safely.
         NodeIndex(self.index_of_first_elem_ending_after(byte_index).unwrap())
     }
@@ -1117,6 +1163,21 @@ mod tests {
         9   18..19   <-- ^--[--] --> EndOfList                : ")"
         "#);
 
+        invariants::record_keys_are_the_first_child_of_record_fields();
+        let not_a_record = dump(b"((#| comment |# key2 b))");
+        assert_snapshot!(&not_a_record, @r##"
+        Raw document:
+        ((#| comment |# key2 b))
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
+        1   1..2     <-- ^ 0[0 ] --> StartOfList(Plain)       : "("
+        2   2..15    <-- ^ 1[--]  3> BlockComment             : "#| comment |#"
+        3   16..20   <2  ^ 1[0 ]  4> Atom(RecordKey)          : "key2"
+        4   21..22   <3  ^ 1[1 ] --> Atom(RecordKey)          : "b"
+        5   22..23   <-- ^ 0[--] --> EndOfList                : ")"
+        6   23..24   <-- ^--[--] --> EndOfList                : ")"
+        "##);
+
         let variant_record = dump(b"(Constructor (key1 a) (key2 b))");
         assert_snapshot!(&variant_record, @r#"
         Raw document:
@@ -1148,6 +1209,35 @@ mod tests {
         5   20..21   <4  ^ 0[4 ] --> Atom(Number)             : "3"
         6   21..22   <-- ^--[--] --> EndOfList                : ")"
         "#);
+
+        invariants::constructors_are_the_first_child_of_variants();
+        let not_a_variant_record = dump(b"(#| comment |# Constructor (a 1))");
+        assert_snapshot!(&not_a_variant_record, @r##"
+        Raw document:
+        (#| comment |# Constructor (a 1))
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..14    <-- ^ 0[--]  2> BlockComment             : "#| comment |#"
+        2   15..26   <1  ^ 0[0 ]  3> Atom(Constructor)        : "Constructor"
+        3   27..28   <2  ^ 0[1 ] --> StartOfList(RecordField) : "("
+        4   28..29   <-- ^ 3[0 ]  5> Atom(RecordKey)          : "a"
+        5   30..31   <4  ^ 3[1 ] --> Atom(Number)             : "1"
+        6   31..32   <2  ^ 0[--] --> EndOfList                : ")"
+        7   32..33   <-- ^--[--] --> EndOfList                : ")"
+        "##);
+
+        invariants::constructors_are_the_first_child_of_variants();
+        let not_a_variant_tuple = dump(b"(#| comment |# Constructor 1)");
+        assert_snapshot!(&not_a_variant_tuple, @r##"
+        Raw document:
+        (#| comment |# Constructor 1)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..14    <-- ^ 0[--]  2> BlockComment             : "#| comment |#"
+        2   15..26   <1  ^ 0[0 ]  3> Atom(Constructor)        : "Constructor"
+        3   27..28   <2  ^ 0[1 ] --> Atom(Number)             : "1"
+        4   28..29   <-- ^--[--] --> EndOfList                : ")"
+        "##);
 
         let singleton_is_not_a_variant = dump(b"(Constructor)");
         assert_snapshot!(&singleton_is_not_a_variant, @r#"
@@ -1181,6 +1271,22 @@ mod tests {
         2   12..30   <1  ^ 0[1 ] --> Atom(Time)               : "22:42:32.000000000"
         3   30..31   <-- ^--[--] --> EndOfList                : ")"
         "#);
+
+        let unit = dump(b"() (#| one |#) ( #; )");
+        assert_snapshot!(&unit, @r##"
+        Raw document:
+        ()
+        (#| one |#)
+        (#;)
+
+        0   0..2     <-- ^--[0 ]  1> Unit                     : "()"
+        1   3..4     <0  ^--[1 ]  4> StartOfList(Plain)       : "("
+        2   4..13    <-- ^ 1[--] --> BlockComment             : "#| one |#"
+        3   13..14   <0  ^--[--] --> EndOfList                : ")"
+        4   15..16   <1  ^--[2 ] --> StartOfList(Plain)       : "("
+        5   18..18   <-- ^ 4[--] --> Error: Saw unexpected ')' after sexp comment "#;"
+        6   18..19   <1  ^--[--] --> EndOfList                : ")"
+        "##);
     }
 
     #[test]
@@ -1211,7 +1317,7 @@ mod tests {
         (#;
 
         0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
-        1   2..3     <0  ^--[1 ] --> StartOfList(Unit)        : "("
+        1   2..3     <0  ^--[1 ] --> StartOfList(Plain)       : "("
         2   5..5     <-- ^ 1[--]  3> Error: Unexpected EOF after sexp comment "#;"
         3   5..5     <2  ^ 1[--] --> Error: Unexpected EOF while parsing list
         4   5..5     <0  ^--[--] --> EndOfList                : ""

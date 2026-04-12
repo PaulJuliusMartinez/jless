@@ -3,7 +3,9 @@ use std::rc;
 
 use crate::rendering::{PreHighlightingStyledSegment, Text};
 use crate::sexp::color_scheme::ColorScheme;
-use crate::sexp::core::{DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex};
+use crate::sexp::core::{
+    invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
+};
 use crate::sexp::document::CollapseState;
 use crate::sexp::layout::LogicalLine;
 
@@ -27,13 +29,16 @@ impl<'a> RenderContext<'a> {
 
                 match list_metadata.list_kind {
                     ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
+                        invariants::record_keys_are_the_first_child_of_record_fields();
+                        invariants::constructors_are_the_first_child_of_variants();
                         indexes.push(focus + 1);
                     }
                     ListKind::DateTime => {
+                        invariants::date_times_have_no_comments_errors_or_commented_out_sexps();
                         indexes.push(focus + 1);
                         indexes.push(focus + 2);
                     }
-                    ListKind::Record | ListKind::Singleton | ListKind::Unit | ListKind::Plain => (),
+                    ListKind::Record | ListKind::Singleton | ListKind::Plain => (),
                 }
 
                 if let Some(end_index) = list_metadata.end_index() {

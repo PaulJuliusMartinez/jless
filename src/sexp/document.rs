@@ -181,9 +181,8 @@ impl SexpDocument {
                         | ListKind::VariantRecord
                         | ListKind::VariantTuple
                         | ListKind::Plain
-                        // Technically collapsible if they end up across multiple lines
-                        | ListKind::Singleton
-                        | ListKind::Unit => (),
+                        // Technically collapsible if it ends up across multiple lines
+                        | ListKind::Singleton => (),
                     }
 
                     let start_of_end_logical_line =
@@ -463,9 +462,7 @@ impl SexpDocument {
             | DocumentToken::Error(_)
             | DocumentToken::EndOfList(_) => node_index..=node_index,
             DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => match list_kind {
-                ListKind::Record | ListKind::Singleton | ListKind::Unit | ListKind::Plain => {
-                    node_index..=node_index
-                }
+                ListKind::Record | ListKind::Singleton | ListKind::Plain => node_index..=node_index,
                 ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
                     let atom_node_index = node_index + 1;
                     if matches!(self.core.token(atom_node_index), DocumentToken::Atom(_))
@@ -1375,7 +1372,7 @@ mod tests {
     use super::*;
 
     use crate::document::Document;
-    use crate::sexp::core::NodeIndex;
+    use crate::sexp::core::{invariants, NodeIndex};
 
     use std::fmt::Write;
 
@@ -1579,14 +1576,16 @@ mod tests {
         let movements = show_cursor_movements(&mut doc, NodeIndex(5), vec![Up(1)]);
         assert_snapshot!(movements, @"Up(1) => NodeIndex(1)");
 
+        // This is not treated as a variant because there is a comment before the constructor.
+        invariants::constructors_are_the_first_child_of_variants();
         let mut doc = new_doc(b"((key (; comment\nVariant (foo 1) (bar 2))))");
 
         assert_snapshot!(dump(&doc), @r"
          0..=3  : ((key (
-         4..=4  :     ; comment
-         5..=5  :     Variant
-         6..=9  :      (foo 1)
-        10..=16 :      (bar 2))))
+         4..=4  :    ; comment
+         5..=5  :    Variant
+         6..=9  :    (foo 1)
+        10..=16 :    (bar 2))))
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(6), vec![Up(1)]);

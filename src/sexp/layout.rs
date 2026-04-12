@@ -74,7 +74,7 @@ impl SemanticTokenKind {
                 ListKind::RecordField => SemanticTokenKind::RecordField,
                 ListKind::VariantRecord | ListKind::VariantTuple => SemanticTokenKind::Variant,
                 ListKind::Singleton => SemanticTokenKind::Singleton,
-                ListKind::Record | ListKind::Unit | ListKind::Plain => SemanticTokenKind::List,
+                ListKind::Record | ListKind::Plain => SemanticTokenKind::List,
             },
             DocumentToken::EndOfList(_) => SemanticTokenKind::EndOfList,
             DocumentToken::LineComment | DocumentToken::BlockComment => SemanticTokenKind::Comment,
@@ -418,7 +418,7 @@ pub mod tests {
 
     use std::fmt::Write;
 
-    use crate::sexp::core::{DocCore, NodeIndex};
+    use crate::sexp::core::{invariants, DocCore, NodeIndex};
 
     use bstr::ByteSlice;
     use insta::assert_snapshot;
@@ -501,6 +501,9 @@ pub mod tests {
         9..=11 :     c))
         ");
 
+        // This is not treated as a variant because there is a comment before the constructor.
+        invariants::constructors_are_the_first_child_of_variants();
+
         let output = layout(
             br"(#| Why is there a comment here? |# Constructor 1 2 () (#| Nobody |# ; knows
                Nested a b c))",
@@ -508,15 +511,15 @@ pub mod tests {
         assert_snapshot!(&output, @r"
          0..=1  : (#| Why is there a comment here? |#
          2..=2  :  Constructor
-         3..=3  :   1
-         4..=4  :   2
-         5..=5  :   ()
-         6..=7  :   (#| Nobody |#
-         8..=8  :    ; knows
-         9..=9  :    Nested
-        10..=10 :     a
-        11..=11 :     b
-        12..=14 :     c))
+         3..=3  :  1
+         4..=4  :  2
+         5..=5  :  ()
+         6..=7  :  (#| Nobody |#
+         8..=8  :   ; knows
+         9..=9  :   Nested
+        10..=10 :   a
+        11..=11 :   b
+        12..=14 :   c))
         ");
     }
 
@@ -539,10 +542,15 @@ pub mod tests {
         5..=8  :   (a 1)
         9..=15 :   (b 2))))
         ");
+
+        // This is not treated as a record field because there is a comment before the record key.
+        invariants::record_keys_are_the_first_child_of_record_fields();
         assert_snapshot!(layout(b"(; comment before key\nkey value)"), @r"
         0..=1  : (; comment before key
-        2..=4  :  key value)
+        2..=2  :  key
+        3..=4  :  value)
         ");
+
         assert_snapshot!(layout(b"(key ; comment before value\nvalue)"), @r"
         0..=1  : (key
         2..=2  :    ; comment before value
@@ -565,20 +573,26 @@ pub mod tests {
         3..=4  :    (Variant
         5..=7  :      value))
         ");
+
+        // This is not treated as a variant because there is a comment before the constructor.
+        invariants::constructors_are_the_first_child_of_variants();
         assert_snapshot!(layout(b"(key (; comment breaking up constructor\nConstructor (a 1) (b 2)))"), @r"
         0..=2  : (key (
-        3..=3  :    ; comment breaking up constructor
-        4..=4  :    Constructor
-        5..=8  :     (a 1)
-        9..=14 :     (b 2)))
+        3..=3  :   ; comment breaking up constructor
+        4..=4  :   Constructor
+        5..=8  :   (a 1)
+        9..=14 :   (b 2)))
         ");
+
+        // This is not treated as a variant because there is a comment before the constructor.
+        invariants::constructors_are_the_first_child_of_variants();
         assert_snapshot!(layout(b"(key ; comment before\n(; and after paren\nConstructor (a 1) (b 2)))"), @r"
          0..=1  : (key
          2..=2  :    ; comment before
          3..=4  :    (; and after paren
          5..=5  :     Constructor
-         6..=9  :      (a 1)
-        10..=15 :      (b 2)))
+         6..=9  :     (a 1)
+        10..=15 :     (b 2)))
         ");
     }
 
