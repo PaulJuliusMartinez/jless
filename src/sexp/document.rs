@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
+use std::num::NonZeroUsize;
 use std::ops::{Range, RangeInclusive};
 
 use crate::document::{ContentRange, Document};
-use crate::rendering::PreHighlightingStyledSegment;
+use crate::rendering::{PreHighlightingStyledSegment, Text};
 use crate::search::InvertedPairedDelimeters;
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
@@ -11,7 +12,7 @@ use crate::sexp::core::{
     ErrorMetadata, ListKind, ListMetadata, NodeIndex,
 };
 use crate::sexp::layout::{self as layout, LogicalLine};
-use crate::sexp::renderer::{render_line, RenderContext};
+use crate::sexp::renderer::{render_line, RenderContext, ScreenLine};
 
 use ocaml_sexplib::input::InputRef;
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
@@ -850,13 +851,31 @@ impl SexpDocument {
         color_scheme: &'a ColorScheme,
         focus: NodeIndex,
     ) -> RenderContext<'a> {
-        RenderContext::new(&color_scheme, &self.core, &self.collapsible_nodes, focus)
+        RenderContext::new(
+            &color_scheme,
+            &self.core,
+            &self.collapsible_nodes,
+            focus,
+            self.width,
+        )
+    }
+
+    pub fn create_first_screen_line_from_logical_line(
+        &self,
+        logical_line: LogicalLine,
+    ) -> ScreenLine {
+        crate::sexp::renderer::convert_logical_line_to_screen_line(
+            &logical_line,
+            NonZeroUsize::new(self.width).expect("Can't have 0 width document"),
+            &self.core,
+            &self.collapsible_nodes,
+        )
     }
 }
 
 impl Document for SexpDocument {
     type Cursor = NodeIndex;
-    type ScreenLine = LogicalLine;
+    type ScreenLine = ScreenLine;
 
     fn new(width: usize) -> Self {
         SexpDocument {
@@ -890,93 +909,126 @@ impl Document for SexpDocument {
         self.process_additional_data(None);
     }
 
-    fn top_screen_line_and_cursor(&self) -> Option<(Self::ScreenLine, Self::Cursor)> {
+    fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
         match self.starts_of_logical_lines.first_key_value() {
             None => None,
             Some((start_index, (end_index, indentation))) => Some((
-                LogicalLine {
+                self.create_first_screen_line_from_logical_line(LogicalLine {
                     indentation: *indentation,
                     start_index: *start_index,
                     end_index: *end_index,
-                },
+                }),
                 *start_index,
             )),
         }
     }
 
-    fn bottom_screen_line_and_cursor(&self) -> Option<(Self::ScreenLine, Self::Cursor)> {
+    fn bottom_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
         match self.starts_of_logical_lines.last_key_value() {
             None => None,
             Some((start_index, (end_index, indentation))) => {
-                let last_line = LogicalLine {
+                let last_logical_line = LogicalLine {
                     indentation: *indentation,
                     start_index: *start_index,
                     end_index: *end_index,
                 };
 
-                let last_visible_line = self.first_visible_line_at_or_above(last_line);
-                let cursor = last_visible_line.start_index;
-                Some((last_visible_line, cursor))
+                let last_visible_logical_line =
+                    self.first_visible_line_at_or_above(last_logical_line);
+
+                let cursor = last_visible_logical_line.start_index;
+                let last_screen_line =
+                    self.create_first_screen_line_from_logical_line(last_visible_logical_line);
+
+                Some((last_screen_line, cursor))
             }
         }
     }
 
-    fn next_screen_line(&self, logical_line: &Self::ScreenLine) -> Option<Self::ScreenLine> {
-        let next_visible_logical_line = self.next_visible_logical_line(logical_line);
-        next_visible_logical_line
+    fn next_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
+        if screen_line.index < screen_line.segments_per_screen_line.len() - 1 {
+            let mut next_screen_line = screen_line.clone();
+            next_screen_line.index += 1;
+            Some(next_screen_line)
+        } else {
+            let next_visible_logical_line =
+                self.next_visible_logical_line(&screen_line.logical_line)?;
+            Some(self.create_first_screen_line_from_logical_line(next_visible_logical_line))
+        }
     }
 
-    fn prev_screen_line(&self, logical_line: &Self::ScreenLine) -> Option<Self::ScreenLine> {
-        self.prev_visible_logical_line(logical_line)
+    fn prev_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
+        if screen_line.index > 0 {
+            let mut prev_screen_line = screen_line.clone();
+            prev_screen_line.index -= 1;
+            Some(prev_screen_line)
+        } else {
+            let prev_visible_logical_line =
+                self.prev_visible_logical_line(&screen_line.logical_line)?;
+            let mut screen_line_of_prev_logical_line =
+                self.create_first_screen_line_from_logical_line(prev_visible_logical_line);
+            screen_line_of_prev_logical_line.index = screen_line_of_prev_logical_line
+                .segments_per_screen_line
+                .len()
+                - 1;
+            Some(screen_line_of_prev_logical_line)
+        }
     }
 
     // TODO: This should return an Option, because it is really not required for the Document
     // interface, but it is currently used somewhere. This implementation works for that
     // one usecase though.
-    fn line_number(&self, logical_line: &Self::ScreenLine) -> usize {
-        if logical_line.start_index == NodeIndex(0) {
+    fn line_number(&self, screen_line: &ScreenLine) -> usize {
+        if screen_line.logical_line.start_index == NodeIndex(0) {
             1
         } else {
             2
         }
     }
 
-    fn is_wrapped_line(&self, _logical_line: &Self::ScreenLine) -> bool {
-        false
+    fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
+        screen_line.segments_per_screen_line.len() > 1
     }
 
-    fn is_start_of_wrapped_line(&self, _logical_line: &Self::ScreenLine) -> bool {
-        false
+    fn is_start_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
+        self.is_wrapped_line(screen_line) && screen_line.index > 0
     }
 
-    fn is_end_of_wrapped_line(&self, _logical_line: &Self::ScreenLine) -> bool {
-        false
+    fn is_end_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
+        self.is_wrapped_line(screen_line)
+            && screen_line.index == screen_line.segments_per_screen_line.len() - 1
     }
 
-    fn is_after_start_of_wrapped_line(&self, _logical_line: &Self::ScreenLine) -> bool {
-        false
+    fn is_after_start_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
+        screen_line.index > 0
     }
 
-    fn is_before_end_of_wrapped_line(&self, _logical_line: &Self::ScreenLine) -> bool {
-        false
+    fn is_before_end_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
+        self.is_wrapped_line(screen_line) && !self.is_end_of_wrapped_line(screen_line)
     }
 
-    fn cursor_range(&self, cursor: &NodeIndex) -> ContentRange<Self::ScreenLine> {
+    fn cursor_range(&self, cursor: &NodeIndex) -> ContentRange<ScreenLine> {
         let logical_line = self.logical_line_of_node_index(*cursor);
+        let screen_line = self.create_first_screen_line_from_logical_line(logical_line);
 
         ContentRange {
-            start: logical_line.clone(),
-            end: logical_line.clone(),
+            start: screen_line.clone(),
+            end: screen_line,
             num_screen_lines: 1,
         }
     }
 
     fn convert_screen_line_to_cursor(
         &self,
-        logical_line: Self::ScreenLine,
+        screen_line: ScreenLine,
         _prev_cursor: &NodeIndex,
     ) -> NodeIndex {
-        logical_line.start_index
+        // TODO: SCREEN LINE FIX THIS COULD BE IMPROVED.
+        let fallback = screen_line.logical_line.start_index;
+        screen_line.segments_per_screen_line[screen_line.index]
+            .iter()
+            .find_map(|segment| segment.node_index)
+            .unwrap_or(fallback)
     }
 
     fn move_cursor_down(&mut self, lines: usize, cursor: &NodeIndex) -> Option<NodeIndex> {
@@ -1192,86 +1244,48 @@ impl Document for SexpDocument {
         Some(self.set_collapse_state_on_node_and_siblings(*cursor, depth, Expanded))
     }
 
-    fn debug_text_content(&self, logical_line: &LogicalLine, cursor: &NodeIndex) -> Vec<u8> {
-        use std::fmt::Write;
-
-        use bstr::ByteSlice;
-
-        let LogicalLine {
-            indentation,
-            start_index,
-            end_index,
-        } = logical_line;
+    fn debug_text_content(&self, screen_line: &ScreenLine, cursor: &NodeIndex) -> Vec<u8> {
+        use unicode_segmentation::UnicodeSegmentation;
 
         let mut output = String::new();
-        let _ = write!(output, "{: <indentation$}", "");
 
-        let mut collapsed_node_index = None;
-        let mut end_visible_index = *end_index;
-        let mut collapsed_variant = false;
+        let mut highlighted_cursor = false;
 
-        for (node_index, state) in self.collapsible_nodes_in_line(logical_line) {
-            match state {
-                Expanded => continue,
-                Collapsed => {
-                    end_visible_index = *node_index;
-                    if matches!(
-                        self.core.token(*node_index).list_kind().unwrap(),
-                        ListKind::VariantRecord | ListKind::VariantTuple
-                    ) {
-                        end_visible_index = *node_index + 1;
-                        collapsed_variant = true;
+        for segment in screen_line.segments_per_screen_line[screen_line.index].iter() {
+            match &segment.content {
+                Text::Spaces(n) => {
+                    for _ in 0..*n {
+                        output.push(' ');
                     }
-                    collapsed_node_index = Some(*node_index);
-                    break;
                 }
-            }
-        }
+                Text::SourceRange(range) => {
+                    let content = std::str::from_utf8(&self.core.pretty_printed[range.clone()])
+                        .unwrap_or("INVALID UTF8");
 
-        let start_range = self.core.node(*start_index).data_range.clone();
-        let end_range = self.core.node(end_visible_index).data_range.clone();
-
-        match self.core.token(*start_index) {
-            DocumentToken::Error(ErrorMetadata { message }) if start_index == end_index => {
-                let mut s = message.clone();
-                if cursor == start_index {
-                    s.insert_str(0, "> ");
-                }
-                let _ = write!(output, "{}", s);
-            }
-            _ => {
-                let mut line_content =
-                    self.core.pretty_printed[start_range.start..end_range.end].to_vec();
-
-                if start_index <= cursor && cursor <= end_index {
-                    let cursor_range = &self.core.node(*cursor).data_range;
-                    let offset = cursor_range.start - start_range.start;
-                    if line_content[offset] == b'(' {
-                        line_content[offset] = b'[';
+                    if !highlighted_cursor && segment.node_index == Some(*cursor) {
+                        if content.starts_with("(") {
+                            output.push('[');
+                            output.push_str(&content[1..]);
+                        } else {
+                            output.push('*');
+                            let first_grapheme_len = content
+                                .graphemes(true)
+                                .next()
+                                .expect("there to be at least one grapheme")
+                                .len();
+                            output.push_str(&content[first_grapheme_len..]);
+                        }
+                        highlighted_cursor = true;
                     } else {
-                        line_content[offset] = b'*';
+                        output.push_str(content);
                     }
                 }
-
-                let _ = write!(output, "{}", line_content.as_bstr());
-            }
-        }
-
-        if let Some(collapsed_node_index) = collapsed_node_index {
-            if collapsed_variant {
-                let _ = write!(output, " ");
-            }
-            let _ = write!(output, "...");
-
-            let list_end_index = self
-                .core
-                .token(collapsed_node_index)
-                .list_end_index()
-                .unwrap();
-            let end_of_collapsed_section = self.logical_line_of_node_index(list_end_index);
-            let num_trailing_paren = end_of_collapsed_section.end_index.0 - list_end_index.0 + 1;
-            for _ in 0..num_trailing_paren {
-                let _ = write!(output, ")");
+                Text::String((s, range)) => {
+                    output.push_str(&s[range.clone()]);
+                }
+                Text::Static(s) => {
+                    output.push_str(s);
+                }
             }
         }
 
@@ -1280,7 +1294,7 @@ impl Document for SexpDocument {
 
     fn render_screen_line(
         &self,
-        screen_line: &Self::ScreenLine,
+        screen_line: &ScreenLine,
         cursor: &Self::Cursor,
     ) -> Option<Vec<PreHighlightingStyledSegment>> {
         let color_scheme = ColorScheme::default();
@@ -1312,10 +1326,12 @@ impl Document for SexpDocument {
         self.first_normal_focusable_node_to_left_of_node_or_node(closest_node_to_byte_index)
     }
 
-    fn raw_byte_index_to_visible_screen_line(&self, byte_index: usize) -> Self::ScreenLine {
+    fn raw_byte_index_to_visible_screen_line(&self, byte_index: usize) -> ScreenLine {
         let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
         let closest_visible_ancestor = self.closest_visible_ancestor(&closest_node_to_byte_index);
-        self.logical_line_of_node_index(closest_visible_ancestor)
+        self.create_first_screen_line_from_logical_line(
+            self.logical_line_of_node_index(closest_visible_ancestor),
+        )
     }
 
     fn is_raw_byte_range_visible(&self, byte_range: Range<usize>) -> bool {
@@ -2128,11 +2144,14 @@ mod tests {
         "#);
 
         fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
+            // TODO: SCREEN LINE FIX THIS TEST MAKE IT MORE ROBUST
             let LogicalLine {
                 start_index,
                 end_index,
                 ..
-            } = doc.raw_byte_index_to_visible_screen_line(index);
+            } = doc
+                .raw_byte_index_to_visible_screen_line(index)
+                .logical_line;
 
             format!("{}..={}", start_index.0, end_index.0)
         }

@@ -81,22 +81,31 @@ pub struct StyledSegment {
 
 /// The actual text to be displayed on the screen. The ranges indicate the position of
 /// the text in the actual document, and is used to highlight search matches.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub enum Text {
     /// A span of spaces
     Spaces(usize),
     /// A specific range of bytes from the internal representation of the document
     /// (as returned by `Document::raw_bytes_for_searching`).
     SourceRange(Range<usize>),
-    // Soon: will need to add a second field here, Option<Range<usize>>, if it's only
-    // part of the string.
-    /// A generic string.
-    String(Rc<String>),
+    /// A portion of a generic string.
+    String((Rc<String>, Range<usize>)),
+    /// A static string.
+    Static(&'static str),
 }
 
 const LOTS_OF_SPACES: [u8; 1024] = [b' '; 1024];
 
 impl Text {
+    pub fn len(&self) -> usize {
+        match self {
+            Text::Spaces(count) => *count,
+            Text::SourceRange(range) => range.len(),
+            Text::String((_, range)) => range.len(),
+            Text::Static(s) => s.len(),
+        }
+    }
+
     pub fn bytes<'a>(&'a self, source: &'a [u8]) -> Cow<'a, [u8]> {
         match self {
             Text::Spaces(count) => {
@@ -107,7 +116,8 @@ impl Text {
                 }
             }
             Text::SourceRange(range) => Cow::Borrowed(&source[range.clone()]),
-            Text::String(s) => Cow::Borrowed(s.as_bytes()),
+            Text::String((s, range)) => Cow::Borrowed(&s.as_bytes()[range.clone()]),
+            Text::Static(s) => Cow::Borrowed(s.as_bytes()),
         }
     }
 }
@@ -178,7 +188,7 @@ impl PreHighlightingStyledSegment {
         } = self;
 
         match &content {
-            Text::Spaces(_) | Text::String(_) => {
+            Text::Spaces(_) | Text::String(_) | Text::Static(_) => {
                 vec![StyledSegment { attrs, content }]
             }
             Text::SourceRange(range) => {
@@ -323,7 +333,8 @@ pub mod test_helpers {
             let segment_kind = match segment.content {
                 Text::Spaces(_) => "spaces".to_string(),
                 Text::SourceRange(range) => format!("range({range:?})"),
-                Text::String(_) => "string".to_string(),
+                Text::String((_, range)) => format!("string({range:?})"),
+                Text::Static(_) => "static".to_string(),
             };
 
             if segment_width == 0 {
@@ -400,7 +411,7 @@ pub mod test_helpers {
                     PreHighlightingStyledSegment {
                         attrs: color_token.focused,
                         search_match_attrs: default,
-                        content: Text::String(std::rc::Rc::new("🦀".to_string())),
+                        content: Text::String((std::rc::Rc::new("🦀".to_string()), 0.."🦀".len())),
                     },
                 ],
                 b"hello,world",
@@ -414,7 +425,7 @@ pub mod test_helpers {
             1: default (focused)         : spaces
             2: color                     : range(6..11)
             3: default (focused)         : spaces
-            4: color (focused)           : string
+            4: color (focused)           : string(0..4)
             ");
         }
     }
