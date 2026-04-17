@@ -1,68 +1,14 @@
-use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
-use unicode_segmentation::UnicodeSegmentation;
-use unicode_width::UnicodeWidthStr;
-
-use crate::rendering::{PreHighlightingStyledSegment, Text, TokenColorScheme};
+use crate::rendering::{Compositor, PreHighlightingStyledSegment, Segment, Text, TokenColorScheme};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
 };
 use crate::sexp::document::CollapseState;
 use crate::sexp::layout::LogicalLine;
-
-#[derive(Clone, Debug)]
-pub struct ScreenLine {
-    pub logical_line: LogicalLine,
-    pub doc_width: NonZeroUsize,
-    pub segments_per_screen_line: Rc<Vec<Vec<Segment>>>,
-    pub index: usize,
-}
-
-impl PartialEq for ScreenLine {
-    fn eq(&self, other: &Self) -> bool {
-        assert!(
-            self.doc_width == other.doc_width,
-            "eq called on `sexp::ScreenLine`s with different widths"
-        );
-
-        self.logical_line == other.logical_line && self.index == other.index
-    }
-}
-
-impl Eq for ScreenLine {}
-
-impl Ord for ScreenLine {
-    fn cmp(&self, other: &Self) -> Ordering {
-        assert!(
-            self.doc_width == other.doc_width,
-            "cmp called on `sexp::ScreenLine`s with different widths"
-        );
-
-        match self.logical_line.cmp(&other.logical_line) {
-            Ordering::Less => return Ordering::Less,
-            Ordering::Greater => return Ordering::Greater,
-            Ordering::Equal => self.index.cmp(&other.index),
-        }
-    }
-}
-
-impl PartialOrd for ScreenLine {
-    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct Segment {
-    pub node_index: Option<NodeIndex>,
-    pub content: Text,
-    kind: SegmentKind,
-    terminal_width: usize,
-}
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum SegmentKind {
@@ -113,180 +59,16 @@ impl SegmentKind {
     }
 }
 
-struct WrappedSegmentsBuilder<'a> {
-    pretty_printed: &'a [u8],
-    doc_width: NonZeroUsize,
-    wrapped_segments: Vec<Vec<Segment>>,
-    remaining_width_on_current_line: usize,
-}
-
-impl<'a> WrappedSegmentsBuilder<'a> {
-    fn new(pretty_printed: &'a [u8], doc_width: NonZeroUsize) -> Self {
-        WrappedSegmentsBuilder {
-            pretty_printed,
-            wrapped_segments: vec![vec![]],
-            doc_width,
-            remaining_width_on_current_line: doc_width.get(),
-        }
-    }
-
-    fn add_entire_segment_to_current_line(&mut self, segment: Segment) {
-        debug_assert!(self.remaining_width_on_current_line >= segment.terminal_width);
-
-        self.remaining_width_on_current_line -= segment.terminal_width;
-        self.wrapped_segments.last_mut().unwrap().push(segment);
-    }
-
-    fn start_new_line(&mut self) {
-        self.wrapped_segments.push(vec![]);
-        self.remaining_width_on_current_line = self.doc_width.get();
-    }
-
-    fn maybe_start_new_line(&mut self) {
-        if self.remaining_width_on_current_line == 0 {
-            self.start_new_line();
-        }
-    }
-
-    fn take_prefix_that_fits_in_available_space(
-        s: &str,
-        mut available_space: usize,
-    ) -> (&str, usize) {
-        let mut used_bytes = 0;
-        let mut used_space = 0;
-
-        for grapheme in s.graphemes(true) {
-            let grapheme_width = UnicodeWidthStr::width(grapheme);
-            if used_space + grapheme_width > available_space {
-                break;
-            }
-            used_bytes += grapheme.len();
-            used_space += grapheme_width;
-        }
-
-        (&s[0..used_bytes], used_space)
-    }
-
-    fn push_content(&mut self, node_index: Option<NodeIndex>, content: Text, kind: SegmentKind) {
-        // Handle spaces separately, since it's simpler.
-        if let Text::Spaces(n) = content {
-            let mut content_remaining = n;
-
-            while content_remaining > 0 {
-                self.maybe_start_new_line();
-
-                if content_remaining > self.remaining_width_on_current_line {
-                    content_remaining -= self.remaining_width_on_current_line;
-
-                    self.add_entire_segment_to_current_line(Segment {
-                        node_index,
-                        content: Text::Spaces(self.remaining_width_on_current_line),
-                        kind,
-                        terminal_width: self.remaining_width_on_current_line,
-                    });
-                } else {
-                    self.add_entire_segment_to_current_line(Segment {
-                        node_index,
-                        content: Text::Spaces(content_remaining),
-                        kind,
-                        terminal_width: content_remaining,
-                    });
-
-                    break;
-                }
-            }
-
-            return;
-        };
-
-        let mut processed_bytes = 0;
-
-        while processed_bytes < content.len() {
-            let remaining_s = match &content {
-                Text::Spaces(_) => unreachable!(),
-                Text::SourceRange(range) => {
-                    str::from_utf8(&self.pretty_printed[(range.start + processed_bytes)..range.end])
-                        .expect("pretty_printed should be valid utf8")
-                }
-                Text::String((s, range)) => &s[(range.start + processed_bytes)..range.end],
-                Text::Static(s) => &s[processed_bytes..],
-            };
-
-            self.maybe_start_new_line();
-
-            let (portion, used_width) = Self::take_prefix_that_fits_in_available_space(
-                remaining_s,
-                self.remaining_width_on_current_line,
-            );
-
-            if used_width == 0 {
-                if self.remaining_width_on_current_line < self.doc_width.get() {
-                    // Maybe if we start a new line we'll be able to fit in the next character.
-                    self.start_new_line();
-                    continue;
-                } else {
-                    // There's no way we'll be able to fit the next character in, so we'll
-                    // put an ellipsis in instead.
-                    self.add_entire_segment_to_current_line(Segment {
-                        node_index,
-                        content: Text::Static("…"),
-                        kind,
-                        terminal_width: 1,
-                    });
-
-                    let next_grapheme_len = remaining_s.graphemes(true).next().unwrap().len();
-                    processed_bytes += next_grapheme_len;
-
-                    continue;
-                }
-            }
-
-            let content_portion = match &content {
-                Text::Spaces(_) => unreachable!(),
-                Text::SourceRange(range) => {
-                    let portion_range_start = range.start + processed_bytes;
-                    let portion_range_end = portion_range_start + portion.len();
-                    Text::SourceRange(portion_range_start..portion_range_end)
-                }
-                Text::String((s, range)) => {
-                    let portion_range_start = range.start + processed_bytes;
-                    let portion_range_end = portion_range_start + portion.len();
-                    Text::String((s.clone(), portion_range_start..portion_range_end))
-                }
-                Text::Static(s) => {
-                    let portion_range_start = processed_bytes;
-                    let portion_range_end = portion_range_start + portion.len();
-                    Text::Static(&s[portion_range_start..portion_range_end])
-                }
-            };
-
-            self.add_entire_segment_to_current_line(Segment {
-                node_index,
-                content: content_portion,
-                kind,
-                terminal_width: used_width,
-            });
-
-            processed_bytes += portion.len();
-        }
-    }
-}
-
-pub fn convert_logical_line_to_screen_line(
+pub fn typeset_logical_line(
     logical_line: &LogicalLine,
     doc_width: NonZeroUsize,
     core: &DocCore,
     collapsible_nodes: &BTreeMap<NodeIndex, CollapseState>,
-) -> ScreenLine {
-    let mut wrapped_segments_builder =
-        WrappedSegmentsBuilder::new(core.pretty_printed.data(), doc_width);
+) -> Vec<Vec<Segment<NodeIndex, SegmentKind>>> {
+    let mut lines = Compositor::new(core.pretty_printed.data(), doc_width);
 
     if logical_line.indentation > 0 {
-        wrapped_segments_builder.push_content(
-            None,
-            Text::Spaces(logical_line.indentation),
-            SegmentKind::Whitespace,
-        );
+        lines.append_spaces(logical_line.indentation, SegmentKind::Whitespace, None);
     }
 
     let mut prev_node_end_index = None;
@@ -298,10 +80,10 @@ pub fn convert_logical_line_to_screen_line(
         if let Some(end_index) = prev_node_end_index {
             let whitespace_range = end_index..(node.data_range.start);
             if whitespace_range.len() > 0 {
-                wrapped_segments_builder.push_content(
-                    None,
+                lines.append_content(
                     Text::SourceRange(whitespace_range),
                     SegmentKind::Whitespace,
+                    None,
                 );
             }
         }
@@ -344,7 +126,7 @@ pub fn convert_logical_line_to_screen_line(
             }
         }
 
-        wrapped_segments_builder.push_content(Some(node_index), content, segment_kind);
+        lines.append_content(content, segment_kind, Some(node_index));
 
         if remainder_is_collapsed {
             break;
@@ -353,47 +135,33 @@ pub fn convert_logical_line_to_screen_line(
 
     // If we had a collapsed section, we'll loop over all the coalesced closing parens.
     if let Some(mut closing_paren) = paren_after_collapsed_section {
-        wrapped_segments_builder.push_content(None, Text::Static("…"), SegmentKind::Comment);
+        lines.append_content(Text::Static("…"), SegmentKind::Comment, None);
 
         while closing_paren <= core.last_node_index_of_part_of_completed_sexp.unwrap() {
             if !matches!(core.token(closing_paren), DocumentToken::EndOfList(_)) {
                 break;
             }
 
-            wrapped_segments_builder.push_content(
-                Some(closing_paren),
+            lines.append_content(
                 Text::SourceRange(core.node(closing_paren).data_range.clone()),
                 SegmentKind::Parens,
+                Some(closing_paren),
             );
 
             closing_paren = closing_paren + 1;
         }
     }
 
-    ScreenLine {
-        logical_line: logical_line.clone(),
-        doc_width,
-        segments_per_screen_line: Rc::new(wrapped_segments_builder.wrapped_segments),
-        index: 0,
-    }
+    lines.finish()
 }
 
 pub struct RenderContext<'a> {
     color_scheme: &'a ColorScheme,
-    core: &'a DocCore,
-    collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
     focused_node_indexes: Vec<NodeIndex>,
-    doc_width: NonZeroUsize,
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn new(
-        color_scheme: &'a ColorScheme,
-        core: &'a DocCore,
-        collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
-        focus: NodeIndex,
-        doc_width: usize,
-    ) -> Self {
+    pub fn new(color_scheme: &'a ColorScheme, core: &'a DocCore, focus: NodeIndex) -> Self {
         let focused_node_indexes = match core.token(focus) {
             DocumentToken::StartOfList(list_metadata) => {
                 let mut indexes = vec![focus];
@@ -428,62 +196,43 @@ impl<'a> RenderContext<'a> {
 
         RenderContext {
             color_scheme,
-            core,
-            collapsible_nodes,
             focused_node_indexes,
-            doc_width: NonZeroUsize::new(doc_width).expect("doc width to be non-zero"),
         }
     }
 }
 
 // 'l for lifetime of the line renderer, 's for the lifetime of rendering the whole screen
-struct ScreenLineRenderer<'l, 's> {
+pub fn style_typeset_line<'l, 's>(
     context: &'l RenderContext<'s>,
-    screen_line: &'l ScreenLine,
-}
-
-pub fn render_line<'l, 's>(
-    context: &'l RenderContext<'s>,
-    screen_line: &'l ScreenLine,
+    segments: &'l Vec<Segment<NodeIndex, SegmentKind>>,
 ) -> Vec<PreHighlightingStyledSegment> {
-    let mut line_renderer = ScreenLineRenderer {
-        context,
-        screen_line,
-    };
+    segments
+        .iter()
+        .map(|segment| {
+            let focused = if let Some(node_index) = segment.doc_ref {
+                context.focused_node_indexes.contains(&node_index)
+            } else {
+                false
+            };
 
-    line_renderer.render()
-}
+            let token_color_scheme = segment.kind.color_scheme(&context.color_scheme);
 
-impl<'l, 's> ScreenLineRenderer<'l, 's> {
-    fn render(&mut self) -> Vec<PreHighlightingStyledSegment> {
-        self.screen_line.segments_per_screen_line[self.screen_line.index]
-            .iter()
-            .map(|segment| {
-                let focused = if let Some(node_index) = segment.node_index {
-                    self.context.focused_node_indexes.contains(&node_index)
-                } else {
-                    false
-                };
+            let (attrs, search_match_attrs) = if focused {
+                (
+                    token_color_scheme.focused,
+                    token_color_scheme.focused_search_match,
+                )
+            } else {
+                (token_color_scheme.normal, token_color_scheme.search_match)
+            };
 
-                let token_color_scheme = segment.kind.color_scheme(&self.context.color_scheme);
-
-                let (attrs, search_match_attrs) = if focused {
-                    (
-                        token_color_scheme.focused,
-                        token_color_scheme.focused_search_match,
-                    )
-                } else {
-                    (token_color_scheme.normal, token_color_scheme.search_match)
-                };
-
-                PreHighlightingStyledSegment {
-                    attrs,
-                    search_match_attrs,
-                    content: segment.content.clone(),
-                }
-            })
-            .collect::<Vec<_>>()
-    }
+            PreHighlightingStyledSegment {
+                attrs,
+                search_match_attrs,
+                content: segment.content.clone(),
+            }
+        })
+        .collect::<Vec<_>>()
 }
 
 #[cfg(test)]
@@ -553,20 +302,17 @@ mod tests {
     fn render_doc_line(doc: &SexpDocument, line: usize, focus: NodeIndex) -> String {
         let render_context = doc.render_context_with_color_scheme(&COLOR_SCHEME, focus);
         let logical_lines = logical_lines(&doc);
-        let mut screen_line =
-            doc.create_first_screen_line_from_logical_line(logical_lines[line].clone());
+        let typeset_lines = doc.typeset_logical_line(&logical_lines[line]);
 
         let mut s = String::new();
-        for index in 0..(screen_line.segments_per_screen_line.len()) {
-            if index > 0 {
+        for (i, typeset_line) in typeset_lines.iter().enumerate() {
+            if i > 0 {
                 s.push_str("\n\n");
             }
 
-            screen_line.index = index;
-
             s.push_str(
                 dump_segments(
-                    render_line(&render_context, &screen_line),
+                    style_typeset_line(&render_context, &typeset_line),
                     doc.raw_bytes_for_searching(),
                     &style_map(),
                 )

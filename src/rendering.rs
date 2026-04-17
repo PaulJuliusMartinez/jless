@@ -1,7 +1,11 @@
 use std::borrow::Cow;
 use std::default::Default;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::rc::Rc;
+
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 use crate::sorted_ranges::SortedRanges;
 use crate::terminal::Color as TerminalColor;
@@ -72,13 +76,6 @@ impl Attrs {
     }
 }
 
-/// A segment of styled text, to be displayed on a single line.
-#[derive(Debug)]
-pub struct StyledSegment {
-    pub attrs: Attrs,
-    pub content: Text,
-}
-
 /// The actual text to be displayed on the screen. The ranges indicate the position of
 /// the text in the actual document, and is used to highlight search matches.
 #[derive(Clone, Debug)]
@@ -122,6 +119,187 @@ impl Text {
     }
 }
 
+/// A segment of text, along with some other data:
+/// - the kind of segment this is, used for applying appropriate styling later
+/// - how wide the segment is when printed to a termina
+/// - a reference back into the original document
+#[derive(Clone, Debug)]
+pub struct Segment<DocRef, Kind> {
+    pub content: Text,
+    pub kind: Kind,
+    pub terminal_width: usize,
+    pub doc_ref: Option<DocRef>,
+}
+
+pub struct Compositor<'a, DocRef, Kind> {
+    doc_content: &'a [u8],
+    doc_width: NonZeroUsize,
+    lines: Vec<Vec<Segment<DocRef, Kind>>>,
+    remaining_space_on_current_line: usize,
+}
+
+impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
+    pub fn new(doc_content: &'a [u8], doc_width: NonZeroUsize) -> Self {
+        Compositor {
+            doc_content,
+            doc_width,
+            lines: vec![vec![]],
+            remaining_space_on_current_line: doc_width.get(),
+        }
+    }
+
+    pub fn finish(self) -> Vec<Vec<Segment<DocRef, Kind>>> {
+        self.lines
+    }
+
+    fn add_entire_segment_to_current_line(&mut self, segment: Segment<DocRef, Kind>) {
+        debug_assert!(self.remaining_space_on_current_line >= segment.terminal_width);
+
+        self.remaining_space_on_current_line -= segment.terminal_width;
+        self.lines.last_mut().unwrap().push(segment);
+    }
+
+    fn start_new_line(&mut self) {
+        self.lines.push(vec![]);
+        self.remaining_space_on_current_line = self.doc_width.get();
+    }
+
+    fn maybe_start_new_line(&mut self) {
+        if self.remaining_space_on_current_line == 0 {
+            self.start_new_line();
+        }
+    }
+
+    fn take_prefix_that_fits_in_available_space(
+        s: &str,
+        mut available_space: usize,
+    ) -> (&str, usize) {
+        let mut used_bytes = 0;
+        let mut used_space = 0;
+
+        for grapheme in s.graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+            if used_space + grapheme_width > available_space {
+                break;
+            }
+            used_bytes += grapheme.len();
+            used_space += grapheme_width;
+        }
+
+        (&s[0..used_bytes], used_space)
+    }
+
+    pub fn append_spaces(&mut self, n: usize, kind: Kind, doc_ref: Option<DocRef>) {
+        let mut content_remaining = n;
+
+        while content_remaining > 0 {
+            self.maybe_start_new_line();
+
+            if content_remaining > self.remaining_space_on_current_line {
+                content_remaining -= self.remaining_space_on_current_line;
+
+                self.add_entire_segment_to_current_line(Segment {
+                    content: Text::Spaces(self.remaining_space_on_current_line),
+                    kind,
+                    terminal_width: self.remaining_space_on_current_line,
+                    doc_ref,
+                });
+            } else {
+                self.add_entire_segment_to_current_line(Segment {
+                    content: Text::Spaces(content_remaining),
+                    kind,
+                    terminal_width: content_remaining,
+                    doc_ref,
+                });
+
+                break;
+            }
+        }
+    }
+
+    pub fn append_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
+        // Handle spaces separately, since it's simpler.
+        if let Text::Spaces(n) = content {
+            self.append_spaces(n, kind, doc_ref);
+            return;
+        };
+
+        let mut processed_bytes = 0;
+
+        while processed_bytes < content.len() {
+            let remaining_s = match &content {
+                Text::Spaces(_) => unreachable!(),
+                Text::SourceRange(range) => {
+                    str::from_utf8(&self.doc_content[(range.start + processed_bytes)..range.end])
+                        .expect("doc_content should be valid utf8")
+                }
+                Text::String((s, range)) => &s[(range.start + processed_bytes)..range.end],
+                Text::Static(s) => &s[processed_bytes..],
+            };
+
+            self.maybe_start_new_line();
+
+            let (portion, used_width) = Self::take_prefix_that_fits_in_available_space(
+                remaining_s,
+                self.remaining_space_on_current_line,
+            );
+
+            if used_width == 0 {
+                if self.remaining_space_on_current_line < self.doc_width.get() {
+                    // Maybe if we start a new line we'll be able to fit in the next character.
+                    self.start_new_line();
+                    continue;
+                } else {
+                    // There's no way we'll be able to fit the next character in, so we'll
+                    // put an ellipsis in instead.
+                    self.add_entire_segment_to_current_line(Segment {
+                        content: Text::Static("…"),
+                        kind,
+                        terminal_width: 1,
+                        doc_ref,
+                    });
+
+                    let next_grapheme_len = remaining_s.graphemes(true).next().unwrap().len();
+                    processed_bytes += next_grapheme_len;
+
+                    continue;
+                }
+            }
+
+            let content_portion = match &content {
+                Text::Spaces(_) => unreachable!(),
+                Text::SourceRange(range) => {
+                    let portion_range_start = range.start + processed_bytes;
+                    let portion_range_end = portion_range_start + portion.len();
+                    Text::SourceRange(portion_range_start..portion_range_end)
+                }
+                Text::String((s, range)) => {
+                    let portion_range_start = range.start + processed_bytes;
+                    let portion_range_end = portion_range_start + portion.len();
+                    Text::String((s.clone(), portion_range_start..portion_range_end))
+                }
+                Text::Static(s) => {
+                    let portion_range_start = processed_bytes;
+                    let portion_range_end = portion_range_start + portion.len();
+                    Text::Static(&s[portion_range_start..portion_range_end])
+                }
+            };
+
+            self.add_entire_segment_to_current_line(Segment {
+                content: content_portion,
+                kind,
+                terminal_width: used_width,
+                doc_ref,
+            });
+
+            processed_bytes += portion.len();
+        }
+    }
+}
+
+// Someday: Rather than having this intermediate PreHighlightingStyledSegment, could
+// we just process both highlighting and which nodes are focused in a single pass?
+
 /// A segment of styled text, with two separate styles depending on whether any
 /// search matches are contained within the text. Highlighting search matches is
 /// done as a post-processing step so that individual data formats don't need to
@@ -130,6 +308,13 @@ impl Text {
 pub struct PreHighlightingStyledSegment {
     pub attrs: Attrs,
     pub search_match_attrs: Attrs,
+    pub content: Text,
+}
+
+/// A segment of styled text.
+#[derive(Debug)]
+pub struct StyledSegment {
+    pub attrs: Attrs,
     pub content: Text,
 }
 

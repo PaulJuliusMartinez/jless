@@ -1,18 +1,22 @@
+use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
 use std::num::NonZeroUsize;
 use std::ops::{Range, RangeInclusive};
+use std::rc::Rc;
 
 use crate::document::{ContentRange, Document};
-use crate::rendering::{PreHighlightingStyledSegment, Text};
+use crate::rendering::{PreHighlightingStyledSegment, Segment, Text};
 use crate::search::InvertedPairedDelimeters;
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, EndOfListMetadata,
     ErrorMetadata, ListKind, ListMetadata, NodeIndex,
 };
-use crate::sexp::layout::{self as layout, LogicalLine};
-use crate::sexp::renderer::{render_line, RenderContext, ScreenLine};
+use crate::sexp::layout;
+use crate::sexp::layout::LogicalLine;
+use crate::sexp::renderer;
+use crate::sexp::renderer::{style_typeset_line, RenderContext, SegmentKind};
 
 use ocaml_sexplib::input::InputRef;
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
@@ -93,6 +97,81 @@ impl InitialNestedCollapseStateForTopLevelNodes {
                 }
             }
         }
+    }
+}
+
+type TypesetLine = Vec<Segment<NodeIndex, SegmentKind>>;
+
+#[derive(Clone, Debug)]
+pub struct ScreenLine {
+    pub logical_line: LogicalLine,
+    pub doc_width: NonZeroUsize,
+    pub typeset_lines: Rc<Vec<TypesetLine>>,
+    pub index: usize,
+}
+
+impl PartialEq for ScreenLine {
+    fn eq(&self, other: &Self) -> bool {
+        assert!(
+            self.doc_width == other.doc_width,
+            "eq called on `sexp::ScreenLine`s with different widths"
+        );
+
+        self.logical_line == other.logical_line && self.index == other.index
+    }
+}
+
+impl Eq for ScreenLine {}
+
+impl Ord for ScreenLine {
+    fn cmp(&self, other: &Self) -> Ordering {
+        assert!(
+            self.doc_width == other.doc_width,
+            "cmp called on `sexp::ScreenLine`s with different widths"
+        );
+
+        match self.logical_line.cmp(&other.logical_line) {
+            Ordering::Less => return Ordering::Less,
+            Ordering::Greater => return Ordering::Greater,
+            Ordering::Equal => self.index.cmp(&other.index),
+        }
+    }
+}
+
+impl PartialOrd for ScreenLine {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl ScreenLine {
+    fn next_typeset_line(&self) -> Option<Self> {
+        if self.index == self.typeset_lines.len() - 1 {
+            return None;
+        }
+
+        let mut new = self.clone();
+        new.index += 1;
+        Some(new)
+    }
+
+    fn prev_typeset_line(&self) -> Option<Self> {
+        if self.index == 0 {
+            return None;
+        }
+
+        let mut new = self.clone();
+        new.index -= 1;
+        Some(new)
+    }
+
+    fn into_last_typeset_line(mut self) -> Self {
+        self.index = self.typeset_lines.len() - 1;
+        self
+    }
+
+    fn typeset_line(&self) -> &TypesetLine {
+        &self.typeset_lines[self.index]
     }
 }
 
@@ -851,25 +930,32 @@ impl SexpDocument {
         color_scheme: &'a ColorScheme,
         focus: NodeIndex,
     ) -> RenderContext<'a> {
-        RenderContext::new(
-            &color_scheme,
-            &self.core,
-            &self.collapsible_nodes,
-            focus,
-            self.width,
-        )
+        RenderContext::new(&color_scheme, &self.core, focus)
     }
 
-    pub fn create_first_screen_line_from_logical_line(
-        &self,
-        logical_line: LogicalLine,
-    ) -> ScreenLine {
-        crate::sexp::renderer::convert_logical_line_to_screen_line(
+    pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> Vec<TypesetLine> {
+        renderer::typeset_logical_line(
             &logical_line,
             NonZeroUsize::new(self.width).expect("Can't have 0 width document"),
             &self.core,
             &self.collapsible_nodes,
         )
+    }
+
+    fn first_typeset_screen_line_for_logical_line(&self, logical_line: LogicalLine) -> ScreenLine {
+        let typeset_lines = Rc::new(self.typeset_logical_line(&logical_line));
+
+        ScreenLine {
+            logical_line,
+            doc_width: NonZeroUsize::new(self.width).expect("width can't be 0"),
+            typeset_lines,
+            index: 0,
+        }
+    }
+
+    fn last_typeset_screen_line_for_logical_line(&self, logical_line: LogicalLine) -> ScreenLine {
+        let mut screen_line = self.first_typeset_screen_line_for_logical_line(logical_line);
+        screen_line.into_last_typeset_line()
     }
 }
 
@@ -913,7 +999,7 @@ impl Document for SexpDocument {
         match self.starts_of_logical_lines.first_key_value() {
             None => None,
             Some((start_index, (end_index, indentation))) => Some((
-                self.create_first_screen_line_from_logical_line(LogicalLine {
+                self.first_typeset_screen_line_for_logical_line(LogicalLine {
                     indentation: *indentation,
                     start_index: *start_index,
                     end_index: *end_index,
@@ -938,7 +1024,7 @@ impl Document for SexpDocument {
 
                 let cursor = last_visible_logical_line.start_index;
                 let last_screen_line =
-                    self.create_first_screen_line_from_logical_line(last_visible_logical_line);
+                    self.last_typeset_screen_line_for_logical_line(last_visible_logical_line);
 
                 Some((last_screen_line, cursor))
             }
@@ -946,32 +1032,22 @@ impl Document for SexpDocument {
     }
 
     fn next_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
-        if screen_line.index < screen_line.segments_per_screen_line.len() - 1 {
-            let mut next_screen_line = screen_line.clone();
-            next_screen_line.index += 1;
-            Some(next_screen_line)
+        if let Some(next_typeset_line) = screen_line.next_typeset_line() {
+            Some(next_typeset_line)
         } else {
             let next_visible_logical_line =
                 self.next_visible_logical_line(&screen_line.logical_line)?;
-            Some(self.create_first_screen_line_from_logical_line(next_visible_logical_line))
+            Some(self.first_typeset_screen_line_for_logical_line(next_visible_logical_line))
         }
     }
 
     fn prev_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
-        if screen_line.index > 0 {
-            let mut prev_screen_line = screen_line.clone();
-            prev_screen_line.index -= 1;
-            Some(prev_screen_line)
+        if let Some(prev_typeset_line) = screen_line.prev_typeset_line() {
+            Some(prev_typeset_line)
         } else {
             let prev_visible_logical_line =
                 self.prev_visible_logical_line(&screen_line.logical_line)?;
-            let mut screen_line_of_prev_logical_line =
-                self.create_first_screen_line_from_logical_line(prev_visible_logical_line);
-            screen_line_of_prev_logical_line.index = screen_line_of_prev_logical_line
-                .segments_per_screen_line
-                .len()
-                - 1;
-            Some(screen_line_of_prev_logical_line)
+            Some(self.last_typeset_screen_line_for_logical_line(prev_visible_logical_line))
         }
     }
 
@@ -987,7 +1063,7 @@ impl Document for SexpDocument {
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
-        screen_line.segments_per_screen_line.len() > 1
+        screen_line.typeset_lines.len() > 1
     }
 
     fn is_start_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -996,7 +1072,7 @@ impl Document for SexpDocument {
 
     fn is_end_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
         self.is_wrapped_line(screen_line)
-            && screen_line.index == screen_line.segments_per_screen_line.len() - 1
+            && screen_line.index == screen_line.typeset_lines.len() - 1
     }
 
     fn is_after_start_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -1009,12 +1085,14 @@ impl Document for SexpDocument {
 
     fn cursor_range(&self, cursor: &NodeIndex) -> ContentRange<ScreenLine> {
         let logical_line = self.logical_line_of_node_index(*cursor);
-        let screen_line = self.create_first_screen_line_from_logical_line(logical_line);
+        let first_screen_line = self.first_typeset_screen_line_for_logical_line(logical_line);
+        let last_screen_line = first_screen_line.clone().into_last_typeset_line();
+        let num_screen_lines = first_screen_line.typeset_lines.len();
 
         ContentRange {
-            start: screen_line.clone(),
-            end: screen_line,
-            num_screen_lines: 1,
+            start: first_screen_line,
+            end: last_screen_line,
+            num_screen_lines,
         }
     }
 
@@ -1025,9 +1103,10 @@ impl Document for SexpDocument {
     ) -> NodeIndex {
         // TODO: SCREEN LINE FIX THIS COULD BE IMPROVED.
         let fallback = screen_line.logical_line.start_index;
-        screen_line.segments_per_screen_line[screen_line.index]
+        screen_line
+            .typeset_line()
             .iter()
-            .find_map(|segment| segment.node_index)
+            .find_map(|segment| segment.doc_ref)
             .unwrap_or(fallback)
     }
 
@@ -1251,7 +1330,7 @@ impl Document for SexpDocument {
 
         let mut highlighted_cursor = false;
 
-        for segment in screen_line.segments_per_screen_line[screen_line.index].iter() {
+        for segment in screen_line.typeset_line().iter() {
             match &segment.content {
                 Text::Spaces(n) => {
                     for _ in 0..*n {
@@ -1262,7 +1341,7 @@ impl Document for SexpDocument {
                     let content = std::str::from_utf8(&self.core.pretty_printed[range.clone()])
                         .unwrap_or("INVALID UTF8");
 
-                    if !highlighted_cursor && segment.node_index == Some(*cursor) {
+                    if !highlighted_cursor && segment.doc_ref == Some(*cursor) {
                         if content.starts_with("(") {
                             output.push('[');
                             output.push_str(&content[1..]);
@@ -1299,7 +1378,10 @@ impl Document for SexpDocument {
     ) -> Option<Vec<PreHighlightingStyledSegment>> {
         let color_scheme = ColorScheme::default();
         let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
-        Some(render_line(&render_context, screen_line))
+        Some(style_typeset_line(
+            &render_context,
+            screen_line.typeset_line(),
+        ))
     }
 
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
@@ -1329,7 +1411,7 @@ impl Document for SexpDocument {
     fn raw_byte_index_to_visible_screen_line(&self, byte_index: usize) -> ScreenLine {
         let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
         let closest_visible_ancestor = self.closest_visible_ancestor(&closest_node_to_byte_index);
-        self.create_first_screen_line_from_logical_line(
+        self.first_typeset_screen_line_for_logical_line(
             self.logical_line_of_node_index(closest_visible_ancestor),
         )
     }
