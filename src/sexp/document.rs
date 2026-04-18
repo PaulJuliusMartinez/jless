@@ -1067,7 +1067,7 @@ impl Document for SexpDocument {
     }
 
     fn is_start_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
-        self.is_wrapped_line(screen_line) && screen_line.index > 0
+        self.is_wrapped_line(screen_line) && screen_line.index == 0
     }
 
     fn is_end_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
