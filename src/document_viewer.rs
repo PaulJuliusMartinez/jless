@@ -94,6 +94,12 @@ enum PositionOfContentInViewport {
     StartsAndEndsOutsideViewport,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum RelativePosition {
+    Before,
+    After,
+}
+
 impl<D: Document> DocumentViewer<D> {
     pub fn new(
         doc: D,
@@ -195,10 +201,10 @@ impl<D: Document> DocumentViewer<D> {
 
     fn position_of_content_in_viewport(
         &self,
-        cursor_range: &ContentRange<D::ScreenLine>,
+        content_range: &ContentRange<D::ScreenLine>,
     ) -> PositionOfContentInViewport {
-        let start_position = self.position_of_screen_line(&cursor_range.start);
-        let end_position = self.position_of_screen_line(&cursor_range.end);
+        let start_position = self.position_of_screen_line(&content_range.start);
+        let end_position = self.position_of_screen_line(&content_range.end);
 
         match (start_position, end_position) {
             (PositionOfScreenLine::AboveTopLine, PositionOfScreenLine::AboveTopLine) => {
@@ -237,6 +243,10 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
+    fn position_of_current_focus_in_viewport(&self) -> PositionOfContentInViewport {
+        self.position_of_content_in_viewport(&self.doc.cursor_range(&self.current_focus))
+    }
+
     fn move_cursor_down(&mut self, lines: usize) {
         if let Some(new_cursor) = self.doc.move_cursor_down(lines, &self.current_focus) {
             self.current_focus = new_cursor;
@@ -251,27 +261,88 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    fn expand_or_move_cursor_right_or_down(&mut self) {
-        if let Some(new_cursor) = self
-            .doc
-            .expand_or_move_cursor_right_or_down(&self.current_focus)
-        {
+    // When we collapse or expand nodes, all previous ScreenLines could be invalid, so we need
+    // to completely recompute where the top of the screen. This function takes in some
+    // modification callback, and assumes that collapsing occurred if and only if the callback
+    // returns the exact same cursor. If it got the same cursor back, it'll try to keep the
+    // start of it in the same spot on relative to the top of the screen, but if the cursor
+    // changed, we'll just make sure it stays in the viewport.
+    fn keep_start_of_current_focus_in_same_spot_if_focus_doesnt_move_else<F>(&mut self, mut f: F)
+    where
+        F: FnMut(&mut Self) -> Option<D::Cursor>,
+    {
+        let old_cursor_range = &self.doc.cursor_range(&self.current_focus);
+        let old_cursor_position = self.position_of_content_in_viewport(&old_cursor_range);
+
+        // We always try to keep the start of the cursor in the same position relative to
+        // the top of the screen.
+        let (n, relative_position) = match old_cursor_position {
+            PositionOfContentInViewport::EntirelyInViewport { start_index, .. }
+            | PositionOfContentInViewport::EndsBelowViewport { start_index } => {
+                // Most common case; keep the start of the cursor in the same spot as before.
+                (start_index, RelativePosition::Before)
+            }
+            PositionOfContentInViewport::StartsAboveViewport { .. }
+            | PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
+                let n = self
+                    .doc
+                    .diff_screen_lines(&self.top_line, &old_cursor_range.start);
+                (n, RelativePosition::After)
+            }
+        };
+
+        let new_cursor = f(self);
+
+        let Some(new_cursor) = new_cursor else {
+            return;
+        };
+
+        // If the cursor changed, just make sure it's visible and we're done.
+        if new_cursor != self.current_focus {
             self.current_focus = new_cursor;
             self.update_so_current_focus_is_visible();
+            return;
         }
+
+        // If the cursor didn't change, we'll keep the start of it in the same spot
+        // (and then make sure we adhere to scrolloff).
+        let new_cursor_range = self.doc.cursor_range(&self.current_focus);
+
+        self.top_line = self.n_screen_lines_relative_to_or_end_of_doc(
+            new_cursor_range.start,
+            n,
+            relative_position,
+        );
+
+        // Very unlikely, but we'll add this in. Imagine after collapsing a node and its neighbors:
+        //
+        // Before:      After
+        //  (key (Ve
+        // +---------+  +-----------+
+        // | eeerrry |  | (…)
+        // | y_long_ |  | (…)       |
+        // | variant |  | (key (…)) |
+        // +---------+  +-----------+
+        //
+        // And if scrolloff is 1, then "key" should be in the middle of the viewport.
+        self.update_so_current_focus_is_visible();
+    }
+
+    fn expand_or_move_cursor_right_or_down(&mut self) {
+        self.keep_start_of_current_focus_in_same_spot_if_focus_doesnt_move_else(|me| {
+            me.doc
+                .expand_or_move_cursor_right_or_down(&me.current_focus)
+        });
     }
 
     fn collapse_or_move_cursor_left_or_up(&mut self) {
-        if let Some(new_cursor) = self
-            .doc
-            .collapse_or_move_cursor_left_or_up(&self.current_focus)
-        {
-            self.current_focus = new_cursor;
-            self.update_so_current_focus_is_visible();
-        }
+        self.keep_start_of_current_focus_in_same_spot_if_focus_doesnt_move_else(|me| {
+            me.doc.collapse_or_move_cursor_left_or_up(&me.current_focus)
+        });
     }
 
     fn move_cursor_left_or_up_without_collapsing(&mut self) {
+        // No collapsing, so all the ScreenLines are still valid.
         if let Some(new_cursor) = self
             .doc
             .move_cursor_left_or_up_without_collapsing(&self.current_focus)
@@ -282,23 +353,15 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     fn collapse_node_and_siblings(&mut self, depth: Option<usize>) {
-        if let Some(new_cursor) = self
-            .doc
-            .collapse_node_and_siblings(&self.current_focus, depth)
-        {
-            self.current_focus = new_cursor;
-            self.update_so_current_focus_is_visible();
-        }
+        self.keep_start_of_current_focus_in_same_spot_if_focus_doesnt_move_else(|me| {
+            me.doc.collapse_node_and_siblings(&me.current_focus, depth)
+        });
     }
 
     fn expand_node_and_siblings(&mut self, depth: Option<usize>) {
-        if let Some(new_cursor) = self
-            .doc
-            .expand_node_and_siblings(&self.current_focus, depth)
-        {
-            self.current_focus = new_cursor;
-            self.update_so_current_focus_is_visible();
-        }
+        self.keep_start_of_current_focus_in_same_spot_if_focus_doesnt_move_else(|me| {
+            me.doc.expand_node_and_siblings(&me.current_focus, depth)
+        });
     }
 
     fn move_cursor_to_first_sibling(&mut self) {
@@ -447,15 +510,13 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     fn jump_down(&mut self, num_screen_lines: Option<NonZeroUsize>) {
-        let focused_range = self.doc.cursor_range(&self.current_focus);
-
         // It maybe feels a little weird to use the start/end index when something
         // is half on the screen, as opposed to something more "principled" like
         // start/2, but the user isn't trying to jump to a specific element, so
         // it doesn't really matter.
         //
         // Using the start/end index might also mean there will be a tiny bit less visual jitter.
-        let focus_index = match self.position_of_content_in_viewport(&focused_range) {
+        let focus_index = match self.position_of_current_focus_in_viewport() {
             PositionOfContentInViewport::StartsAboveViewport { end_index } => end_index,
             PositionOfContentInViewport::EndsBelowViewport { start_index } => start_index,
             PositionOfContentInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
@@ -513,11 +574,9 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     fn jump_up(&mut self, num_screen_lines: Option<NonZeroUsize>) {
-        let focused_range = self.doc.cursor_range(&self.current_focus);
-
         // Note that we pick the `start_index` in the `EntirelyInViewport` case. (See comment
         // below.)
-        let focus_index = match self.position_of_content_in_viewport(&focused_range) {
+        let focus_index = match self.position_of_current_focus_in_viewport() {
             PositionOfContentInViewport::StartsAboveViewport { end_index } => end_index,
             PositionOfContentInViewport::EndsBelowViewport { start_index } => start_index,
             PositionOfContentInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
@@ -1101,6 +1160,18 @@ impl<D: Document> DocumentViewer<D> {
             n -= 1;
         }
         screen_line
+    }
+
+    fn n_screen_lines_relative_to_or_end_of_doc(
+        &self,
+        screen_line: D::ScreenLine,
+        n: usize,
+        relative_position: RelativePosition,
+    ) -> D::ScreenLine {
+        match relative_position {
+            RelativePosition::Before => self.n_screen_lines_before_or_top_of_doc(screen_line, n),
+            RelativePosition::After => self.n_screen_lines_after_or_bottom_of_doc(screen_line, n),
+        }
     }
 
     pub fn document_eof(&mut self) {
@@ -1969,11 +2040,10 @@ mod test {
         let mut viewer = init_sexp(text, 7, 4, 0);
 
         let output = run(&mut viewer, vec![vec![press_left()]]);
-        // BUG: We're displaying the old uncollapsed top ScreenLine!
         assert_snapshot!(output, @r"
                            CollapseOrMoveCursorLeftOrUp
         ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐
-        │ 0│*1 │ [(a 1)  │ │ 0│*1 │ [(a 1)  │
+        │ 0│*1 │ [(a 1)  │ │ 0│*1 │ […)     │
         │ 1│ 2 │  (b 1)) │ │ 1│ 2 │ ((a 2)  │
         │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │  (b 2)) │
         │ 3│ 2 │  (b 2)) │ │ 3│ ~ │         │
@@ -1990,13 +2060,12 @@ mod test {
                 vec![press_right()],
             ],
         );
-        // BUG: We're displaying the old collapsed top ScreenLine!
         assert_snapshot!(output, @r"
                            MoveCursorDown(1)            ExpandOrMoveCursorRightOrDown
                            CollapseOrMoveCursorLeftOrUp
                            ScrollViewportDown(1)
         ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐           ┌SI┬─L#┬─────────┐
-        │ 0│*1 │ *       │ │ 0│*2 │ […)     │           │ 0│*2 │ […)     │
+        │ 0│*1 │ *       │ │ 0│*2 │ […)     │           │ 0│*2 │ [(a 1)  │
         │ 1│ 2 │ ((a 1)  │ │ 1│ 2 │ x       │           │ 1│ 2 │  (b 2)) │
         │ 2│ 2 │  (b 2)) │ │ 2│ 2 │ y       │           │ 2│ 2 │ x       │
         │ 3│ 2 │ x       │ │ 3│ ~ │         │           │ 3│ 2 │ y       │
@@ -2010,11 +2079,10 @@ mod test {
         let mut viewer = init_sexp(text, 7, 4, 0);
 
         let output = run(&mut viewer, vec![vec![collapse_node_and_siblings(None)]]);
-        // BUG: We're displaying the old uncollapsed top ScreenLine!
         assert_snapshot!(output, @r"
                            CollapseNodeAndSiblings(None)
         ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐
-        │ 0│*1 │ [(a 1)  │ │ 0│*1 │ [(a 1)  │
+        │ 0│*1 │ [(a 1)  │ │ 0│*1 │ […)     │
         │ 1│ 2 │  (b 1)) │ │ 1│ 2 │ (…)     │
         │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │ (…)     │
         │ 3│ 2 │  (b 2)) │ │ 3│ 2 │ (…)     │
@@ -2031,12 +2099,11 @@ mod test {
                 vec![collapse_node_and_siblings(None)],
             ],
         );
-        // BUG: We're displaying (b 1) but it should be collapsed now!
         assert_snapshot!(output, @r"
                            MoveCursorDown(2)     CollapseNodeAndSiblings(None)
                            ScrollViewportDown(1)
         ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐    ┌SI┬─L#┬─────────┐
-        │ 0│*1 │ [(a 1)  │ │ 0│ 2 │  (b 1)) │    │ 0│ 2 │  (b 1)) │
+        │ 0│*1 │ [(a 1)  │ │ 0│ 2 │  (b 1)) │    │ 0│ 1 │ (…)     │
         │ 1│ 2 │  (b 1)) │ │ 1│*2 │ [(a 2)  │    │ 1│*2 │ […)     │
         │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │  (b 2)) │    │ 2│ 2 │ (…)     │
         │ 3│ 2 │  (b 2)) │ │ 3│ 2 │ ((a 3)  │    │ 3│ 2 │ (…)     │
@@ -2059,7 +2126,6 @@ mod test {
                 vec![expand_node_and_siblings(None)],
             ],
         );
-        // BUG: (a 2) appears collapsed!
         assert_snapshot!(output, @r"
                            MoveCursorDown(2)            ExpandNodeAndSiblings(None)
                            CollapseOrMoveCursorLeftOrUp
@@ -2067,10 +2133,10 @@ mod test {
                            CollapseOrMoveCursorLeftOrUp
                            ScrollViewportDown(2)
         ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐           ┌SI┬─L#┬─────────┐
-        │ 0│*1 │ [(a 1)  │ │ 0│ 2 │ (…)     │           │ 0│ 2 │ (…)     │
-        │ 1│ 2 │  (b 1)) │ │ 1│*2 │ […)     │           │ 1│ 2 │  (b 2)) │
-        │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │ ((a 4)  │           │ 2│*2 │ [(a 3)  │
-        │ 3│ 2 │  (b 2)) │ │ 3│ 2 │  (b 4)) │           │ 3│ 2 │  (b 3)) │
+        │ 0│*1 │ [(a 1)  │ │ 0│ 2 │ (…)     │           │ 0│ 2 │  (b 2)) │
+        │ 1│ 2 │  (b 1)) │ │ 1│*2 │ […)     │           │ 1│*2 │ [(a 3)  │
+        │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │ ((a 4)  │           │ 2│ 2 │  (b 3)) │
+        │ 3│ 2 │  (b 2)) │ │ 3│ 2 │  (b 4)) │           │ 3│ 2 │ ((a 4)  │
         └──┴───┴─────────┘ └──┴───┴─────────┘           └──┴───┴─────────┘
         ");
     }
@@ -3015,7 +3081,7 @@ mod test {
         assert_snapshot!(output, @r"
                             ExpandOrMoveCursorRightOrDown JumpToSearchMatch(Prev, 1)
         ┌SI┬─L#┬──────────┐ ┌SI┬─L#┬──────────┐           ┌SI┬─L#┬──────────┐
-        │ 0│*2 │ […)      │ │ 0│*2 │ […)      │           │ 0│*2 │  [k2 b)) │
+        │ 0│*2 │ […)      │ │ 0│*2 │ [(k3 a)  │           │ 0│*2 │  [k2 b)) │
         │ 1│ 2 │ (…)      │ │ 1│ 2 │  (k4 b)  │           │ 1│ 2 │ ((k3 a)  │
         │ 2│ 2 │ (a)      │ │ 2│ 2 │  (k5 b)) │           │ 2│ 2 │  (k4 b)  │
         │ 3│ 2 │ (b)      │ │ 3│ 2 │ (…)      │           │ 3│ 2 │  (k5 b)) │
