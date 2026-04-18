@@ -1571,6 +1571,14 @@ mod test {
         Change::Action(Action::ExpandOrMoveCursorRightOrDown)
     }
 
+    fn collapse_node_and_siblings(depth: Option<usize>) -> Change {
+        Change::Action(Action::CollapseNodeAndSiblings(depth))
+    }
+
+    fn expand_node_and_siblings(depth: Option<usize>) -> Change {
+        Change::Action(Action::ExpandNodeAndSiblings(depth))
+    }
+
     fn scroll_viewport_down(n: usize) -> Change {
         Change::Action(Action::ScrollViewportDown(n))
     }
@@ -1952,6 +1960,118 @@ mod test {
         │ 2│*6 │ f  │ │ 2│ 8 │ h  │       │ 2│ 7 │ g  │   │ 2│*5 │↪e3↩│   │ 2│ 5 │ e1↩│
         │ 3│ 7 │ g  │ │ 3│*9 │ i  │       │ 3│ 8 │ h  │   │ 3│*5 │↪e4↩│   │ 3│ 5 │↪e2↩│
         └──┴───┴────┘ └──┴───┴────┘       └──┴───┴────┘   └──┴───┴────┘   └──┴───┴────┘
+        ");
+    }
+
+    #[test]
+    fn test_left_and_right_dont_cache_top_line() {
+        let text = b"((a 1)(b 1)) ((a 2)(b 2))";
+        let mut viewer = init_sexp(text, 7, 4, 0);
+
+        let output = run(&mut viewer, vec![vec![press_left()]]);
+        // BUG: We're displaying the old uncollapsed top ScreenLine!
+        assert_snapshot!(output, @r"
+                           CollapseOrMoveCursorLeftOrUp
+        ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐
+        │ 0│*1 │ [(a 1)  │ │ 0│*1 │ [(a 1)  │
+        │ 1│ 2 │  (b 1)) │ │ 1│ 2 │ ((a 2)  │
+        │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │  (b 2)) │
+        │ 3│ 2 │  (b 2)) │ │ 3│ ~ │         │
+        └──┴───┴─────────┘ └──┴───┴─────────┘
+        ");
+
+        let text = b"w ((a 1)(b 2)) x y z";
+        let mut viewer = init_sexp(text, 7, 4, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(1), press_left(), scroll_viewport_down(1)],
+                vec![press_right()],
+            ],
+        );
+        // BUG: We're displaying the old collapsed top ScreenLine!
+        assert_snapshot!(output, @r"
+                           MoveCursorDown(1)            ExpandOrMoveCursorRightOrDown
+                           CollapseOrMoveCursorLeftOrUp
+                           ScrollViewportDown(1)
+        ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐           ┌SI┬─L#┬─────────┐
+        │ 0│*1 │ *       │ │ 0│*2 │ […)     │           │ 0│*2 │ […)     │
+        │ 1│ 2 │ ((a 1)  │ │ 1│ 2 │ x       │           │ 1│ 2 │  (b 2)) │
+        │ 2│ 2 │  (b 2)) │ │ 2│ 2 │ y       │           │ 2│ 2 │ x       │
+        │ 3│ 2 │ x       │ │ 3│ ~ │         │           │ 3│ 2 │ y       │
+        └──┴───┴─────────┘ └──┴───┴─────────┘           └──┴───┴─────────┘
+        ");
+    }
+
+    #[test]
+    fn test_collapse_and_expand_siblings_keeps_focus_at_same_screen_index() {
+        let text = b"((a 1)(b 1)) ((a 2)(b 2)) ((a 3)(b 3)) ((a 4)(b 4)) ((a 5)(b 5))";
+        let mut viewer = init_sexp(text, 7, 4, 0);
+
+        let output = run(&mut viewer, vec![vec![collapse_node_and_siblings(None)]]);
+        // BUG: We're displaying the old uncollapsed top ScreenLine!
+        assert_snapshot!(output, @r"
+                           CollapseNodeAndSiblings(None)
+        ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐
+        │ 0│*1 │ [(a 1)  │ │ 0│*1 │ [(a 1)  │
+        │ 1│ 2 │  (b 1)) │ │ 1│ 2 │ (…)     │
+        │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │ (…)     │
+        │ 3│ 2 │  (b 2)) │ │ 3│ 2 │ (…)     │
+        └──┴───┴─────────┘ └──┴───┴─────────┘
+        ");
+
+        let text = b"((a 1)(b 1)) ((a 2)(b 2)) ((a 3)(b 3)) ((a 4)(b 4)) ((a 5)(b 5))";
+        let mut viewer = init_sexp(text, 7, 4, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(2), scroll_viewport_down(1)],
+                vec![collapse_node_and_siblings(None)],
+            ],
+        );
+        // BUG: We're displaying (b 1) but it should be collapsed now!
+        assert_snapshot!(output, @r"
+                           MoveCursorDown(2)     CollapseNodeAndSiblings(None)
+                           ScrollViewportDown(1)
+        ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐    ┌SI┬─L#┬─────────┐
+        │ 0│*1 │ [(a 1)  │ │ 0│ 2 │  (b 1)) │    │ 0│ 2 │  (b 1)) │
+        │ 1│ 2 │  (b 1)) │ │ 1│*2 │ [(a 2)  │    │ 1│*2 │ […)     │
+        │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │  (b 2)) │    │ 2│ 2 │ (…)     │
+        │ 3│ 2 │  (b 2)) │ │ 3│ 2 │ ((a 3)  │    │ 3│ 2 │ (…)     │
+        └──┴───┴─────────┘ └──┴───┴─────────┘    └──┴───┴─────────┘
+        ");
+
+        let text = b"((a 1)(b 1)) ((a 2)(b 2)) ((a 3)(b 3)) ((a 4)(b 4)) ((a 5)(b 5))";
+        let mut viewer = init_sexp(text, 7, 4, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    move_cursor_down(2),
+                    press_left(),
+                    move_cursor_down(1),
+                    press_left(),
+                    scroll_viewport_down(2),
+                ],
+                vec![expand_node_and_siblings(None)],
+            ],
+        );
+        // BUG: (a 2) appears collapsed!
+        assert_snapshot!(output, @r"
+                           MoveCursorDown(2)            ExpandNodeAndSiblings(None)
+                           CollapseOrMoveCursorLeftOrUp
+                           MoveCursorDown(1)
+                           CollapseOrMoveCursorLeftOrUp
+                           ScrollViewportDown(2)
+        ┌SI┬─L#┬─────────┐ ┌SI┬─L#┬─────────┐           ┌SI┬─L#┬─────────┐
+        │ 0│*1 │ [(a 1)  │ │ 0│ 2 │ (…)     │           │ 0│ 2 │ (…)     │
+        │ 1│ 2 │  (b 1)) │ │ 1│*2 │ […)     │           │ 1│ 2 │  (b 2)) │
+        │ 2│ 2 │ ((a 2)  │ │ 2│ 2 │ ((a 4)  │           │ 2│*2 │ [(a 3)  │
+        │ 3│ 2 │  (b 2)) │ │ 3│ 2 │  (b 4)) │           │ 3│ 2 │  (b 3)) │
+        └──┴───┴─────────┘ └──┴───┴─────────┘           └──┴───┴─────────┘
         ");
     }
 
