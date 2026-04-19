@@ -10,7 +10,7 @@ repository = "https://github.com/PaulJuliusMartinez/jless"
 homepage = "https://jless.io"
 documentation = "https://jless.io/user-guide.html"
 edition = "2018"
-rust-version = "1.70"
+rust-version = "1.87"
 
 [features]
 # Eventually [sexp] should be removed from the default.
@@ -40,6 +40,7 @@ ocaml-sexplib = { path = "/Users/paul/rust-sexp-libs/ocaml-sexplib", optional = 
 
 # TODO: MOVE BACK TO dev-dependencies
 bstr = "1"
+wabi_tree = "0.1.2"
 
 [dev-dependencies]
 bstr = "1"

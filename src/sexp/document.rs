@@ -20,6 +20,7 @@ use crate::sexp::renderer::{style_typeset_line, RenderContext, SegmentKind};
 
 use ocaml_sexplib::input::InputRef;
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
+use wabi_tree::OSBTreeMap;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum CollapseState {
@@ -40,7 +41,7 @@ pub struct SexpDocument {
     tokenizer: BasicTapeTokenizer,
     core: DocCore,
     next_top_level_node_index: NodeIndex,
-    starts_of_logical_lines: BTreeMap<NodeIndex, (NodeIndex, usize)>,
+    starts_of_logical_lines: OSBTreeMap<NodeIndex, (NodeIndex, usize)>,
     collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
 }
@@ -969,7 +970,7 @@ impl Document for SexpDocument {
             tokenizer: BasicTapeTokenizer::new(),
             core: DocCore::new(),
             next_top_level_node_index: NodeIndex(0),
-            starts_of_logical_lines: BTreeMap::new(),
+            starts_of_logical_lines: OSBTreeMap::new(),
             collapsible_nodes: BTreeMap::new(),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
@@ -1051,15 +1052,11 @@ impl Document for SexpDocument {
         }
     }
 
-    // TODO: This should return an Option, because it is really not required for the Document
-    // interface, but it is currently used somewhere. This implementation works for that
-    // one usecase though.
     fn line_number(&self, screen_line: &ScreenLine) -> usize {
-        if screen_line.logical_line.start_index == NodeIndex(0) {
-            1
-        } else {
-            2
-        }
+        1 + self
+            .starts_of_logical_lines
+            .rank_of(&screen_line.logical_line.start_index)
+            .expect("to find logical line start in `starts_of_logical_lines`")
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
