@@ -1,7 +1,6 @@
-use std::borrow::Cow;
 use std::default::Default;
 use std::num::NonZeroUsize;
-use std::ops::Range;
+use std::ops::{Index, Range, RangeFrom};
 use std::rc::Rc;
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -80,8 +79,6 @@ impl Attrs {
 /// the text in the actual document, and is used to highlight search matches.
 #[derive(Clone, Debug)]
 pub enum Text {
-    /// A span of spaces
-    Spaces(usize),
     /// A specific range of bytes from the internal representation of the document
     /// (as returned by `Document::raw_bytes_for_searching`).
     SourceRange(Range<usize>),
@@ -91,31 +88,68 @@ pub enum Text {
     Static(&'static str),
 }
 
-const LOTS_OF_SPACES: [u8; 1024] = [b' '; 1024];
+static LOTS_OF_SPACES: &str = unsafe { std::str::from_utf8_unchecked(&[b' '; 1024]) };
 
 impl Text {
+    pub fn spaces(n: usize) -> Self {
+        if n < LOTS_OF_SPACES.len() {
+            Text::Static(&LOTS_OF_SPACES[..n])
+        } else {
+            let s = String::from_utf8(vec![b' '; n]).unwrap();
+            Text::String((Rc::new(s), 0..n))
+        }
+    }
+
+    pub const fn ellipsis() -> Self {
+        Text::Static("…")
+    }
+
     pub fn len(&self) -> usize {
         match self {
-            Text::Spaces(count) => *count,
             Text::SourceRange(range) => range.len(),
             Text::String((_, range)) => range.len(),
             Text::Static(s) => s.len(),
         }
     }
 
-    pub fn bytes<'a>(&'a self, source: &'a [u8]) -> Cow<'a, [u8]> {
+    pub fn as_bytes<'a>(&'a self, source: &'a [u8]) -> &'a [u8] {
         match self {
-            Text::Spaces(count) => {
-                if *count < LOTS_OF_SPACES.len() {
-                    Cow::Borrowed(&LOTS_OF_SPACES[0..*count])
-                } else {
-                    Cow::Owned(vec![b' '; *count])
-                }
-            }
-            Text::SourceRange(range) => Cow::Borrowed(&source[range.clone()]),
-            Text::String((s, range)) => Cow::Borrowed(&s.as_bytes()[range.clone()]),
-            Text::Static(s) => Cow::Borrowed(s.as_bytes()),
+            Text::SourceRange(range) => &source[range.clone()],
+            Text::String((s, range)) => &s.as_bytes()[range.clone()],
+            Text::Static(s) => s.as_bytes(),
         }
+    }
+
+    fn as_str<'a>(&'a self, source: &'a [u8]) -> &'a str {
+        match self {
+            Text::SourceRange(range) => {
+                str::from_utf8(&source[range.clone()]).expect("doc_content should be valid utf8")
+            }
+            Text::String((s, range)) => &s[range.clone()],
+            Text::Static(s) => s,
+        }
+    }
+
+    fn into_sub_range(self, range: Range<usize>) -> Self {
+        fn index_range(range1: Range<usize>, range2: Range<usize>) -> Range<usize> {
+            let start = range1.start + range2.start;
+            let end = usize::min(range1.start + range2.end, range1.end);
+            start..end
+        }
+
+        match self {
+            Text::SourceRange(source_range) => Text::SourceRange(index_range(source_range, range)),
+            Text::String((s, string_range)) => Text::String((s, index_range(string_range, range))),
+            Text::Static(s) => Text::Static(&s[range]),
+        }
+    }
+
+    fn sub_range(&self, range: Range<usize>) -> Self {
+        self.clone().into_sub_range(range)
+    }
+
+    fn sub_range_from(&self, range: RangeFrom<usize>) -> Self {
+        self.sub_range(range.start..(self.len()))
     }
 }
 
@@ -136,6 +170,7 @@ pub struct Compositor<'a, DocRef, Kind> {
     doc_width: NonZeroUsize,
     lines: Vec<Vec<Segment<DocRef, Kind>>>,
     remaining_space_on_current_line: usize,
+    reserved_space: Option<usize>,
 }
 
 impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
@@ -145,6 +180,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
             doc_width,
             lines: vec![vec![]],
             remaining_space_on_current_line: doc_width.get(),
+            reserved_space: None,
         }
     }
 
@@ -170,10 +206,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         }
     }
 
-    fn take_prefix_that_fits_in_available_space(
-        s: &str,
-        mut available_space: usize,
-    ) -> (&str, usize) {
+    fn take_prefix_that_fits_in_available_space(s: &str, available_space: usize) -> (&str, usize) {
         let mut used_bytes = 0;
         let mut used_space = 0;
 
@@ -190,52 +223,18 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
     }
 
     pub fn append_spaces(&mut self, n: usize, kind: Kind, doc_ref: Option<DocRef>) {
-        let mut content_remaining = n;
-
-        while content_remaining > 0 {
-            self.maybe_start_new_line();
-
-            if content_remaining > self.remaining_space_on_current_line {
-                content_remaining -= self.remaining_space_on_current_line;
-
-                self.add_entire_segment_to_current_line(Segment {
-                    content: Text::Spaces(self.remaining_space_on_current_line),
-                    kind,
-                    terminal_width: self.remaining_space_on_current_line,
-                    doc_ref,
-                });
-            } else {
-                self.add_entire_segment_to_current_line(Segment {
-                    content: Text::Spaces(content_remaining),
-                    kind,
-                    terminal_width: content_remaining,
-                    doc_ref,
-                });
-
-                break;
-            }
-        }
+        let spaces = Text::spaces(n);
+        self.append_content(spaces, kind, doc_ref);
     }
 
     pub fn append_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
-        // Handle spaces separately, since it's simpler.
-        if let Text::Spaces(n) = content {
-            self.append_spaces(n, kind, doc_ref);
-            return;
-        };
+        assert!(self.reserved_space.is_none());
 
         let mut processed_bytes = 0;
+        let content_str = content.as_str(self.doc_content);
 
         while processed_bytes < content.len() {
-            let remaining_s = match &content {
-                Text::Spaces(_) => unreachable!(),
-                Text::SourceRange(range) => {
-                    str::from_utf8(&self.doc_content[(range.start + processed_bytes)..range.end])
-                        .expect("doc_content should be valid utf8")
-                }
-                Text::String((s, range)) => &s[(range.start + processed_bytes)..range.end],
-                Text::Static(s) => &s[processed_bytes..],
-            };
+            let remaining_s = &content_str[processed_bytes..];
 
             self.maybe_start_new_line();
 
@@ -253,7 +252,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
                     // There's no way we'll be able to fit the next character in, so we'll
                     // put an ellipsis in instead.
                     self.add_entire_segment_to_current_line(Segment {
-                        content: Text::Static("…"),
+                        content: Text::ellipsis(),
                         kind,
                         terminal_width: 1,
                         doc_ref,
@@ -266,27 +265,10 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
                 }
             }
 
-            let content_portion = match &content {
-                Text::Spaces(_) => unreachable!(),
-                Text::SourceRange(range) => {
-                    let portion_range_start = range.start + processed_bytes;
-                    let portion_range_end = portion_range_start + portion.len();
-                    Text::SourceRange(portion_range_start..portion_range_end)
-                }
-                Text::String((s, range)) => {
-                    let portion_range_start = range.start + processed_bytes;
-                    let portion_range_end = portion_range_start + portion.len();
-                    Text::String((s.clone(), portion_range_start..portion_range_end))
-                }
-                Text::Static(s) => {
-                    let portion_range_start = processed_bytes;
-                    let portion_range_end = portion_range_start + portion.len();
-                    Text::Static(&s[portion_range_start..portion_range_end])
-                }
-            };
+            let portion_range = processed_bytes..(processed_bytes + portion.len());
 
             self.add_entire_segment_to_current_line(Segment {
-                content: content_portion,
+                content: content.sub_range(portion_range),
                 kind,
                 terminal_width: used_width,
                 doc_ref,
@@ -294,6 +276,227 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
 
             processed_bytes += portion.len();
         }
+    }
+
+    // Reservations
+
+    pub fn start_reserving_space(&mut self, space_to_reserve: usize) -> bool {
+        if self.remaining_space_on_current_line >= space_to_reserve {
+            self.reserved_space = Some(space_to_reserve);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn reserve_more_space(&mut self, extra_space: usize) -> bool {
+        let Some(reserved_space) = self.reserved_space else {
+            panic!("not reserving space right now")
+        };
+
+        let unreserved_space = self.remaining_space_on_current_line - reserved_space;
+
+        if unreserved_space < extra_space {
+            return false;
+        } else {
+            self.reserved_space = Some(reserved_space + extra_space);
+            return true;
+        }
+    }
+
+    pub fn give_back_reserved_space(&mut self, space_to_reclaim: usize) {
+        let Some(reserved_space) = self.reserved_space else {
+            panic!("not reserving space right now")
+        };
+
+        assert!(
+            space_to_reclaim <= reserved_space,
+            "tried to give back too much space"
+        );
+
+        self.reserved_space = Some(reserved_space - space_to_reclaim);
+    }
+
+    fn min_space_needed_to_show_str(s: &str) -> usize {
+        let mut displayed_width = 0;
+        let mut displayed_bytes = 0;
+        for grapheme in s.graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+
+            // Keep adding 0-width graphemes even once we've displayed something, to see
+            // if we get to the end.
+            if grapheme_width > 0 && displayed_width > 0 {
+                break;
+            }
+
+            displayed_width += grapheme_width;
+            displayed_bytes += grapheme.len();
+        }
+
+        // If we haven't shown everything, then at a minimum we need an ellipsis at the end.
+        if displayed_bytes < s.len() {
+            displayed_width += 1;
+        }
+
+        displayed_width
+    }
+
+    pub fn min_space_needed_to_show_actual_content(&self, content: &Text) -> usize {
+        Self::min_space_needed_to_show_str(content.as_str(self.doc_content))
+    }
+
+    pub fn min_space_needed_to_show_actual_delimited_content(&self, content: &Text) -> usize {
+        let content_str = content.as_str(&self.doc_content);
+        let inner_range = 1..(content_str.len() - 1);
+
+        2 + Self::min_space_needed_to_show_str(&content_str[inner_range])
+    }
+
+    fn take_prefix_that_fits_in_available_space_with_ellipsis(
+        s: &str,
+        available_space: usize,
+    ) -> (&str, usize) {
+        let available_space_without_ellipsis = available_space.saturating_sub(1);
+
+        let (prefix, used_space) =
+            Self::take_prefix_that_fits_in_available_space(s, available_space_without_ellipsis);
+
+        // If the whole string fit, great.
+        if prefix.len() == s.len() {
+            return (prefix, used_space);
+        }
+
+        // Otherwise, check if the entire remainder fits in the remaining space when we don't
+        // reserve space for the ellipsis.
+        let remainder = &s[prefix.len()..];
+        let actual_remaining_space = available_space - used_space;
+
+        let (extra, extra_space) =
+            Self::take_prefix_that_fits_in_available_space(remainder, actual_remaining_space);
+
+        // If we fit the whole remainder, return the whole original string.
+        if extra.len() == remainder.len() {
+            return (s, used_space + extra_space);
+        }
+
+        // Otherwise, we'll have to put the ellipsis in, so return the first prefix.
+        (prefix, used_space)
+    }
+
+    pub fn try_append_content(
+        &mut self,
+        content: Text,
+        kind: Kind,
+        doc_ref: Option<DocRef>,
+        reserved_space_to_reclaim: usize,
+    ) -> bool {
+        let Some(reserved_space) = self.reserved_space else {
+            panic!("not reserving space right now")
+        };
+
+        let remaining_free_space = self.remaining_space_on_current_line - reserved_space;
+        let free_space_for_content = remaining_free_space + reserved_space_to_reclaim;
+
+        if self.min_space_needed_to_show_actual_content(&content) > free_space_for_content {
+            return false;
+        }
+
+        let s = content.as_str(self.doc_content);
+        let original_len = s.len();
+
+        let (prefix, used_space) =
+            Self::take_prefix_that_fits_in_available_space_with_ellipsis(s, free_space_for_content);
+
+        let prefix_len = prefix.len();
+        let prefix_content = content.into_sub_range(0..prefix_len);
+
+        self.add_entire_segment_to_current_line(Segment {
+            content: prefix_content,
+            kind,
+            terminal_width: used_space,
+            doc_ref,
+        });
+
+        // We only fit part of the string, so now we have to add the ellipsis too.
+        if prefix_len != original_len {
+            self.add_entire_segment_to_current_line(Segment {
+                content: Text::ellipsis(),
+                kind,
+                terminal_width: 1,
+                doc_ref,
+            });
+        }
+
+        self.reserved_space = Some(reserved_space - reserved_space_to_reclaim);
+
+        true
+    }
+
+    pub fn try_append_delimited_content(
+        &mut self,
+        content: Text,
+        kind: Kind,
+        doc_ref: Option<DocRef>,
+        reserved_space_to_reclaim: usize,
+    ) -> bool {
+        let Some(reserved_space) = self.reserved_space else {
+            panic!("not reserving space right now")
+        };
+
+        let remaining_free_space = self.remaining_space_on_current_line - reserved_space;
+        let free_space_for_content = remaining_free_space + reserved_space_to_reclaim;
+
+        if self.min_space_needed_to_show_actual_delimited_content(&content) > free_space_for_content
+        {
+            return false;
+        }
+
+        let len = content.len();
+        let open_delimiter = content.sub_range(0..1);
+        let close_delimiter = content.sub_range_from((len - 1)..);
+        let middle = content.into_sub_range(1..(len - 1));
+
+        self.add_entire_segment_to_current_line(Segment {
+            content: open_delimiter,
+            kind,
+            terminal_width: 1,
+            doc_ref,
+        });
+
+        // Lie temporarily, so we don't use up too much space.
+        self.remaining_space_on_current_line -= 1;
+
+        if !self.try_append_content(middle, kind, doc_ref, reserved_space_to_reclaim) {
+            panic!("Failed to append content for middle of delimiter");
+        }
+
+        // Claw that space back, and use it for the close delimiter.
+        self.remaining_space_on_current_line += 1;
+        self.add_entire_segment_to_current_line(Segment {
+            content: close_delimiter,
+            kind,
+            terminal_width: 1,
+            doc_ref,
+        });
+
+        true
+    }
+
+    pub fn append_reserved_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
+        let Some(reserved_space) = self.reserved_space else {
+            panic!("not reserving space right now")
+        };
+
+        let content_width = UnicodeWidthStr::width(content.as_str(self.doc_content));
+
+        self.add_entire_segment_to_current_line(Segment {
+            content,
+            kind,
+            terminal_width: content_width,
+            doc_ref,
+        });
+
+        self.reserved_space = Some(reserved_space - content_width);
     }
 }
 
@@ -373,7 +576,7 @@ impl PreHighlightingStyledSegment {
         } = self;
 
         match &content {
-            Text::Spaces(_) | Text::String(_) | Text::Static(_) => {
+            Text::String(_) | Text::Static(_) => {
                 vec![StyledSegment { attrs, content }]
             }
             Text::SourceRange(range) => {
@@ -512,11 +715,10 @@ pub mod test_helpers {
                 Some(style_name) => style_name.clone(),
             };
 
-            let segment_text = format!("{}", segment.content.bytes(content).as_bstr());
+            let segment_text = format!("{}", segment.content.as_bytes(content).as_bstr());
             let segment_width = UnicodeWidthStr::width(segment_text.as_str());
             let segment_key = char::from_digit(i as u32, 36).unwrap();
             let segment_kind = match segment.content {
-                Text::Spaces(_) => "spaces".to_string(),
                 Text::SourceRange(range) => format!("range({range:?})"),
                 Text::String((_, range)) => format!("string({range:?})"),
                 Text::Static(_) => "static".to_string(),
@@ -581,7 +783,7 @@ pub mod test_helpers {
                     PreHighlightingStyledSegment {
                         attrs: normal_token.focused,
                         search_match_attrs: default,
-                        content: Text::Spaces(5),
+                        content: Text::spaces(5),
                     },
                     PreHighlightingStyledSegment {
                         attrs: color_token.normal,
@@ -591,7 +793,7 @@ pub mod test_helpers {
                     PreHighlightingStyledSegment {
                         attrs: normal_token.focused,
                         search_match_attrs: default,
-                        content: Text::Spaces(1),
+                        content: Text::spaces(1),
                     },
                     PreHighlightingStyledSegment {
                         attrs: color_token.focused,
@@ -607,9 +809,9 @@ pub mod test_helpers {
             text: hello,     world 🦀
                   0.....1....2....34.
             0: default                   : range(0..6)
-            1: default (focused)         : spaces
+            1: default (focused)         : static
             2: color                     : range(6..11)
-            3: default (focused)         : spaces
+            3: default (focused)         : static
             4: color (focused)           : string(0..4)
             ");
         }

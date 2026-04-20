@@ -84,7 +84,7 @@ pub enum DocumentToken {
 }
 
 impl DocumentToken {
-    fn is_data(&self) -> bool {
+    pub fn is_data(&self) -> bool {
         match self {
             DocumentToken::StartOfList(_) | DocumentToken::Atom(_) | DocumentToken::Unit { .. } => {
                 true
@@ -102,7 +102,7 @@ impl DocumentToken {
         }
     }
 
-    fn list_metadata(&self) -> &ListMetadata {
+    pub fn list_metadata(&self) -> &ListMetadata {
         match self {
             DocumentToken::StartOfList(list_metadata) => list_metadata,
             _ => panic!(
@@ -167,12 +167,18 @@ pub struct ListMetadata {
 }
 
 impl ListMetadata {
+    // Someday: Do we need these functions vs. just marking these fields public?
+
     pub fn last_child_index(&self) -> Option<NodeIndex> {
         self.last_child_index
     }
 
     pub fn end_index(&self) -> Option<NodeIndex> {
         self.list_end_index
+    }
+
+    pub fn data_length(&self) -> usize {
+        self.data_length
     }
 }
 

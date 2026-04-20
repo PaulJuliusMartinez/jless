@@ -11,7 +11,7 @@ use crate::search::InvertedPairedDelimeters;
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, EndOfListMetadata,
-    ErrorMetadata, ListKind, ListMetadata, NodeIndex,
+    ListKind, ListMetadata, NodeIndex,
 };
 use crate::sexp::layout;
 use crate::sexp::layout::LogicalLine;
@@ -955,7 +955,7 @@ impl SexpDocument {
     }
 
     fn last_typeset_screen_line_for_logical_line(&self, logical_line: LogicalLine) -> ScreenLine {
-        let mut screen_line = self.first_typeset_screen_line_for_logical_line(logical_line);
+        let screen_line = self.first_typeset_screen_line_for_logical_line(logical_line);
         screen_line.into_last_typeset_line()
     }
 }
@@ -1329,11 +1329,6 @@ impl Document for SexpDocument {
 
         for segment in screen_line.typeset_line().iter() {
             match &segment.content {
-                Text::Spaces(n) => {
-                    for _ in 0..*n {
-                        output.push(' ');
-                    }
-                }
                 Text::SourceRange(range) => {
                     let content = std::str::from_utf8(&self.core.pretty_printed[range.clone()])
                         .unwrap_or("INVALID UTF8");

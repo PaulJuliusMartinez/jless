@@ -25,6 +25,7 @@ pub enum SegmentKind {
     TimeAtom,
     Comment,
     Error,
+    Preview,
 }
 
 impl SegmentKind {
@@ -55,8 +56,17 @@ impl SegmentKind {
             SegmentKind::TimeAtom => color_scheme.time_atom,
             SegmentKind::Comment => color_scheme.comment,
             SegmentKind::Error => color_scheme.error,
+            SegmentKind::Preview => color_scheme.comment,
         }
     }
+}
+
+struct Typesetter<'a> {
+    logical_line: &'a LogicalLine,
+    doc_content: &'a [u8],
+    core: &'a DocCore,
+    collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
+    compositor: Compositor<'a, NodeIndex, SegmentKind>,
 }
 
 pub fn typeset_logical_line(
@@ -65,85 +75,158 @@ pub fn typeset_logical_line(
     core: &DocCore,
     collapsible_nodes: &BTreeMap<NodeIndex, CollapseState>,
 ) -> Vec<Vec<Segment<NodeIndex, SegmentKind>>> {
-    let mut lines = Compositor::new(core.pretty_printed.data(), doc_width);
+    let doc_content = core.pretty_printed.data();
+    let compositor = Compositor::new(doc_content, doc_width);
 
-    if logical_line.indentation > 0 {
-        lines.append_spaces(logical_line.indentation, SegmentKind::Whitespace, None);
-    }
+    let mut typesetter = Typesetter {
+        logical_line,
+        doc_content,
+        core,
+        collapsible_nodes,
+        compositor,
+    };
 
-    let mut prev_node_end_index = None;
-    let mut paren_after_collapsed_section = None;
+    typesetter.typeset();
 
-    for node_index in logical_line.node_indexes() {
-        let node = core.node(node_index);
+    typesetter.compositor.finish()
+}
 
-        if let Some(end_index) = prev_node_end_index {
-            let whitespace_range = end_index..(node.data_range.start);
-            if whitespace_range.len() > 0 {
-                lines.append_content(
-                    Text::SourceRange(whitespace_range),
-                    SegmentKind::Whitespace,
-                    None,
-                );
-            }
+impl<'a> Typesetter<'a> {
+    fn typeset(&mut self) {
+        if self.logical_line.indentation > 0 {
+            self.compositor.append_spaces(
+                self.logical_line.indentation,
+                SegmentKind::Whitespace,
+                None,
+            );
         }
 
-        prev_node_end_index = Some(node.data_range.end);
+        let mut prev_node_end_index = None;
+        let mut collapsed_start_and_end = None;
 
-        let segment_kind;
-        let mut content = Text::SourceRange(node.data_range.clone());
-        let mut remainder_is_collapsed = false;
+        for node_index in self.logical_line.node_indexes() {
+            let node = self.core.node(node_index);
 
-        match &node.token {
-            DocumentToken::StartOfList(list_metadata) => {
-                segment_kind = SegmentKind::Parens;
-                // Check if commented out
-                if let Some(CollapseState::Collapsed) = collapsible_nodes.get(&node_index) {
-                    remainder_is_collapsed = true;
-                    paren_after_collapsed_section = list_metadata.end_index();
+            if let Some(end_index) = prev_node_end_index {
+                let whitespace_range = end_index..(node.data_range.start);
+                if whitespace_range.len() > 0 {
+                    self.compositor.append_content(
+                        Text::SourceRange(whitespace_range),
+                        SegmentKind::Whitespace,
+                        None,
+                    );
                 }
             }
-            DocumentToken::EndOfList(end_of_list_metadata) => {
-                segment_kind = SegmentKind::Parens;
+
+            prev_node_end_index = Some(node.data_range.end);
+
+            let segment_kind;
+            let mut content = Text::SourceRange(node.data_range.clone());
+
+            match &node.token {
+                DocumentToken::StartOfList(list_metadata) => {
+                    // Check if commented out
+                    if let Some(CollapseState::Collapsed) = self.collapsible_nodes.get(&node_index)
+                    {
+                        collapsed_start_and_end = Some((node_index, list_metadata.end_index()));
+                        break;
+                    }
+
+                    segment_kind = SegmentKind::Parens;
+                }
+                DocumentToken::EndOfList(end_of_list_metadata) => {
+                    segment_kind = SegmentKind::Parens;
+                }
+                DocumentToken::Atom(atom_metadata) => {
+                    segment_kind = SegmentKind::for_atom_kind(atom_metadata.atom_kind);
+                    // Check if commented out
+                }
+                DocumentToken::Unit { commented_out: _ } => {
+                    segment_kind = SegmentKind::Parens;
+                    // Check if commented out
+                }
+                DocumentToken::LineComment | DocumentToken::BlockComment => {
+                    segment_kind = SegmentKind::Comment;
+                }
+                DocumentToken::Error(error_metadata) => {
+                    segment_kind = SegmentKind::Error;
+                    content = Text::String((
+                        Rc::new(error_metadata.message.clone()),
+                        0..error_metadata.message.len(),
+                    ));
+                }
             }
-            DocumentToken::Atom(atom_metadata) => {
-                segment_kind = SegmentKind::for_atom_kind(atom_metadata.atom_kind);
-                // Check if commented out
-            }
-            DocumentToken::Unit { commented_out: _ } => {
-                segment_kind = SegmentKind::Parens;
-                // Check if commented out
-            }
-            DocumentToken::LineComment | DocumentToken::BlockComment => {
-                segment_kind = SegmentKind::Comment;
-            }
-            DocumentToken::Error(error_metadata) => {
-                segment_kind = SegmentKind::Error;
-                content = Text::String((
-                    Rc::new(error_metadata.message.clone()),
-                    0..error_metadata.message.len(),
-                ));
-            }
+
+            self.compositor
+                .append_content(content, segment_kind, Some(node_index));
         }
 
-        lines.append_content(content, segment_kind, Some(node_index));
-
-        if remainder_is_collapsed {
-            break;
+        if let Some((start_index, Some(end_index))) = collapsed_start_and_end {
+            self.typeset_collapsed_preview(start_index, end_index);
         }
     }
 
-    // If we had a collapsed section, we'll loop over all the coalesced closing parens.
-    if let Some(mut closing_paren) = paren_after_collapsed_section {
-        lines.append_content(Text::Static("…"), SegmentKind::Comment, None);
+    fn typeset_collapsed_preview(&mut self, open_index: NodeIndex, close_index: NodeIndex) {
+        let needed_space = 1 + self.count_trailing_paren(close_index + 1);
 
-        while closing_paren <= core.last_node_index_of_part_of_completed_sexp.unwrap() {
-            if !matches!(core.token(closing_paren), DocumentToken::EndOfList(_)) {
+        if self.compositor.start_reserving_space(needed_space) {
+            if !self.try_typeset_list_preview(open_index, close_index) {
+                self.append_reserved_ellipsis();
+            }
+
+            self.add_trailing_paren_after_collapsed_preview(close_index + 1);
+        } else {
+            // If we can't reserve enough space for a preview, we'll just print an ellipsis and then
+            // the closing parens and get on with it.
+
+            self.compositor
+                .append_content(Text::ellipsis(), SegmentKind::Preview, None);
+
+            let mut closing_paren = close_index + 1;
+            while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
+                if !matches!(self.core.token(closing_paren), DocumentToken::EndOfList(_)) {
+                    break;
+                }
+
+                self.compositor.append_content(
+                    Text::SourceRange(self.core.node(closing_paren).data_range.clone()),
+                    SegmentKind::Parens,
+                    Some(closing_paren),
+                );
+
+                closing_paren = closing_paren + 1;
+            }
+        }
+    }
+
+    fn append_reserved_ellipsis(&mut self) {
+        self.compositor
+            .append_reserved_content(Text::ellipsis(), SegmentKind::Preview, None);
+    }
+
+    fn count_trailing_paren(&self, mut closing_paren: NodeIndex) -> usize {
+        let mut count = 0;
+
+        while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
+            if !matches!(self.core.token(closing_paren), DocumentToken::EndOfList(_)) {
                 break;
             }
 
-            lines.append_content(
-                Text::SourceRange(core.node(closing_paren).data_range.clone()),
+            count += 1;
+            closing_paren = closing_paren + 1;
+        }
+
+        count
+    }
+
+    fn add_trailing_paren_after_collapsed_preview(&mut self, mut closing_paren: NodeIndex) {
+        while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
+            if !matches!(self.core.token(closing_paren), DocumentToken::EndOfList(_)) {
+                break;
+            }
+
+            self.compositor.append_reserved_content(
+                Text::SourceRange(self.core.node(closing_paren).data_range.clone()),
                 SegmentKind::Parens,
                 Some(closing_paren),
             );
@@ -152,7 +235,269 @@ pub fn typeset_logical_line(
         }
     }
 
-    lines.finish()
+    fn try_typeset_list_preview(
+        &mut self,
+        list_index: NodeIndex,
+        closing_paren: NodeIndex,
+    ) -> bool {
+        let list_metadata = self.core.token(list_index).list_metadata();
+        let num_elems = list_metadata.data_length();
+
+        let extra_needed_space = if num_elems == 0 { 1 } else { 2 };
+        if !self.compositor.reserve_more_space(extra_needed_space) {
+            return false;
+        }
+
+        // Write opening paren
+        self.append_reserved_node_as_preview(list_index);
+
+        let mut num_elems_written = 0;
+        let mut next_elem = Some(list_index + 1);
+
+        while let Some(elem_index) = next_elem {
+            let node = self.core.node(elem_index);
+
+            // Skip comments and errors.
+            if !node.token.is_data() {
+                next_elem = node.next_sibling;
+                continue;
+            }
+
+            // … has been reserved. If we're not the last elem, we need to reserve
+            // two spaces for the elem and a space separator "… "
+            let is_last_elem = num_elems_written + 1 == num_elems;
+
+            if !is_last_elem && !self.compositor.reserve_more_space(2) {
+                break;
+            }
+
+            if !self.try_typeset_elem_preview(elem_index) {
+                // We couldn't write anything; reclaim the two spaces.
+                self.compositor.give_back_reserved_space(2);
+                break;
+            }
+
+            if !is_last_elem {
+                // Write the space between elems. We're not at the last elem, so
+                // next_sibling must be Some.
+                self.write_space_before_elem_or_static_space(node.next_sibling.unwrap());
+            }
+
+            num_elems_written += 1;
+            next_elem = node.next_sibling;
+        }
+
+        if num_elems_written < num_elems {
+            self.append_reserved_ellipsis();
+        }
+
+        // Write closing paren
+        self.append_reserved_node_as_preview(closing_paren);
+
+        true
+    }
+
+    fn append_reserved_node_as_preview(&mut self, index: NodeIndex) {
+        self.compositor.append_reserved_content(
+            Text::SourceRange(self.core.node(index).data_range.clone()),
+            SegmentKind::Preview,
+            Some(index),
+        )
+    }
+
+    fn try_typeset_elem_preview(&mut self, index: NodeIndex) -> bool {
+        let node = self.core.node(index);
+        match &node.token {
+            DocumentToken::Atom(_) => {
+                let start = node.data_range.start;
+                let content = Text::SourceRange(node.data_range.clone());
+
+                if self.doc_content[start] == b'"' {
+                    self.compositor.try_append_delimited_content(
+                        content,
+                        SegmentKind::Preview,
+                        Some(index),
+                        1,
+                    )
+                } else {
+                    self.compositor.try_append_content(
+                        content,
+                        SegmentKind::Preview,
+                        Some(index),
+                        1,
+                    )
+                }
+            }
+            DocumentToken::StartOfList(list_metadata) => {
+                match list_metadata.list_kind {
+                    ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
+                        self.try_typeset_record_field_or_variant_preview(index)
+                    }
+                    ListKind::Record | ListKind::Plain => {
+                        let extra_to_reserve = if list_metadata.data_length() == 0 {
+                            1
+                        } else {
+                            2
+                        };
+
+                        if !self.compositor.reserve_more_space(extra_to_reserve) {
+                            return false;
+                        }
+
+                        self.append_reserved_node_as_preview(index);
+                        if list_metadata.data_length() > 0 {
+                            self.append_reserved_ellipsis();
+                        }
+                        self.append_reserved_node_as_preview(list_metadata.end_index().unwrap());
+
+                        true
+                    }
+                    ListKind::Singleton => {
+                        if !self.compositor.reserve_more_space(2) {
+                            return false;
+                        }
+
+                        self.append_reserved_node_as_preview(index);
+
+                        // Try showing what's inside.
+                        if !self.try_typeset_elem_preview(index + 1) {
+                            self.append_reserved_ellipsis();
+                        }
+
+                        self.append_reserved_node_as_preview(list_metadata.end_index().unwrap());
+
+                        true
+                    }
+                    ListKind::DateTime => {
+                        // Typeset the DateTime as a normal list so we'll put previews of both
+                        // atoms.
+                        self.try_typeset_list_preview(index, list_metadata.end_index().unwrap())
+                    }
+                }
+            }
+            DocumentToken::Unit { commented_out: _ } => {
+                // TODO: Handle commented_out
+
+                if !self.compositor.reserve_more_space(1) {
+                    return false;
+                }
+
+                self.append_reserved_node_as_preview(index);
+
+                true
+            }
+            DocumentToken::EndOfList(_)
+            | DocumentToken::LineComment
+            | DocumentToken::BlockComment
+            | DocumentToken::Error(_) => {
+                panic!(
+                    "Shouldn't be trying to typeset preview of a end of list, comment, or error"
+                );
+            }
+        }
+    }
+
+    // Record fields and variants are handled similarly in that we want to make sure we can
+    // show _something_ from the first atom (field name or constructor), and otherwise we
+    // won't show anything at all.
+    fn try_typeset_record_field_or_variant_preview(&mut self, index: NodeIndex) -> bool {
+        let (atom_node, second_elem_index) = {
+            invariants::record_keys_are_the_first_child_of_record_fields();
+            invariants::constructors_are_the_first_child_of_variants();
+            (self.core.node(index + 1), index + 2)
+        };
+
+        let atom_content = Text::SourceRange(atom_node.data_range.clone());
+        let is_delimited = self.doc_content[atom_node.data_range.start] == b'"';
+
+        let space_needed_for_first_atom = if is_delimited {
+            self.compositor
+                .min_space_needed_to_show_actual_delimited_content(&atom_content)
+        } else {
+            self.compositor
+                .min_space_needed_to_show_actual_content(&atom_content)
+        };
+
+        // We have space reserved for "…", but we only want to proceed if we can show "(X _)",
+        // where X is whatever's needed by the first atom.
+        if !self
+            .compositor
+            .reserve_more_space(space_needed_for_first_atom + 3)
+        {
+            return false;
+        }
+
+        // Opening paren
+        self.append_reserved_node_as_preview(index);
+
+        let successfully_wrote_first_atom = if is_delimited {
+            self.compositor.try_append_delimited_content(
+                atom_content,
+                SegmentKind::Preview,
+                Some(index),
+                space_needed_for_first_atom,
+            )
+        } else {
+            self.compositor.try_append_content(
+                atom_content,
+                SegmentKind::Preview,
+                Some(index),
+                space_needed_for_first_atom,
+            )
+        };
+
+        // Very unlikely, but could happen if there are two columns left at the end of
+        // the line, and all the remaining space is reserved, and the atom starts with
+        // a wide character. The opening paren will take the first column, but then the
+        // atom can't get split across the lines.
+        if !successfully_wrote_first_atom {
+            self.compositor
+                .give_back_reserved_space(space_needed_for_first_atom.saturating_sub(1));
+            self.append_reserved_ellipsis();
+        }
+
+        let mut next_elem = second_elem_index;
+        while !self.core.token(next_elem).is_data() {
+            next_elem = self
+                .core
+                .node(next_elem)
+                .next_sibling
+                .expect("RecordField or Variant must have additional data");
+        }
+
+        self.write_space_before_elem_or_static_space(next_elem);
+
+        if matches!(
+            self.core.token(index).list_kind(),
+            Some(ListKind::RecordField)
+        ) {
+            if !self.try_typeset_elem_preview(next_elem) {
+                self.append_reserved_ellipsis();
+            }
+        } else {
+            // Don't show nested variant contents; just show an ellipsis.
+            self.append_reserved_ellipsis();
+        }
+
+        // Closing paren
+        self.append_reserved_node_as_preview(self.core.token(index).list_end_index().unwrap());
+
+        true
+    }
+
+    fn write_space_before_elem_or_static_space(&mut self, index: NodeIndex) {
+        let node_start = self.core.node(index).data_range.start;
+        let space_before = node_start - 1;
+
+        let space_content = if self.doc_content[space_before] == b' ' {
+            Text::SourceRange(space_before..node_start)
+        } else {
+            Text::Static(" ")
+        };
+
+        self.compositor
+            .append_reserved_content(space_content, SegmentKind::Preview, None);
+    }
 }
 
 pub struct RenderContext<'a> {
@@ -350,7 +695,7 @@ mod tests {
         assert_snapshot!(render_doc_line(&doc, 1, NodeIndex(0)), @r"
         text:  (bool_fie
               012.......
-        0: whitespace                : spaces
+        0: whitespace                : static
         1: parens                    : range(17..18)
         2: record_key                : range(18..26)
 

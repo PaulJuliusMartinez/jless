@@ -389,7 +389,7 @@ impl<D: Document> App<D> {
                         let _ = terminal.set_dimmed(attrs.dimmed);
                         let _ = terminal.set_inverted(attrs.inverted);
 
-                        let bytes = content.bytes(doc_content);
+                        let bytes = content.as_bytes(doc_content);
                         let _ = match std::str::from_utf8(&*bytes) {
                             Ok(s) => write!(terminal, "{s}"),
                             Err(_) => write!(terminal, "INVALID SEGMENT"),

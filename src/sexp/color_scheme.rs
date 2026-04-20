@@ -30,6 +30,7 @@ impl Default for ColorScheme {
             dimmed: true,
             ..default
         };
+        let dimmed_inverted = Attrs::from_fg(Color::Ansi(AnsiColor::BrightBlack)).invert();
         let search_match = Attrs::from_fg(Color::Ansi(AnsiColor::Yellow)).invert();
 
         fn inverted_for_focus_with_default_search_match(attrs: Attrs) -> TokenColorScheme {
@@ -93,7 +94,7 @@ impl Default for ColorScheme {
             comment: TokenColorScheme {
                 normal: dimmed,
                 focused: default,
-                search_match,
+                search_match: dimmed_inverted,
                 focused_search_match: inverted,
             },
             error: TokenColorScheme {
