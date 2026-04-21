@@ -1,6 +1,6 @@
 use std::default::Default;
 use std::num::NonZeroUsize;
-use std::ops::{Index, Range, RangeFrom};
+use std::ops::{Range, RangeFrom};
 use std::rc::Rc;
 
 use unicode_segmentation::UnicodeSegmentation;
@@ -206,7 +206,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         }
     }
 
-    fn take_prefix_that_fits_in_available_space(s: &str, available_space: usize) -> (&str, usize) {
+    fn str_prefix_that_fits_in_available_space(s: &str, available_space: usize) -> (&str, usize) {
         let mut used_bytes = 0;
         let mut used_space = 0;
 
@@ -228,7 +228,10 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
     }
 
     pub fn append_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
-        assert!(self.reserved_space.is_none());
+        assert!(
+            self.reserved_space.is_none(),
+            "should not call after reserving space"
+        );
 
         let mut processed_bytes = 0;
         let content_str = content.as_str(self.doc_content);
@@ -238,7 +241,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
 
             self.maybe_start_new_line();
 
-            let (portion, used_width) = Self::take_prefix_that_fits_in_available_space(
+            let (portion, used_width) = Self::str_prefix_that_fits_in_available_space(
                 remaining_s,
                 self.remaining_space_on_current_line,
             );
@@ -278,9 +281,9 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         }
     }
 
-    // Reservations
-
     pub fn start_reserving_space(&mut self, space_to_reserve: usize) -> bool {
+        assert!(self.reserved_space.is_none(), "already reserved space");
+
         if self.remaining_space_on_current_line >= space_to_reserve {
             self.reserved_space = Some(space_to_reserve);
             true
@@ -290,10 +293,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
     }
 
     pub fn reserve_more_space(&mut self, extra_space: usize) -> bool {
-        let Some(reserved_space) = self.reserved_space else {
-            panic!("not reserving space right now")
-        };
-
+        let reserved_space = self.reserved_space.expect("should have reserved space");
         let unreserved_space = self.remaining_space_on_current_line - reserved_space;
 
         if unreserved_space < extra_space {
@@ -305,13 +305,11 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
     }
 
     pub fn give_back_reserved_space(&mut self, space_to_reclaim: usize) {
-        let Some(reserved_space) = self.reserved_space else {
-            panic!("not reserving space right now")
-        };
+        let reserved_space = self.reserved_space.expect("should have reserved space");
 
         assert!(
             space_to_reclaim <= reserved_space,
-            "tried to give back too much space"
+            "gave back too much space"
         );
 
         self.reserved_space = Some(reserved_space - space_to_reclaim);
@@ -320,6 +318,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
     fn min_space_needed_to_show_str(s: &str) -> usize {
         let mut displayed_width = 0;
         let mut displayed_bytes = 0;
+
         for grapheme in s.graphemes(true) {
             let grapheme_width = UnicodeWidthStr::width(grapheme);
 
@@ -341,15 +340,19 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         displayed_width
     }
 
-    pub fn min_space_needed_to_show_actual_content(&self, content: &Text) -> usize {
-        Self::min_space_needed_to_show_str(content.as_str(self.doc_content))
-    }
+    pub fn min_space_needed_to_show_actual_content(
+        &self,
+        content: &Text,
+        delimited: bool,
+    ) -> usize {
+        if delimited {
+            let content_str = content.as_str(&self.doc_content);
+            let inner_range = 1..(content_str.len() - 1);
 
-    pub fn min_space_needed_to_show_actual_delimited_content(&self, content: &Text) -> usize {
-        let content_str = content.as_str(&self.doc_content);
-        let inner_range = 1..(content_str.len() - 1);
-
-        2 + Self::min_space_needed_to_show_str(&content_str[inner_range])
+            2 + Self::min_space_needed_to_show_str(&content_str[inner_range])
+        } else {
+            Self::min_space_needed_to_show_str(content.as_str(self.doc_content))
+        }
     }
 
     fn take_prefix_that_fits_in_available_space_with_ellipsis(
@@ -359,7 +362,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         let available_space_without_ellipsis = available_space.saturating_sub(1);
 
         let (prefix, used_space) =
-            Self::take_prefix_that_fits_in_available_space(s, available_space_without_ellipsis);
+            Self::str_prefix_that_fits_in_available_space(s, available_space_without_ellipsis);
 
         // If the whole string fit, great.
         if prefix.len() == s.len() {
@@ -372,7 +375,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         let actual_remaining_space = available_space - used_space;
 
         let (extra, extra_space) =
-            Self::take_prefix_that_fits_in_available_space(remainder, actual_remaining_space);
+            Self::str_prefix_that_fits_in_available_space(remainder, actual_remaining_space);
 
         // If we fit the whole remainder, return the whole original string.
         if extra.len() == remainder.len() {
@@ -386,26 +389,46 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
     pub fn try_append_content(
         &mut self,
         content: Text,
+        delimited: bool,
         kind: Kind,
         doc_ref: Option<DocRef>,
         reserved_space_to_reclaim: usize,
     ) -> bool {
-        let Some(reserved_space) = self.reserved_space else {
-            panic!("not reserving space right now")
-        };
-
+        let reserved_space = self.reserved_space.expect("should have reserved space");
         let remaining_free_space = self.remaining_space_on_current_line - reserved_space;
         let free_space_for_content = remaining_free_space + reserved_space_to_reclaim;
 
-        if self.min_space_needed_to_show_actual_content(&content) > free_space_for_content {
+        if self.min_space_needed_to_show_actual_content(&content, delimited)
+            > free_space_for_content
+        {
             return false;
         }
 
-        let s = content.as_str(self.doc_content);
-        let original_len = s.len();
+        let (open_delimiter, content, close_delimiter, space_taken_by_delimiters) = if delimited {
+            let len = content.len();
+            let open_delimiter = content.sub_range(0..1);
+            let close_delimiter = content.sub_range_from((len - 1)..);
+            let content = content.into_sub_range(1..(len - 1));
+            (Some(open_delimiter), content, Some(close_delimiter), 2)
+        } else {
+            (None, content, None, 0)
+        };
 
-        let (prefix, used_space) =
-            Self::take_prefix_that_fits_in_available_space_with_ellipsis(s, free_space_for_content);
+        if let Some(open_delimiter) = open_delimiter {
+            self.add_entire_segment_to_current_line(Segment {
+                content: open_delimiter,
+                kind,
+                terminal_width: 1,
+                doc_ref,
+            });
+        }
+
+        let content_len = content.len();
+
+        let (prefix, used_space) = Self::take_prefix_that_fits_in_available_space_with_ellipsis(
+            content.as_str(self.doc_content),
+            free_space_for_content - space_taken_by_delimiters,
+        );
 
         let prefix_len = prefix.len();
         let prefix_content = content.into_sub_range(0..prefix_len);
@@ -418,9 +441,18 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         });
 
         // We only fit part of the string, so now we have to add the ellipsis too.
-        if prefix_len != original_len {
+        if prefix_len != content_len {
             self.add_entire_segment_to_current_line(Segment {
                 content: Text::ellipsis(),
+                kind,
+                terminal_width: 1,
+                doc_ref,
+            });
+        }
+
+        if let Some(close_delimiter) = close_delimiter {
+            self.add_entire_segment_to_current_line(Segment {
+                content: close_delimiter,
                 kind,
                 terminal_width: 1,
                 doc_ref,
@@ -432,60 +464,8 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         true
     }
 
-    pub fn try_append_delimited_content(
-        &mut self,
-        content: Text,
-        kind: Kind,
-        doc_ref: Option<DocRef>,
-        reserved_space_to_reclaim: usize,
-    ) -> bool {
-        let Some(reserved_space) = self.reserved_space else {
-            panic!("not reserving space right now")
-        };
-
-        let remaining_free_space = self.remaining_space_on_current_line - reserved_space;
-        let free_space_for_content = remaining_free_space + reserved_space_to_reclaim;
-
-        if self.min_space_needed_to_show_actual_delimited_content(&content) > free_space_for_content
-        {
-            return false;
-        }
-
-        let len = content.len();
-        let open_delimiter = content.sub_range(0..1);
-        let close_delimiter = content.sub_range_from((len - 1)..);
-        let middle = content.into_sub_range(1..(len - 1));
-
-        self.add_entire_segment_to_current_line(Segment {
-            content: open_delimiter,
-            kind,
-            terminal_width: 1,
-            doc_ref,
-        });
-
-        // Lie temporarily, so we don't use up too much space.
-        self.remaining_space_on_current_line -= 1;
-
-        if !self.try_append_content(middle, kind, doc_ref, reserved_space_to_reclaim) {
-            panic!("Failed to append content for middle of delimiter");
-        }
-
-        // Claw that space back, and use it for the close delimiter.
-        self.remaining_space_on_current_line += 1;
-        self.add_entire_segment_to_current_line(Segment {
-            content: close_delimiter,
-            kind,
-            terminal_width: 1,
-            doc_ref,
-        });
-
-        true
-    }
-
     pub fn append_reserved_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
-        let Some(reserved_space) = self.reserved_space else {
-            panic!("not reserving space right now")
-        };
+        let reserved_space = self.reserved_space.expect("should have reserved space");
 
         let content_width = UnicodeWidthStr::width(content.as_str(self.doc_content));
 
@@ -673,6 +653,47 @@ pub mod test_helpers {
     use bstr::ByteSlice;
     use unicode_width::UnicodeWidthStr;
 
+    fn print_composited_line<DR, K>(line: &Vec<Segment<DR, K>>, content: &[u8]) -> String {
+        let mut s = String::new();
+        for segment in line.iter() {
+            s.push_str(segment.content.as_str(content));
+        }
+        s
+    }
+
+    pub fn print_composited_lines<DR, K>(
+        lines: &Vec<Vec<Segment<DR, K>>>,
+        doc_width: usize,
+        content: &[u8],
+    ) -> String {
+        let mut s = String::new();
+        for line in lines.iter() {
+            let line = print_composited_line(line, content);
+            let line_width = UnicodeWidthStr::width(line.as_str());
+            let line = line.replace("\u{200b}", "<ZWSP>");
+            let num_spaces = doc_width.saturating_sub(line_width);
+            let _ = writeln!(s, "|{line}{:num_spaces$}|", "");
+        }
+        s
+    }
+
+    impl<'a, DR, K> Compositor<'a, DR, K> {
+        pub fn print_composited_lines(&self) -> String {
+            print_composited_lines(&self.lines, self.doc_width.get(), self.doc_content)
+        }
+
+        pub fn availability(&self) -> String {
+            format!(
+                "remaining: {}, reserved: {}",
+                self.remaining_space_on_current_line,
+                self.reserved_space
+                    .as_ref()
+                    .map(usize::to_string)
+                    .unwrap_or("-".to_string()),
+            )
+        }
+    }
+
     pub fn build_style_map(
         token_styles: Vec<(TokenColorScheme, &'static str)>,
     ) -> HashMap<Attrs, String> {
@@ -825,6 +846,135 @@ mod tests {
     use std::ops::Range;
 
     use insta::assert_snapshot;
+
+    fn compositor(doc: &'static [u8], width: usize) -> Compositor<'static, (), ()> {
+        Compositor::new(doc, NonZeroUsize::new(width).unwrap())
+    }
+
+    #[test]
+    fn test_basic_compositor() {
+        let mut c = compositor(b"abcdefghijklmnopqrstuvwxyz", 5);
+
+        c.append_content(Text::SourceRange(0..3), (), None);
+        c.append_content(Text::Static("111222333"), (), None);
+        c.append_content(Text::SourceRange(23..26), (), None);
+        c.append_content(Text::String((Rc::new(".---.".to_string()), 1..4)), (), None);
+
+        assert_snapshot!(c.print_composited_lines(), @r"
+        |abc11|
+        |12223|
+        |33xyz|
+        |---  |
+        ");
+    }
+
+    #[test]
+    fn test_compositor_with_wide_chars() {
+        let mut c = compositor(b"", 5);
+
+        c.append_content(Text::Static("1🦀45a"), (), None);
+        c.append_content(Text::Static("bcd👀34"), (), None);
+        c.append_content(Text::Static("5\u{200b}abc"), (), None);
+
+        // Eyes get pushed to next line because not enough room; ZWSP gets appened
+        // to the current line because it has 0 width.
+        assert_snapshot!(c.print_composited_lines(), @r"
+        |1🦀45|
+        |abcd |
+        |👀345<ZWSP>|
+        |abc  |
+        ");
+    }
+
+    #[test]
+    fn test_compositor_with_single_col() {
+        let mut c = compositor(b"", 1);
+        c.append_content(Text::Static("a🦀b"), (), None);
+
+        // Wide characters get replaced with an ellipsis when there's only
+        // a single column.
+        assert_snapshot!(c.print_composited_lines(), @r"
+        |a|
+        |…|
+        |b|
+        ");
+    }
+
+    #[test]
+    fn test_compositor_min_size_to_show_strings() {
+        let f = Compositor::<(), ()>::min_space_needed_to_show_str;
+        assert_eq!(f(""), 0);
+        assert_eq!(f("a"), 1);
+        assert_eq!(f("abc"), 2);
+        assert_eq!(f("🦀"), 2);
+        assert_eq!(f("🦀abc"), 3);
+        assert_eq!(f("\u{200b}abc"), 2);
+    }
+
+    #[test]
+    fn test_compositor_reservations() {
+        let mut c = compositor(b"", 11);
+        c.append_content(Text::Static("1"), (), None);
+        assert!(!c.start_reserving_space(11));
+        assert!(c.start_reserving_space(5));
+
+        assert!(!c.reserve_more_space(6));
+        assert!(c.reserve_more_space(5));
+        c.give_back_reserved_space(1);
+
+        assert!(!c.try_append_content(Text::Static("abc"), false, (), None, 0));
+        c.give_back_reserved_space(1);
+        assert!(c.try_append_content(Text::Static("abc"), false, (), None, 0));
+
+        assert_snapshot!(c.print_composited_lines(), @"|1a…        |");
+        assert_snapshot!(c.availability(), @"remaining: 8, reserved: 8");
+
+        c.give_back_reserved_space(1);
+        assert!(!c.try_append_content(Text::Static("🦀"), false, (), None, 0));
+        // With the one free space, and the one reclaimed space, now it can print it.
+        assert!(c.try_append_content(Text::Static("🦀"), false, (), None, 1));
+
+        assert_snapshot!(c.print_composited_lines(), @"|1a…🦀      |");
+        assert_snapshot!(c.availability(), @"remaining: 6, reserved: 6");
+
+        c.give_back_reserved_space(2);
+        assert_snapshot!(c.availability(), @"remaining: 6, reserved: 4");
+
+        assert!(c.try_append_content(Text::Static("ab"), false, (), None, 1));
+
+        assert_snapshot!(c.print_composited_lines(), @"|1a…🦀ab    |");
+        assert_snapshot!(c.availability(), @"remaining: 4, reserved: 3");
+
+        c.append_reserved_content(Text::Static("x"), (), None);
+
+        assert_snapshot!(c.print_composited_lines(), @"|1a…🦀abx   |");
+        assert_snapshot!(c.availability(), @"remaining: 3, reserved: 2");
+    }
+
+    #[test]
+    fn test_compositor_delimited_content() {
+        let mut c = compositor(b"", 10);
+        assert!(c.start_reserving_space(7));
+        assert!(!c.try_append_content(Text::Static("'123'"), true, (), None, 0));
+
+        c.give_back_reserved_space(1);
+        assert!(c.try_append_content(Text::Static("'123'"), true, (), None, 0));
+
+        assert_snapshot!(c.print_composited_lines(), @"|'1…'      |");
+        assert_snapshot!(c.availability(), @"remaining: 6, reserved: 6");
+
+        assert!(c.try_append_content(Text::Static("()"), true, (), None, 2));
+
+        assert_snapshot!(c.print_composited_lines(), @"|'1…'()    |");
+        assert_snapshot!(c.availability(), @"remaining: 4, reserved: 4");
+
+        c.give_back_reserved_space(2);
+        assert!(!c.try_append_content(Text::Static("[🦀]"), true, (), None, 1));
+        assert!(c.try_append_content(Text::Static("[🦀]"), true, (), None, 2));
+
+        assert_snapshot!(c.print_composited_lines(), @"|'1…'()[🦀]|");
+        assert_snapshot!(c.availability(), @"remaining: 0, reserved: 0");
+    }
 
     #[test]
     fn test_separate_highlighted_and_unhighlighted_ranges() {

@@ -312,21 +312,14 @@ impl<'a> Typesetter<'a> {
                 let start = node.data_range.start;
                 let content = Text::SourceRange(node.data_range.clone());
 
-                if self.doc_content[start] == b'"' {
-                    self.compositor.try_append_delimited_content(
-                        content,
-                        SegmentKind::Preview,
-                        Some(index),
-                        1,
-                    )
-                } else {
-                    self.compositor.try_append_content(
-                        content,
-                        SegmentKind::Preview,
-                        Some(index),
-                        1,
-                    )
-                }
+                let delimited = self.doc_content[start] == b'"';
+                self.compositor.try_append_content(
+                    content,
+                    delimited,
+                    SegmentKind::Preview,
+                    Some(index),
+                    1,
+                )
             }
             DocumentToken::StartOfList(list_metadata) => {
                 match list_metadata.list_kind {
@@ -410,13 +403,9 @@ impl<'a> Typesetter<'a> {
         let atom_content = Text::SourceRange(atom_node.data_range.clone());
         let is_delimited = self.doc_content[atom_node.data_range.start] == b'"';
 
-        let space_needed_for_first_atom = if is_delimited {
-            self.compositor
-                .min_space_needed_to_show_actual_delimited_content(&atom_content)
-        } else {
-            self.compositor
-                .min_space_needed_to_show_actual_content(&atom_content)
-        };
+        let space_needed_for_first_atom = self
+            .compositor
+            .min_space_needed_to_show_actual_content(&atom_content, is_delimited);
 
         // We have space reserved for "…", but we only want to proceed if we can show "(X _)",
         // where X is whatever's needed by the first atom.
@@ -430,30 +419,16 @@ impl<'a> Typesetter<'a> {
         // Opening paren
         self.append_reserved_node_as_preview(index);
 
-        let successfully_wrote_first_atom = if is_delimited {
-            self.compositor.try_append_delimited_content(
-                atom_content,
-                SegmentKind::Preview,
-                Some(index),
-                space_needed_for_first_atom,
-            )
-        } else {
-            self.compositor.try_append_content(
-                atom_content,
-                SegmentKind::Preview,
-                Some(index),
-                space_needed_for_first_atom,
-            )
-        };
+        let successfully_wrote_first_atom = self.compositor.try_append_content(
+            atom_content,
+            is_delimited,
+            SegmentKind::Preview,
+            Some(index),
+            space_needed_for_first_atom,
+        );
 
-        // Very unlikely, but could happen if there are two columns left at the end of
-        // the line, and all the remaining space is reserved, and the atom starts with
-        // a wide character. The opening paren will take the first column, but then the
-        // atom can't get split across the lines.
         if !successfully_wrote_first_atom {
-            self.compositor
-                .give_back_reserved_space(space_needed_for_first_atom.saturating_sub(1));
-            self.append_reserved_ellipsis();
+            panic!("failed to write atom after making sure we have enough space");
         }
 
         let mut next_elem = second_elem_index;
