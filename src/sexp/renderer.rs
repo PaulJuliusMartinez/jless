@@ -272,8 +272,10 @@ impl<'a> Typesetter<'a> {
             }
 
             if !self.try_typeset_elem_preview(elem_index) {
-                // We couldn't write anything; reclaim the two spaces.
-                self.compositor.give_back_reserved_space(2);
+                // We couldn't write anything; reclaim the two spaces if we weren't the last elem.
+                if !is_last_elem {
+                    self.compositor.give_back_reserved_space(2);
+                }
                 break;
             }
 
