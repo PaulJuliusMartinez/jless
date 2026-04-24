@@ -94,7 +94,7 @@ fn main() {
         let buffer: Vec<u8> = vec![0; 16];
         data_buffer_sender.send(buffer);
 
-        get_document_data(
+        let input_filename = get_document_data(
             app_input_events_sender.clone(),
             data_buffer_receiver,
             args.get(1).cloned(),
@@ -107,7 +107,7 @@ fn main() {
 
         let dimensions = dimensions::current();
         let sexp_document = sexp::document::SexpDocument::new(dimensions.width);
-        let mut app = App::new(sexp_document, editor, dimensions, stdout);
+        let mut app = App::new(sexp_document, editor, dimensions, input_filename, stdout);
 
         loop {
             let app_input_event = app_input_events_receiver.recv();
@@ -257,17 +257,21 @@ fn get_document_data(
     event_sender: mpsc::Sender<AppInputEvent>,
     buffer_receiver: mpsc::Receiver<Vec<u8>>,
     filename: Option<std::ffi::OsString>,
-) {
-    thread::spawn(move || {
-        let filename = match filename
-            .as_ref()
-            .map(std::ffi::OsString::as_os_str)
-            .and_then(std::ffi::OsStr::to_str)
-        {
-            None | Some("-") => None,
-            Some(_) => filename,
-        };
+) -> Option<String> {
+    let (filename, utf8_filename) = if let Some(filename) = filename {
+        let lossy = filename.as_os_str().to_string_lossy();
+        match &*lossy {
+            "-" => (None, None),
+            _ => {
+                let lossy = lossy.to_string();
+                (Some(filename), Some(lossy))
+            }
+        }
+    } else {
+        (None, None)
+    };
 
+    thread::spawn(move || {
         // Someday: This shouldn't be inside the closure; we should immediately
         // try to open the file (and fail if it doesn't exist).
         let mut input: Box<dyn io::Read> = match filename {
@@ -301,4 +305,6 @@ fn get_document_data(
             }
         }
     });
+
+    utf8_filename
 }

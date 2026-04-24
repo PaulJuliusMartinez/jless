@@ -104,6 +104,11 @@ impl Text {
         Text::Static("…")
     }
 
+    pub fn full_string(s: Rc<String>) -> Self {
+        let len = s.len();
+        Text::String((s, 0..len))
+    }
+
     pub fn len(&self) -> usize {
         match self {
             Text::SourceRange(range) => range.len(),
@@ -120,7 +125,7 @@ impl Text {
         }
     }
 
-    fn as_str<'a>(&'a self, source: &'a [u8]) -> &'a str {
+    pub fn as_str<'a>(&'a self, source: &'a [u8]) -> &'a str {
         match self {
             Text::SourceRange(range) => {
                 str::from_utf8(&source[range.clone()]).expect("doc_content should be valid utf8")
@@ -130,7 +135,7 @@ impl Text {
         }
     }
 
-    fn into_sub_range(self, range: Range<usize>) -> Self {
+    pub fn into_sub_range(self, range: Range<usize>) -> Self {
         fn index_range(range1: Range<usize>, range2: Range<usize>) -> Range<usize> {
             let start = range1.start + range2.start;
             let end = usize::min(range1.start + range2.end, range1.end);
@@ -761,6 +766,16 @@ pub mod test_helpers {
         let segment_styles = segment_styles.join("\n");
 
         format!("{text_line}\n{key_line}\n{segment_styles}")
+    }
+
+    pub fn format_styled_segments(styled_segments: &[StyledSegment], content: &[u8]) -> String {
+        let mut s = String::new();
+
+        for styled_segment in styled_segments.iter() {
+            s.push_str(styled_segment.content.as_str(content));
+        }
+
+        s
     }
 
     #[cfg(test)]

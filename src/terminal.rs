@@ -56,6 +56,7 @@ impl Default for Style {
 pub trait Terminal: Write {
     fn clear_screen(&mut self) -> Result;
     fn clear_line(&mut self) -> Result;
+    fn clear_rest_of_line(&mut self) -> Result;
 
     fn position_cursor(&mut self, col: u16, row: u16) -> Result;
     fn position_cursor_col(&mut self, col: u16) -> Result;
@@ -109,6 +110,10 @@ impl Terminal for AnsiTerminal {
 
     fn clear_line(&mut self) -> Result {
         write!(self, "\x1b[2K")
+    }
+
+    fn clear_rest_of_line(&mut self) -> Result {
+        write!(self, "\x1b[0K")
     }
 
     fn position_cursor(&mut self, col: u16, row: u16) -> Result {
@@ -264,6 +269,7 @@ pub mod test {
     impl Terminal for TextOnlyTerminal {
         fn clear_screen(&mut self) -> Result { Ok(()) }
         fn clear_line(&mut self) -> Result { Ok(()) }
+        fn clear_rest_of_line(&mut self) -> Result { Ok(()) }
         fn position_cursor(&mut self, _row: u16, _col: u16) -> Result { Ok(()) }
         fn position_cursor_col(&mut self, _col: u16) -> Result { Ok(()) }
         fn set_style(&mut self, _style: &Style) -> Result { Ok(()) }
@@ -348,6 +354,10 @@ pub mod test {
         }
 
         fn clear_line(&mut self) -> Result {
+            Ok(())
+        }
+
+        fn clear_rest_of_line(&mut self) -> Result {
             Ok(())
         }
 

@@ -12,6 +12,12 @@ fn empty_string_of_length_n(n: usize) -> String {
     format!("{:1$}", "", n)
 }
 
+pub fn pad_right_with_spaces(s: &str, width: usize) -> String {
+    let len = UnicodeWidthStr::width(s);
+    let num_spaces = width.saturating_sub(len);
+    format!("{}{:num_spaces$}", s, "")
+}
+
 pub fn format_table(rows: &Vec<Vec<String>>, with_borders: bool) -> String {
     if rows.is_empty() {
         return "".to_string();
