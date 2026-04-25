@@ -349,7 +349,6 @@ impl SearchState {
 
         let unit_step = search_direction.signed_jump_size();
 
-        // This condition doesn't change, so we'll check it immediately to avoid potential extra work.
         loop {
             let cursor_moved = cursor_will_move(self.matches[next_match].clone());
             let next_match_is_visible = is_match_visible(self.matches[next_match].clone());

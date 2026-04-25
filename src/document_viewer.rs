@@ -1193,6 +1193,8 @@ impl<D: Document> DocumentViewer<D> {
 
         let mut focused_bottom = false;
         let mut jumped_to_search_match = false;
+        let prev_closest_visible_cursor_to_last_search_match =
+            self.closest_visible_cursor_to_last_search_match();
 
         match action {
             Action::NoOp => (),
@@ -1228,6 +1230,8 @@ impl<D: Document> DocumentViewer<D> {
         }
 
         let cursor_moved = prev_cursor != self.current_focus;
+        let new_closest_visible_cursor_to_last_search_match =
+            self.closest_visible_cursor_to_last_search_match();
 
         // Check if we need to clear the last jump of the search state.
         if let Some(search_state) = &mut self.search_state {
@@ -1236,16 +1240,14 @@ impl<D: Document> DocumentViewer<D> {
                 if cursor_moved {
                     search_state.stop_searching();
                 } else {
-                    if let Some(last_match_range) = search_state.last_match_range() {
-                        // Even if the cursor didn't move, check if we're no longer pointing
-                        // to the the match, possibly because we expanded the currently
-                        // focused node. We want to keep showing matches, but they are
-                        // no longer focused on the last jump.
-                        let match_cursor =
-                            self.doc.raw_byte_index_to_cursor(last_match_range.start);
-                        if match_cursor != self.current_focus {
-                            search_state.clear_last_jump_but_keep_showing_matches();
-                        }
+                    // Even if the cursor didn't move, check if we're no longer pointing to the
+                    // match, possibly because we expanded or collapsed the currently focused node.
+                    // We want to keep showing matches, but they are no longer focused on the last
+                    // jump.
+                    if prev_closest_visible_cursor_to_last_search_match
+                        != new_closest_visible_cursor_to_last_search_match
+                    {
+                        search_state.clear_last_jump_but_keep_showing_matches();
                     }
                 }
             }
@@ -1388,8 +1390,8 @@ impl<D: Document> DocumentViewer<D> {
         let current_focus = &self.current_focus;
 
         let cursor_will_move = |match_range: Range<usize>| {
-            let cursor = doc.raw_byte_index_to_cursor(match_range.start);
-            doc.closest_visible_cursor(&cursor) != *current_focus
+            let new_cursor = doc.raw_byte_index_to_visible_cursor(match_range.start);
+            new_cursor != *current_focus
         };
 
         let is_match_visible =
@@ -1422,6 +1424,15 @@ impl<D: Document> DocumentViewer<D> {
             let cursor_range = self.doc.cursor_range(&closest_visible_cursor);
             (closest_visible_cursor, cursor_range)
         }
+    }
+
+    fn closest_visible_cursor_to_last_search_match(&self) -> Option<D::Cursor> {
+        let search_state = self.search_state.as_ref()?;
+        let match_byte_range = search_state.last_match_range()?;
+        Some(
+            self.doc
+                .raw_byte_index_to_visible_cursor(match_byte_range.start),
+        )
     }
 
     ///////////////
@@ -3202,7 +3213,6 @@ mod test {
         let output = run(
             &mut viewer,
             vec![
-                // BUG: The last jump gets cleared when scrolling.
                 vec![scroll_viewport_down(1)],
                 vec![press_right()],
                 vec![jump_to_next_match(1)],
@@ -3217,7 +3227,7 @@ mod test {
         │ 3│ ~ │                 │ │ 3│ ~ │                 │ │ 3│ ~ │                 │    │ 3│ ~ │                 │
         │ 4│ ~ │                 │ │ 4│ ~ │                 │ │ 4│ ~ │                 │    │ 4│ ~ │                 │
         └──┴───┴─────────────────┘ └──┴───┴─────────────────┘ └──┴───┴─────────────────┘    └──┴───┴─────────────────┘
-        /b [1/2] W                 /b                         /b                            /b [1/2]
+        /b [1/2] W                 /b [1/2] W                 /b                            /b [1/2]
         ");
     }
 }

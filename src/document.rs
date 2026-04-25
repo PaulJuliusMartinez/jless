@@ -176,6 +176,10 @@ pub trait Document {
     /// visible cursor before it. If the given cursor is visible, it just returns it.
     fn closest_visible_cursor(&self, cursor: &Self::Cursor) -> Self::Cursor;
 
+    fn raw_byte_index_to_visible_cursor(&self, index: usize) -> Self::Cursor {
+        self.closest_visible_cursor(&self.raw_byte_index_to_cursor(index))
+    }
+
     // Rendering
 
     // Soon: Uncomment this.
