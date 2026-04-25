@@ -22,6 +22,7 @@ mod document_viewer;
 mod rendering;
 mod search;
 mod sorted_ranges;
+mod status_bar;
 mod text_document;
 // Someday: This is temporary, will probably want to rewrite this.
 mod terminal;
