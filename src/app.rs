@@ -449,12 +449,18 @@ impl<D: Document> App<D> {
 
                 let search_state = match &viewer.search_state {
                     None => None,
-                    Some(search_state) => Some(CurrentSearchState {
-                        search_direction: search_state.search_direction(),
-                        search_input: Rc::new(search_state.search_input().to_string()),
-                        last_jump: search_state.last_jump().cloned(),
-                        num_matches: search_state.num_matches(),
-                    }),
+                    Some(search_state) => {
+                        if search_state.should_show_matches() {
+                            Some(CurrentSearchState {
+                                search_direction: search_state.search_direction(),
+                                search_input: Rc::new(search_state.search_input().to_string()),
+                                last_jump: search_state.last_jump().cloned(),
+                                num_matches: search_state.num_matches(),
+                            })
+                        } else {
+                            None
+                        }
+                    }
                 };
 
                 let status_bar_bottom_line_segments = StatusBarBottomLine {

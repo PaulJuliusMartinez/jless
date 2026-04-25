@@ -42,6 +42,7 @@ pub struct SearchState {
     len_of_searched_input: usize,
     direction: SearchDirection,
     last_jump: Option<LastJump>,
+    should_show_matches: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -173,6 +174,7 @@ impl SearchState {
             len_of_searched_input: haystack.len(),
             direction,
             last_jump: None,
+            should_show_matches: false,
         })
     }
 
@@ -259,7 +261,16 @@ impl SearchState {
         &self.matches
     }
 
-    pub fn clear_last_jump(&mut self) {
+    pub fn should_show_matches(&self) -> bool {
+        self.should_show_matches
+    }
+
+    pub fn stop_searching(&mut self) {
+        self.last_jump = None;
+        self.should_show_matches = false;
+    }
+
+    pub fn clear_last_jump_but_keep_showing_matches(&mut self) {
         self.last_jump = None;
     }
 
@@ -363,6 +374,7 @@ impl SearchState {
             match_jumped_to: next_match,
             just_wrapped: wrapped,
         });
+        self.should_show_matches = true;
 
         next_match_range
     }

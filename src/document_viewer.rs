@@ -1231,19 +1231,20 @@ impl<D: Document> DocumentViewer<D> {
 
         // Check if we need to clear the last jump of the search state.
         if let Some(search_state) = &mut self.search_state {
-            if let Some(last_match_range) = search_state.last_match_range() {
-                // Obviously don't clear the last jump if we just jumped.
-                if !jumped_to_search_match {
-                    if cursor_moved {
-                        search_state.clear_last_jump();
-                    } else {
+            // Obviously don't clear the last jump if we just jumped.
+            if !jumped_to_search_match {
+                if cursor_moved {
+                    search_state.stop_searching();
+                } else {
+                    if let Some(last_match_range) = search_state.last_match_range() {
                         // Even if the cursor didn't move, check if we're no longer pointing
                         // to the the match, possibly because we expanded the currently
-                        // focused node.
+                        // focused node. We want to keep showing matches, but they are
+                        // no longer focused on the last jump.
                         let match_cursor =
                             self.doc.raw_byte_index_to_cursor(last_match_range.start);
                         if match_cursor != self.current_focus {
-                            search_state.clear_last_jump();
+                            search_state.clear_last_jump_but_keep_showing_matches();
                         }
                     }
                 }
@@ -1299,14 +1300,6 @@ impl<D: Document> DocumentViewer<D> {
 
         if let Some(search_state) = &mut self.search_state {
             search_state.set_search_direction(direction);
-        }
-    }
-
-    // Returns `None` if no search is currently initialized.
-    pub fn num_search_matches(&self) -> Option<usize> {
-        match &self.search_state {
-            None => None,
-            Some(search_state) => Some(search_state.num_matches()),
         }
     }
 
@@ -1454,7 +1447,13 @@ impl<D: Document> DocumentViewer<D> {
 
         let search_match_ranges = match &self.search_state {
             None => &[],
-            Some(search_state) => search_state.search_match_ranges(),
+            Some(search_state) => {
+                if search_state.should_show_matches() {
+                    search_state.search_match_ranges()
+                } else {
+                    &[]
+                }
+            }
         };
 
         for screen_line in self.viewport_lines() {
