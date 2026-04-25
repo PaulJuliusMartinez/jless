@@ -13,10 +13,10 @@ use crate::document::Document;
 use crate::document_viewer::DocumentViewer;
 use crate::rendering::{AnsiColor, Attrs, StyledSegment};
 use crate::search::{JumpDirection, SearchDirection};
-use crate::status_bar::StatusBarTopLine;
+use crate::status_bar::{CurrentSearchState, StatusBarBottomLine, StatusBarTopLine};
 use crate::terminal::{AnsiTerminal, Terminal};
 
-const MAX_BUFFER_SIZE: usize = 9;
+pub const MAX_BUFFER_SIZE: usize = 9;
 const BOTTOM_CHROME_HEIGHT: usize = 2;
 const DEFAULT_SCROLLOFF: usize = 2;
 
@@ -27,6 +27,8 @@ pub struct App<D: Document> {
     // Buffered input for movement commands with counts, e.g. "3j", or multi-character commands,
     // e.g., "zz".
     input_buffer: Vec<u8>,
+    message: Option<(String, MessageSeverity)>,
+
     readline_editor: Editor<(), MemHistory>,
     screen_dimensions: Dimensions,
     viewer_dimensions: Dimensions,
@@ -44,6 +46,23 @@ enum InputState {
 
 pub struct Break;
 
+#[derive(Copy, Clone, Debug)]
+pub enum MessageSeverity {
+    Info,
+    Warn,
+    Error,
+}
+
+impl MessageSeverity {
+    pub fn attrs(&self) -> Attrs {
+        match self {
+            MessageSeverity::Info => Attrs::from_ansi_fg(AnsiColor::White),
+            MessageSeverity::Warn => Attrs::from_ansi_fg(AnsiColor::Yellow),
+            MessageSeverity::Error => Attrs::from_ansi_fg(AnsiColor::Red),
+        }
+    }
+}
+
 impl<D: Document> App<D> {
     pub fn new(
         doc: D,
@@ -57,6 +76,7 @@ impl<D: Document> App<D> {
             viewer: None,
             input_state: InputState::Default,
             input_buffer: vec![],
+            message: None,
             screen_dimensions: dimensions,
             viewer_dimensions: Dimensions {
                 width: dimensions.width,
@@ -187,6 +207,7 @@ impl<D: Document> App<D> {
         }
 
         self.draw_screen();
+        self.message = None;
 
         match tty_event {
             TermionEvent::Key(Key::Char(':')) => {
@@ -282,6 +303,18 @@ impl<D: Document> App<D> {
         n.ok()
     }
 
+    fn set_info_message(&mut self, s: String) {
+        self.message = Some((s, MessageSeverity::Info));
+    }
+
+    fn set_warning_message(&mut self, s: String) {
+        self.message = Some((s, MessageSeverity::Warn));
+    }
+
+    fn set_error_message(&mut self, s: String) {
+        self.message = Some((s, MessageSeverity::Error));
+    }
+
     fn get_search_input_and_start_search(
         &mut self,
         search_direction: SearchDirection,
@@ -306,7 +339,7 @@ impl<D: Document> App<D> {
                     count,
                 );
             } else {
-                // TODO: Display error: "No current search input"
+                self.set_warning_message("No search input".to_string());
                 return None;
             }
         }
@@ -315,8 +348,8 @@ impl<D: Document> App<D> {
             Ok(()) => {
                 self.move_to_search_match(MovementMethod::MoveCursor, JumpDirection::Next, count)
             }
-            Err(_err) => {
-                // TODO: Display this error
+            Err(err) => {
+                self.set_error_message(err);
                 None
             }
         }
@@ -333,20 +366,26 @@ impl<D: Document> App<D> {
             return None;
         };
 
-        match viewer.num_search_matches() {
+        match &viewer.search_state {
             None => {
-                // TODO: Display error: "Type / to search"
+                self.set_info_message("Type / to search".to_string());
                 None
             }
-            Some(0) => {
-                // TODO: Display error: "Pattern not found: {}"
-                None
+            Some(search_state) => {
+                if search_state.num_matches() > 0 {
+                    Some(Action::MoveToSearchMatch(
+                        movement_method,
+                        jump_direction,
+                        jumps,
+                    ))
+                } else {
+                    self.set_warning_message(format!(
+                        "Pattern not found: {}",
+                        search_state.search_input()
+                    ));
+                    None
+                }
             }
-            Some(_) => Some(Action::MoveToSearchMatch(
-                movement_method,
-                jump_direction,
-                jumps,
-            )),
         }
     }
 
@@ -395,6 +434,43 @@ impl<D: Document> App<D> {
                     row,
                     &mut terminal,
                     status_bar_top_line_segments,
+                    "".as_bytes(),
+                );
+
+                let input_buffer = if self.input_buffer.is_empty() {
+                    None
+                } else {
+                    Some(Rc::new(
+                        std::str::from_utf8(&self.input_buffer)
+                            .expect("input buffer is only ASCII")
+                            .to_string(),
+                    ))
+                };
+
+                let search_state = match &viewer.search_state {
+                    None => None,
+                    Some(search_state) => Some(CurrentSearchState {
+                        search_direction: search_state.search_direction(),
+                        search_input: Rc::new(search_state.search_input().to_string()),
+                        last_jump: search_state.last_jump().cloned(),
+                        num_matches: search_state.num_matches(),
+                    }),
+                };
+
+                let status_bar_bottom_line_segments = StatusBarBottomLine {
+                    message: self
+                        .message
+                        .as_ref()
+                        .map(|(s, sev)| (Rc::new(s.clone()), *sev)),
+                    search_state,
+                    input_buffer,
+                }
+                .render(self.screen_dimensions.width);
+
+                Self::draw_row(
+                    row + 1,
+                    &mut terminal,
+                    status_bar_bottom_line_segments,
                     "".as_bytes(),
                 );
             }

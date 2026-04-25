@@ -44,11 +44,11 @@ pub struct SearchState {
     last_jump: Option<LastJump>,
 }
 
-#[derive(Debug)]
-struct LastJump {
-    match_jumped_to: usize,
+#[derive(Clone, Debug)]
+pub struct LastJump {
+    pub match_jumped_to: usize,
     // Needed to show 'W' next to current match number.
-    just_wrapped: bool,
+    pub just_wrapped: bool,
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -159,7 +159,7 @@ impl SearchState {
         let search_regex = ByteRegexBuilder::new(&inverted)
             .case_insensitive(!case_sensitive)
             .build()
-            .map_err(|err| err.to_string())?;
+            .map_err(|err| err.to_string().replace('\n', " "))?;
 
         let matches: Vec<Range<usize>> = search_regex
             .find_iter(haystack)
@@ -229,12 +229,24 @@ impl SearchState {
         self.len_of_searched_input = haystack.len();
     }
 
+    pub fn search_input(&self) -> &str {
+        self.search_input.as_str()
+    }
+
     pub fn set_search_direction(&mut self, direction: SearchDirection) {
         self.direction = direction;
     }
 
+    pub fn search_direction(&self) -> SearchDirection {
+        self.direction
+    }
+
     pub fn num_matches(&self) -> usize {
         self.matches.len()
+    }
+
+    pub fn last_jump(&self) -> Option<&LastJump> {
+        self.last_jump.as_ref()
     }
 
     pub fn last_match_range(&self) -> Option<Range<usize>> {

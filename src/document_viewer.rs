@@ -36,7 +36,7 @@ pub struct DocumentViewer<D: Document> {
     tailing_end_of_document: bool,
     jump_distance: Option<NonZeroUsize>,
 
-    search_state: Option<SearchState>,
+    pub search_state: Option<SearchState>,
 }
 
 /// Computed details about how close some content is to the start or end of the document. If one of

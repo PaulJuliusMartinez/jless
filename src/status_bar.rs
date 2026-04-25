@@ -3,6 +3,7 @@ use std::rc::Rc;
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
+use crate::app::{MessageSeverity, MAX_BUFFER_SIZE};
 use crate::rendering::{AnsiColor, Attrs, Color, StyledSegment, Text};
 use crate::search::{LastJump, SearchDirection};
 
@@ -22,6 +23,16 @@ pub struct CurrentSearchState {
     pub last_jump: Option<LastJump>,
     pub num_matches: usize,
 }
+
+pub struct StatusBarBottomLine {
+    pub message: Option<(Rc<String>, MessageSeverity)>,
+    pub search_state: Option<CurrentSearchState>,
+    pub input_buffer: Option<Rc<String>>,
+}
+
+const SPACE_BEFORE_SEARCH_COUNT: usize = 3;
+const SPACE_BEFORE_INPUT_BUFFER: usize = 3;
+const SPACE_BETWEEN_INPUT_BUFFER_AND_EDGE_OF_SCREEN: usize = 1;
 
 impl StatusBarTopLine {
     pub fn render(&self, width: usize) -> Vec<StyledSegment> {
@@ -175,6 +186,218 @@ impl StatusBarTopLine {
     }
 }
 
+impl StatusBarBottomLine {
+    pub fn render(&self, width: usize) -> Vec<StyledSegment> {
+        let mut segments = vec![];
+
+        let space_for_input_buffer = usize::min(
+            width,
+            MAX_BUFFER_SIZE + SPACE_BETWEEN_INPUT_BUFFER_AND_EDGE_OF_SCREEN,
+        );
+        let available_space_before_input_buffer = width - space_for_input_buffer;
+        let available_space_for_message_or_search_state =
+            available_space_before_input_buffer.saturating_sub(SPACE_BEFORE_INPUT_BUFFER);
+        let size_of_space_before_input_buffer =
+            available_space_before_input_buffer - available_space_for_message_or_search_state;
+
+        if let Some((message, message_severity)) = &self.message {
+            Self::render_message(
+                Rc::clone(message),
+                *message_severity,
+                &mut segments,
+                available_space_for_message_or_search_state,
+            );
+        } else if let Some(search_state) = &self.search_state {
+            Self::render_search_state(
+                search_state,
+                &mut segments,
+                available_space_for_message_or_search_state,
+            );
+        } else {
+            segments.push(StyledSegment {
+                content: Text::spaces(available_space_for_message_or_search_state),
+                attrs: Attrs::default(),
+            });
+        }
+
+        segments.push(StyledSegment {
+            content: Text::spaces(size_of_space_before_input_buffer),
+            attrs: Attrs::default(),
+        });
+
+        if let Some(input_buffer) = &self.input_buffer {
+            Self::render_input_buffer(
+                Rc::clone(input_buffer),
+                &mut segments,
+                space_for_input_buffer,
+            );
+        }
+
+        segments
+    }
+
+    fn render_message(
+        message: Rc<String>,
+        message_severity: MessageSeverity,
+        segments: &mut Vec<StyledSegment>,
+        width: usize,
+    ) {
+        let space_available_for_message = width.saturating_sub(SPACE_BEFORE_INPUT_BUFFER);
+        let space_used = Self::render_left_aligned_truncated(
+            message,
+            message_severity.attrs(),
+            segments,
+            space_available_for_message,
+        );
+
+        let unused_space = width - space_used;
+
+        segments.push(StyledSegment {
+            content: Text::spaces(unused_space),
+            attrs: Attrs::default(),
+        });
+    }
+
+    fn render_search_state(
+        search_state: &CurrentSearchState,
+        segments: &mut Vec<StyledSegment>,
+        width: usize,
+    ) {
+        let wrap_and_search_count = if let Some(last_jump) = &search_state.last_jump {
+            let wrap_indicator = if last_jump.just_wrapped { "W" } else { " " };
+            let match_num = last_jump.match_jumped_to + 1;
+            let num_matches = search_state.num_matches;
+            Some(format!("{wrap_indicator} [{match_num}/{num_matches}]"))
+        } else {
+            None
+        };
+
+        let space_for_search_prompt = if let Some(wrap_and_search_count) = &wrap_and_search_count {
+            width
+                .saturating_sub(wrap_and_search_count.len())
+                .saturating_sub(SPACE_BEFORE_SEARCH_COUNT)
+        } else {
+            width
+        };
+
+        let mut used_for_search_prompt = 0;
+        if space_for_search_prompt > 1 {
+            segments.push(StyledSegment {
+                content: Text::Static(search_state.search_direction.prompt_str()),
+                attrs: Attrs::default(),
+            });
+
+            used_for_search_prompt += 1;
+            let space_for_search_term = space_for_search_prompt - 1;
+            let used_for_search_term = Self::render_left_aligned_truncated(
+                Rc::clone(&search_state.search_input),
+                Attrs::default(),
+                segments,
+                space_for_search_term,
+            );
+            used_for_search_prompt += used_for_search_term;
+
+            if used_for_search_term == 0 && space_for_search_term > 0 {
+                // Normally don't just put a plain ellipsis with no content,
+                // but we will in this case since we're showing the prompt char.
+                segments.push(StyledSegment {
+                    content: Text::ellipsis(),
+                    attrs: Attrs::default(),
+                });
+                used_for_search_prompt += 1;
+            }
+        }
+
+        if let Some(wrap_and_search_count) = wrap_and_search_count {
+            let space_for_search_prompt_and_space =
+                width.saturating_sub(wrap_and_search_count.len());
+
+            segments.push(StyledSegment {
+                content: Text::spaces(space_for_search_prompt_and_space - used_for_search_prompt),
+                attrs: Attrs::default(),
+            });
+
+            let available_space = width - space_for_search_prompt_and_space;
+            let space_used_for_wrap_and_search_count = Self::render_left_aligned_truncated(
+                Rc::new(wrap_and_search_count),
+                Attrs::default(),
+                segments,
+                available_space,
+            );
+
+            if available_space > 0 {
+                segments.push(StyledSegment {
+                    content: Text::spaces(available_space - space_used_for_wrap_and_search_count),
+                    attrs: Attrs::default(),
+                });
+            }
+        } else {
+            segments.push(StyledSegment {
+                content: Text::spaces(space_for_search_prompt - used_for_search_prompt),
+                attrs: Attrs::default(),
+            });
+        }
+    }
+
+    fn render_input_buffer(
+        input_buffer: Rc<String>,
+        segments: &mut Vec<StyledSegment>,
+        width: usize,
+    ) {
+        // This is the last thing, so we don't need to do any padding afterwards.
+        let _ =
+            Self::render_left_aligned_truncated(input_buffer, Attrs::default(), segments, width);
+    }
+
+    fn render_left_aligned_truncated(
+        s: Rc<String>,
+        attrs: Attrs,
+        segments: &mut Vec<StyledSegment>,
+        width: usize,
+    ) -> usize {
+        let str_width = UnicodeWidthStr::width(s.as_str());
+
+        if str_width <= width {
+            segments.push(StyledSegment {
+                content: Text::full_string(s),
+                attrs,
+            });
+            return str_width;
+        }
+
+        // Don't just show an ellipsis.
+        if width <= 1 {
+            return 0;
+        }
+
+        let mut space_used = 0;
+        let mut bytes_used = 0;
+
+        for grapheme in s.as_str().graphemes(true) {
+            let grapheme_width = UnicodeWidthStr::width(grapheme);
+
+            if space_used + grapheme_width > width - 1 {
+                break;
+            }
+
+            space_used += grapheme_width;
+            bytes_used += grapheme.len();
+        }
+
+        segments.push(StyledSegment {
+            content: Text::String((s, 0..bytes_used)),
+            attrs,
+        });
+
+        segments.push(StyledSegment {
+            content: Text::ellipsis(),
+            attrs,
+        });
+
+        return space_used + 1;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,5 +452,70 @@ mod tests {
         assert_snapshot!(check(Some("123🦀"), Some("123"), 2),     @"|  |");
         assert_snapshot!(check(Some("123🦀456"), Some("123"), 1),  @"| |");
         assert_snapshot!(check(Some("1"), Some("123"), 1),         @"|1|");
+    }
+
+    #[test]
+    fn test_status_bar_bottom_line() {
+        fn check(
+            message: Option<&str>,
+            search_state: Option<CurrentSearchState>,
+            input_buffer: Option<&str>,
+            width: usize,
+        ) -> String {
+            let message = message.map(|s| (Rc::new(s.to_string()), MessageSeverity::Info));
+            let input_buffer = input_buffer.map(|s| Rc::new(s.to_string()));
+
+            let bottom_line = StatusBarBottomLine {
+                message,
+                search_state,
+                input_buffer,
+            };
+
+            with_borders(bottom_line.render(width), width)
+        }
+
+        assert_snapshot!(check(None, None, None, 15),                                     @"|               |");
+        assert_snapshot!(check(None, None, Some(&"1"), 15),                               @"|     1         |");
+
+        // Messages
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 15),          @"|     1         |");
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 16),         @"|      1         |");
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 17),        @"|       1         |");
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 18),       @"|A…      1         |");
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 19),      @"|An…      1         |");
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 20),     @"|An …      1         |");
+        assert_snapshot!(check(Some("An error occurred"), None, Some(&"1"), 21),    @"|An e…      1         |");
+        assert_snapshot!(check(Some("Bad ❌ happened"),   None, Some(&"1"), 22),   @"|Bad …       1         |");
+        assert_snapshot!(check(Some("Bad ❌ happened"),   None, Some(&"1"), 23),  @"|Bad ❌…      1         |");
+
+        // Search state
+        let mut search_state = CurrentSearchState {
+            search_direction: SearchDirection::Forward,
+            search_input: Rc::new("abc".to_string()),
+            last_jump: Some(LastJump {
+                match_jumped_to: 5,
+                just_wrapped: true,
+            }),
+            num_matches: 15,
+        };
+
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 28), @"|/abc   W [6/15]   1         |");
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 27),  @"|/a…   W [6/15]   1         |");
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 26),   @"|/…   W [6/15]   1         |");
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 25),    @"|    W [6/15]   1         |");
+
+        search_state.search_direction = SearchDirection::Reverse;
+        search_state.last_jump.as_mut().unwrap().just_wrapped = false;
+        // Search term can't fill up the space left by the 'W'.
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 27),  @"|?a…     [6/15]   1         |");
+
+        search_state.last_jump = None;
+        search_state.search_input = Rc::new("abcdefghijklm".to_string());
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 27), @"|?abcdefghijklm   1         |");
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 26),  @"|?abcdefghijk…   1         |");
+
+        search_state.search_input = Rc::new("ab🪼cd".to_string());
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 19), @"|?ab🪼…   1         |");
+        assert_snapshot!(check(None, Some(search_state.clone()), Some(&"1"), 18),  @"|?ab…    1         |");
     }
 }
