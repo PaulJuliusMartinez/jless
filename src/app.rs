@@ -201,7 +201,14 @@ impl<D: Document> App<D> {
                                 JumpDirection::Prev,
                                 count_or_1,
                             ),
-                            Key::Esc => None,
+                            Key::Esc => {
+                                if let Some(search_state) =
+                                    self.viewer.as_mut().and_then(|v| v.search_state.as_mut())
+                                {
+                                    search_state.stop_searching();
+                                }
+                                None
+                            }
                             _ => None,
                         };
                         self.input_buffer.clear();
