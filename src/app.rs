@@ -5,6 +5,8 @@ use std::rc::Rc;
 
 use rustyline::history::MemHistory;
 use rustyline::Editor;
+use termion::event::MouseButton::{WheelDown, WheelUp};
+use termion::event::MouseEvent::Press as TermionMousePress;
 use termion::event::{Event as TermionEvent, Key};
 
 use crate::action::{Action, MovementMethod};
@@ -90,8 +92,15 @@ impl<D: Document> App<D> {
 
     pub fn handle_tty_event(&mut self, tty_event: TermionEvent) -> Option<Break> {
         let action = match tty_event {
-            TermionEvent::Unsupported(_) => None,
-            TermionEvent::Mouse(_mouse_event) => None,
+            TermionEvent::Unsupported(_) => return None,
+            TermionEvent::Mouse(mouse_event) => {
+                self.input_buffer.clear();
+                match mouse_event {
+                    TermionMousePress(WheelUp, _, _) => Some(Action::ScrollViewportUp(3)),
+                    TermionMousePress(WheelDown, _, _) => Some(Action::ScrollViewportDown(3)),
+                    _ => return None,
+                }
+            }
             TermionEvent::Key(key_event) => match self.input_state {
                 InputState::PendingZCommand => {
                     self.input_state = InputState::Default;
