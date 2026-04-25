@@ -3168,4 +3168,56 @@ mod test {
                                                                 /v [1/2]                   /v [2/2]
         ");
     }
+
+    #[test]
+    fn test_clear_last_jump_when_expanding_nodes() {
+        let text = b"((k1 a)(k2 (V b))) b ";
+        let mut viewer = init_sexp(text, 15, 5, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(1), press_left()],
+                vec![
+                    initialize_search("b", SearchDirection::Forward),
+                    jump_to_next_match(1),
+                    jump_to_next_match(1),
+                ],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                                   MoveCursorDown(1)            /b
+                                   CollapseOrMoveCursorLeftOrUp JumpToSearchMatch(Next, 1)
+                                                                JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬─────────────────┐ ┌SI┬─L#┬─────────────────┐   ┌SI┬─L#┬─────────────────┐
+        │ 0│*1 │ [(k1 a)         │ │ 0│ 1 │ ((k1 a)         │   │ 0│ 1 │ ((k1 a)         │
+        │ 1│ 2 │  (k2 (V         │ │ 1│*2 │  [k2 (V b)))    │   │ 1│*2 │  [k2 (V b)))    │
+        │ 2│ 3 │    b)))         │ │ 2│ 4 │ b               │   │ 2│ 4 │ b               │
+        │ 3│ 4 │ b               │ │ 3│ ~ │                 │   │ 3│ ~ │                 │
+        │ 4│ ~ │                 │ │ 4│ ~ │                 │   │ 4│ ~ │                 │
+        └──┴───┴─────────────────┘ └──┴───┴─────────────────┘   └──┴───┴─────────────────┘
+                                                                /b [1/2] W
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                // BUG: The last jump gets cleared when scrolling.
+                vec![scroll_viewport_down(1)],
+                vec![press_right()],
+                vec![jump_to_next_match(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                                   ScrollViewportDown(1)      ExpandOrMoveCursorRightOrDown JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬─────────────────┐ ┌SI┬─L#┬─────────────────┐ ┌SI┬─L#┬─────────────────┐    ┌SI┬─L#┬─────────────────┐
+        │ 0│ 1 │ ((k1 a)         │ │ 0│*2 │  [k2 (V b)))    │ │ 0│*2 │  [k2 (V         │    │ 0│ 2 │  (k2 (V         │
+        │ 1│*2 │  [k2 (V b)))    │ │ 1│ 4 │ b               │ │ 1│ 3 │    b)))         │    │ 1│*3 │    *)))         │
+        │ 2│ 4 │ b               │ │ 2│ ~ │                 │ │ 2│ 4 │ b               │    │ 2│ 4 │ b               │
+        │ 3│ ~ │                 │ │ 3│ ~ │                 │ │ 3│ ~ │                 │    │ 3│ ~ │                 │
+        │ 4│ ~ │                 │ │ 4│ ~ │                 │ │ 4│ ~ │                 │    │ 4│ ~ │                 │
+        └──┴───┴─────────────────┘ └──┴───┴─────────────────┘ └──┴───┴─────────────────┘    └──┴───┴─────────────────┘
+        /b [1/2] W                 /b                         /b                            /b [1/2]
+        ");
+    }
 }
