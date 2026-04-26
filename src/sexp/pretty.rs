@@ -1,6 +1,6 @@
 use std::ops::{Index, Range};
 
-use ocaml_sexplib::atom::Atom;
+use ocaml_sexplib::atom::AtomData;
 #[cfg(test)]
 use serde::Serialize;
 
@@ -54,13 +54,13 @@ impl PrettyPrinted {
         start..end
     }
 
-    pub fn write_atom(&mut self, atom: Atom<'_>) -> Range<usize> {
+    pub fn write_atom(&mut self, atom: &AtomData) -> Range<usize> {
         self.maybe_write_whitespace();
 
         let start = self.data.len();
 
         // Writing to a Vec<u8> shouldn't fail.
-        let _ = atom.write(&mut self.data);
+        let _ = atom.serialize_io(&mut self.data);
         self.space_before_next_node = true;
 
         let end = self.data.len();

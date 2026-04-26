@@ -1,12 +1,13 @@
+use std::fmt::Write;
 use std::ops::Range;
 
 use regex::bytes::Regex;
 #[cfg(test)]
 use serde::Serialize;
 
-use ocaml_sexplib::atom::Atom;
-use ocaml_sexplib::input::InputRef;
-use ocaml_sexplib::tokenizer::{RawBytes, RawToken, UnescapedBytes};
+use ocaml_sexplib::atom::{AtomData, PlausibleSerializedAtom};
+use ocaml_sexplib::tokenizer::RawToken;
+use ocaml_sexplib::Ref;
 
 use crate::sexp::pretty::PrettyPrinted;
 use crate::sorted_ranges::SortedRanges;
@@ -529,18 +530,16 @@ impl DocCore {
         match raw_token {
             RawToken::LeftParen => self.start_new_list(),
             RawToken::RightParen => self.complete_list(),
-            RawToken::Atom(atom_bytes) => self.add_atom(atom_bytes),
+            RawToken::Atom(plausible_atom_bytes) => self.add_atom(plausible_atom_bytes),
             RawToken::LineComment(line_comment) => {
-                let data_range = self
-                    .pretty_printed
-                    .write_line_comment(line_comment.raw_bytes());
+                let data_range = self.pretty_printed.write_line_comment(line_comment.bytes());
                 let _ = self.push_new_document_node(DocumentToken::LineComment, data_range);
             }
             RawToken::BlockComment(block_comment) => {
                 // TODO: I need to validate these block comment bytes.
                 let data_range = self
                     .pretty_printed
-                    .write_block_comment(block_comment.raw_bytes());
+                    .write_block_comment(block_comment.bytes());
                 let _ = self.push_new_document_node(DocumentToken::BlockComment, data_range);
             }
             RawToken::SexpComment => self.add_sexp_comment(),
@@ -818,14 +817,16 @@ impl DocCore {
         }
     }
 
-    fn add_atom(&mut self, atom_bytes: InputRef<'_, '_, RawBytes>) {
-        let (atom_kind, unescaped_bytes) =
-            match atom_bytes.unescape_atom(&mut self.scratch_buffer_for_unescaping_atoms) {
-                Ok(unescape_result) => {
-                    let unescaped_bytes = unescape_result.unescaped_bytes();
-                    let atom_kind = Self::classify_atom_kind(unescaped_bytes);
+    fn add_atom(&mut self, serialized_atom: Ref<'_, '_, PlausibleSerializedAtom>) {
+        let (atom_kind, atom_data) =
+            match serialized_atom.unescape(&mut self.scratch_buffer_for_unescaping_atoms) {
+                Ok(atom_data) => {
+                    let atom_data = match atom_data {
+                        Ref::Borrowed(atom_data) | Ref::Transient(atom_data) => atom_data,
+                    };
+                    let atom_kind = Self::classify_atom_kind(atom_data);
 
-                    (atom_kind, Some(unescaped_bytes))
+                    (atom_kind, Some(atom_data))
                 }
                 Err(err) => {
                     self.push_new_error_node(ErrorMetadata {
@@ -838,16 +839,15 @@ impl DocCore {
                 }
             };
 
-        let data_range = if let Some(unescaped_bytes) = unescaped_bytes {
-            let atom = Atom::new(unescaped_bytes);
-            self.pretty_printed.write_atom(atom)
+        let data_range = if let Some(atom_data) = atom_data {
+            self.pretty_printed.write_atom(atom_data)
         } else {
             self.pretty_printed
-                .write_malformed_atom(atom_bytes.raw_bytes())
+                .write_malformed_atom(serialized_atom.bytes())
         };
 
         let quoted = matches!(&self.pretty_printed.data()[data_range.start], &b'"');
-        let valid = unescaped_bytes.is_some();
+        let valid = atom_data.is_some();
 
         let atom_metadata = AtomMetadata {
             atom_kind,
@@ -859,22 +859,20 @@ impl DocCore {
         let _ = self.push_new_document_node(DocumentToken::Atom(atom_metadata), data_range);
     }
 
-    fn classify_atom_kind(unescaped_bytes: &UnescapedBytes) -> AtomKind {
-        if ATOM_BOOL_RE.is_match(unescaped_bytes) {
+    fn classify_atom_kind(atom: &AtomData) -> AtomKind {
+        let bytes = atom.bytes();
+
+        if ATOM_BOOL_RE.is_match(bytes) {
             AtomKind::Bool
-        } else if ATOM_RECORD_KEY_RE.is_match(unescaped_bytes) {
+        } else if ATOM_RECORD_KEY_RE.is_match(bytes) {
             AtomKind::RecordKey
-        } else if ATOM_CONSTRUCTOR_RE.is_match(unescaped_bytes) {
+        } else if ATOM_CONSTRUCTOR_RE.is_match(bytes) {
             AtomKind::Constructor
-        } else if ATOM_INTEGER_RE.is_match(unescaped_bytes)
-            || ATOM_FLOAT_RE.is_match(unescaped_bytes)
-        {
+        } else if ATOM_INTEGER_RE.is_match(bytes) || ATOM_FLOAT_RE.is_match(bytes) {
             AtomKind::Number
-        } else if unescaped_bytes.len() == ATOM_DATE_LENGTH
-            && ATOM_DATE_RE.is_match(unescaped_bytes)
-        {
+        } else if bytes.len() == ATOM_DATE_LENGTH && ATOM_DATE_RE.is_match(bytes) {
             AtomKind::Date
-        } else if ATOM_TIME_RE.is_match(unescaped_bytes) {
+        } else if ATOM_TIME_RE.is_match(bytes) {
             AtomKind::Time
         } else {
             AtomKind::Plain
@@ -1009,13 +1007,17 @@ mod tests {
         dump_doc(&doc)
     }
 
+    fn raw_token_atom(bytes: &'static [u8]) -> RawToken<'static, 'static> {
+        RawToken::Atom(Ref::Borrowed(PlausibleSerializedAtom::new(bytes).unwrap()))
+    }
+
     #[test]
     fn test_incrementally_build_up_sexps() {
         let mut doc = DocCore::new();
         assert_snapshot!(dump_doc(&doc), @"Raw document:");
 
         doc.append_raw_token(RawToken::LeftParen);
-        doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
+        doc.append_raw_token(raw_token_atom(b"atom"));
 
         assert_snapshot!(dump_doc(&doc), @r#"
         Raw document:
@@ -1066,7 +1068,7 @@ mod tests {
     fn test_incrementally_build_up_multiple_top_level_sexps() {
         let mut doc = DocCore::new();
         doc.append_raw_token(RawToken::LeftParen);
-        doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
+        doc.append_raw_token(raw_token_atom(b"atom"));
         doc.append_raw_token(RawToken::RightParen);
 
         assert_snapshot!(dump_doc(&doc), @r#"
@@ -1108,7 +1110,7 @@ mod tests {
     #[test]
     fn test_connect_top_level_nodes_when_one_is_unit() {
         let mut doc = DocCore::new();
-        doc.append_raw_token(RawToken::Atom(InputRef::Transient(&RawBytes::new(b"atom"))));
+        doc.append_raw_token(raw_token_atom(b"atom"));
         doc.append_raw_token(RawToken::LeftParen);
 
         assert_snapshot!(dump_doc(&doc), @r#"

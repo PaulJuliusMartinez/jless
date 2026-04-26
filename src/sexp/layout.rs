@@ -423,11 +423,6 @@ pub mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
-    enum IndexType {
-        Node,
-        Byte,
-    }
-
     pub fn show_logical_lines(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
         show_logical_lines_impl(doc, lines, false)
     }

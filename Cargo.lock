@@ -324,7 +324,9 @@ checksum = "b8f8bdf33df195859076e54ab11ee78a1b208382d3a26ec40d142ffc1ecc49ef"
 
 [[package]]
 name = "ocaml-sexplib"
-version = "0.0.3"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "135740205afb22e7a4f30f2c82172a5dd4624b69dc9c475fb6508b8ac36f1b9f"
 dependencies = [
  "serde",
 ]

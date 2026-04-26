@@ -18,8 +18,8 @@ use crate::sexp::layout::LogicalLine;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, RenderContext, SegmentKind};
 
-use ocaml_sexplib::input::InputRef;
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
+use ocaml_sexplib::Ref;
 use wabi_tree::OSBTreeMap;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -179,7 +179,7 @@ impl ScreenLine {
 impl SexpDocument {
     fn process_additional_data(&mut self, current_data: Option<&[u8]>) {
         while let Some(witness) = self.tokenizer.has_enough_data_to_produce_tokens() {
-            let current_data = current_data.map(|b| InputRef::Transient(b));
+            let current_data = current_data.map(|b| Ref::Transient(b));
             match self.tokenizer.next_raw_token(witness, current_data) {
                 Ok(Some(raw_token)) => self.core.append_raw_token(raw_token),
                 Ok(None) => {
