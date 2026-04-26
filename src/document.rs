@@ -129,6 +129,8 @@ pub trait Document {
         depth: Option<usize>,
     ) -> Option<Self::Cursor>;
 
+    fn path_to_cursor(&self, cursor: &Self::Cursor) -> Option<String>;
+
     // Search
 
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {

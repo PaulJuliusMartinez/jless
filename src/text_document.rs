@@ -520,6 +520,10 @@ impl Document for TextDocument {
         None
     }
 
+    fn path_to_cursor(&self, _cursor: &Self::Cursor) -> Option<String> {
+        None
+    }
+
     fn raw_bytes_for_searching(&self) -> &[u8] {
         // This indicates whether we're going to accept any more input or not.
         if self.trailing_newline.is_some() {

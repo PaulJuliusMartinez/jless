@@ -1320,6 +1320,10 @@ impl Document for SexpDocument {
         Some(self.set_collapse_state_on_node_and_siblings(*cursor, depth, Expanded))
     }
 
+    fn path_to_cursor(&self, cursor: &NodeIndex) -> Option<String> {
+        self.core.sexp_get_style_path_to_node(*cursor)
+    }
+
     fn debug_text_content(&self, screen_line: &ScreenLine, cursor: &NodeIndex) -> Vec<u8> {
         use unicode_segmentation::UnicodeSegmentation;
 

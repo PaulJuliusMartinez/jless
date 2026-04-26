@@ -418,7 +418,7 @@ pub mod tests {
 
     use std::fmt::Write;
 
-    use crate::sexp::core::{invariants, DocCore, NodeIndex};
+    use crate::sexp::core::{invariants, DocCore, ErrorMetadata, NodeIndex};
 
     use bstr::ByteSlice;
     use insta::assert_snapshot;
@@ -429,6 +429,16 @@ pub mod tests {
 
     pub fn show_logical_lines_with_byte_indexes(doc: &DocCore, lines: Vec<LogicalLine>) -> String {
         show_logical_lines_impl(doc, lines, true)
+    }
+
+    pub fn layout_and_show_logical_lines(doc: &DocCore) -> String {
+        let mut next_top_level_node_index = Some(NodeIndex(0));
+        let mut logical_lines = vec![];
+        while let Some(top_level_node_index) = next_top_level_node_index {
+            logical_lines.extend(layout_fully_expanded_node(&doc, top_level_node_index));
+            next_top_level_node_index = doc.node(top_level_node_index).next_sibling;
+        }
+        show_logical_lines(&doc, logical_lines)
     }
 
     fn show_logical_lines_impl(
@@ -454,20 +464,24 @@ pub mod tests {
 
             let _ = write!(output, "{: <indentation$}", "");
 
-            let _ = writeln!(
-                output,
-                "{}",
-                doc.pretty_printed[start_range.start..end_range.end].as_bstr()
-            );
+            let _ = match &doc.token(start_index) {
+                DocumentToken::Error(ErrorMetadata { message }) => {
+                    writeln!(output, "ERR: {message}")
+                }
+                _ => writeln!(
+                    output,
+                    "{}",
+                    doc.pretty_printed[start_range.start..end_range.end].as_bstr()
+                ),
+            };
         }
 
         output
     }
 
     fn layout(bytes: &'static [u8]) -> String {
-        let doc = DocCore::from_bytes(bytes);
-        let logical_lines = layout_fully_expanded_node(&doc, NodeIndex(0));
-        show_logical_lines(&doc, logical_lines)
+        let doc = DocCore::from_bytes(bytes, true);
+        layout_and_show_logical_lines(&doc)
     }
 
     #[test]

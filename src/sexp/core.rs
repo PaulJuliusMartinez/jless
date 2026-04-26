@@ -309,6 +309,9 @@ pub mod invariants {
 
     #[inline(always)]
     pub fn variants_have_at_least_one_argument() {}
+
+    #[inline(always)]
+    pub fn record_keys_always_match_record_key_regex() {}
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -356,7 +359,7 @@ impl DocCore {
     }
 
     #[cfg(test)]
-    pub fn from_bytes(bytes: &'static [u8]) -> Self {
+    pub fn from_bytes(bytes: &'static [u8], write_eof: bool) -> Self {
         use ocaml_sexplib::input::SliceInput;
         use ocaml_sexplib::tokenizer::RawTokenizer;
 
@@ -365,7 +368,9 @@ impl DocCore {
         while let Some(token) = tokenizer.next_raw_token().unwrap() {
             doc.append_raw_token(token);
         }
-        doc.append_eof();
+        if write_eof {
+            doc.append_eof();
+        }
         doc
     }
 
@@ -425,7 +430,6 @@ impl DocCore {
 
                 data_index_in_parent = if token.is_data() && !token.is_commented_out() {
                     let index = self.num_top_level_data_nodes;
-                    self.num_top_level_data_nodes += 1;
                     Some(index)
                 } else {
                     None
@@ -496,6 +500,13 @@ impl DocCore {
 
         self.pretty_printed.complete_top_level_node();
         self.data_len_of_completed_sexps = self.pretty_printed.len();
+
+        if self.all_nodes[new_completed_top_level_node.0]
+            .token
+            .is_data()
+        {
+            self.num_top_level_data_nodes += 1;
+        }
 
         // Wire up sibling connection between the new top-level node and the previous one.
         if let Some(prev_top_level_node_index) = self.node_index_of_last_completed_top_level_sexp {
@@ -904,6 +915,121 @@ impl DocCore {
         // always find a value and can unwrap safely.
         NodeIndex(self.index_of_first_elem_ending_after(byte_index).unwrap())
     }
+
+    pub fn sexp_get_style_path_to_node(&self, node_index: NodeIndex) -> Option<String> {
+        let mut s = String::new();
+
+        // Treat end-of-list as start-of-list
+        let node_index = match self.token(node_index) {
+            DocumentToken::EndOfList(metadata) => metadata.list_start_index,
+            _ => node_index,
+        };
+
+        // Move off of comments or errors to their parent nodes.
+        let mut data_index = Some(node_index);
+        while let Some(index) = data_index {
+            if self.token(index).is_data() {
+                break;
+            }
+
+            data_index = self.node(index).parent_index;
+        }
+
+        // If we're at a top level comment, don't show any path at all.
+        let Some(node_index) = data_index else {
+            return None;
+        };
+
+        let parent_index = self.node(node_index).parent_index;
+
+        // When we're focused on a top-level node, show "." if it's the only node,
+        // otherwise show "[n]". (The recursive version doesn't track what depth
+        // our desired node is at to determine whether a lower level will add the '.'
+        // as needed.)
+        if parent_index.is_none() && self.num_top_level_data_nodes == 1 {
+            s.push('.');
+            return Some(s);
+        }
+
+        let _ = self.rec_sexp_get_style_path_to_node(&mut s, parent_index, node_index);
+
+        Some(s)
+    }
+
+    fn rec_sexp_get_style_path_to_node(
+        &self,
+        buf: &mut String,
+        parent_index: Option<NodeIndex>,
+        child_index: NodeIndex,
+    ) -> bool {
+        let Some(parent_index) = parent_index else {
+            if self.num_top_level_data_nodes > 1 {
+                let index = self
+                    .node(child_index)
+                    .data_index_in_parent
+                    .expect("top level node should have an index");
+                let _ = write!(buf, "[{index}]");
+            }
+
+            return true;
+        };
+
+        let should_write_path_from_parent_to_child = self.rec_sexp_get_style_path_to_node(
+            buf,
+            self.node(parent_index).parent_index,
+            parent_index,
+        );
+
+        if should_write_path_from_parent_to_child {
+            let child_index_in_parent = self
+                .node(child_index)
+                .data_index_in_parent
+                .expect("child_index should be a data node");
+
+            let list_kind = self
+                .token(parent_index)
+                .list_kind()
+                .expect("can't have child if parent isn't a list");
+
+            let try_field_accessor = match list_kind {
+                ListKind::Record => true,
+                ListKind::VariantRecord if child_index_in_parent != 0 => true,
+                _ => false,
+            };
+
+            // Try using ".foo" syntax for record fields in records and variant records.
+            if try_field_accessor {
+                invariants::record_keys_are_the_first_child_of_record_fields();
+                let name = &self.pretty_printed[self.node(child_index + 1).data_range.clone()];
+
+                invariants::record_keys_always_match_record_key_regex();
+                // Should always be ok
+                if let Ok(name) = std::str::from_utf8(name) {
+                    let _ = write!(buf, ".{name}");
+                    return false;
+                }
+            }
+
+            // Try writing ".Var[1]" for variant tuple access
+            if matches!(list_kind, ListKind::VariantTuple) && child_index_in_parent > 0 {
+                invariants::constructors_are_the_first_child_of_variants();
+                let constructor =
+                    &self.pretty_printed[self.node(parent_index + 1).data_range.clone()];
+
+                // Should always be ok
+                if let Ok(constructor) = std::str::from_utf8(constructor) {
+                    let _ = write!(buf, ".{constructor}[{}]", child_index_in_parent - 1);
+                    // This doesn't actually shorten the path! It just makes it more precise.
+                    return true;
+                }
+            }
+
+            let _ = write!(buf, ".[{child_index_in_parent}]");
+            true
+        } else {
+            true
+        }
+    }
 }
 
 impl SortedRanges for DocCore {
@@ -927,6 +1053,8 @@ mod tests {
     use super::*;
 
     use std::fmt::Write;
+
+    use crate::sexp::layout::tests::layout_and_show_logical_lines;
 
     use bstr::ByteSlice;
     use insta::assert_snapshot;
@@ -1003,7 +1131,7 @@ mod tests {
     }
 
     fn dump(bytes: &'static [u8]) -> String {
-        let doc = DocCore::from_bytes(bytes);
+        let doc = DocCore::from_bytes(bytes, true);
         dump_doc(&doc)
     }
 
@@ -1377,7 +1505,7 @@ mod tests {
 
     #[test]
     fn test_closest_node_to_byte_index() {
-        let doc = DocCore::from_bytes(b"((one two) #; three ; four\n)");
+        let doc = DocCore::from_bytes(b"((one two) #; three ; four\n)", true);
         assert_snapshot!(dump_doc(&doc), @r#"
         Raw document:
         ((one two) #; three ; four
@@ -1402,7 +1530,7 @@ mod tests {
         assert_eq!(doc.closest_node_to_byte_index(27), NodeIndex(7));
         assert_eq!(doc.pretty_printed.len(), 28);
 
-        let doc = DocCore::from_bytes(b"(a");
+        let doc = DocCore::from_bytes(b"(a", true);
         assert_snapshot!(dump_doc(&doc), @r#"
         Raw document:
         (a
@@ -1414,5 +1542,103 @@ mod tests {
         "#);
 
         assert_eq!(doc.closest_node_to_byte_index(1), NodeIndex(1));
+    }
+
+    #[test]
+    fn test_sexp_get_style_paths() {
+        let mut doc = DocCore::from_bytes(
+            b"(one (Two 2 too) ((a 1) (b 2) (c (d 3)))) (Var (a 1)",
+            false,
+        );
+        assert_snapshot!(layout_and_show_logical_lines(&doc), @r"
+         0..=1  : (one
+         2..=3  :  (Two
+         4..=4  :    2
+         5..=6  :    too)
+         7..=11 :  ((a 1)
+        12..=15 :   (b 2)
+        16..=18 :   (c (
+        19..=19 :     d
+        20..=24 :     3))))
+        ");
+        // 25..=30 : (Var (a 1))
+
+        let path = |i| doc.sexp_get_style_path_to_node(NodeIndex(i)).unwrap();
+
+        assert_snapshot!(path(0),  @".");
+        assert_snapshot!(path(1),  @".[0]");
+        assert_snapshot!(path(2),  @".[1]");
+        // Path to end of list should be same as path to start of list
+        assert_snapshot!(path(6),  @".[1]");
+
+        // Paths to variant tuples
+        assert_snapshot!(path(5),  @".[1].Two[1]");
+        assert_snapshot!(path(3),  @".[1].[0]");
+
+        assert_snapshot!(path(7),  @".[2]");
+
+        // Path to record field and record value are the same
+        assert_snapshot!(path(8),  @".[2].a");
+        assert_snapshot!(path(10), @".[2].a");
+        // Path to record key also uses the field name? This is maybe a little
+        // weird; should maybe be updated in "micro" mode.
+        assert_snapshot!(path(9),  @".[2].a");
+
+        // This is a "fake" record field, since it's not in a record.
+        assert_snapshot!(path(18), @".[2].c");
+        assert_snapshot!(path(21), @".[2].c");
+
+        // Now there are two top-level sexps
+        doc.append_raw_token(RawToken::RightParen);
+
+        let path = |i| doc.sexp_get_style_path_to_node(NodeIndex(i)).unwrap();
+
+        assert_snapshot!(path(0),  @"[0]");
+        assert_snapshot!(path(2),  @"[0].[1]");
+        assert_snapshot!(path(25),  @"[1]");
+
+        // Variant records fields use field name accessors
+        assert_snapshot!(path(27),  @"[1].a");
+        // Constructors use regular indexes though
+        assert_snapshot!(path(26),  @"[1].[0]");
+    }
+
+    #[test]
+    fn test_sexp_get_style_paths_for_non_data_nodes() {
+        let doc = DocCore::from_bytes(
+            b"; comment\n((a 1) #| mid-record |# (b (#| mid-record-field |#))) (err",
+            true,
+        );
+        assert_snapshot!(layout_and_show_logical_lines(&doc), @r"
+         0..=0  : ; comment
+         1..=5  : ((a 1)
+         6..=6  :  #| mid-record |#
+         7..=9  :  (b (
+        10..=10 :    #| mid-record-field |#
+        11..=13 : )))
+        14..=15 : (err
+        16..=16 :  ERR: Unexpected EOF while parsing list
+        17..=17 :
+        ");
+
+        let path = |i| {
+            doc.sexp_get_style_path_to_node(NodeIndex(i))
+                .unwrap_or("<none>".to_string())
+        };
+
+        // No path for a top-level comment
+        assert_snapshot!(path(0),  @"<none>");
+
+        // Comment doesn't count as data, so this is index 0
+        assert_snapshot!(path(1),  @"[0]");
+
+        // Comment in list
+        assert_snapshot!(path(6),  @"[0]");
+
+        // Comment in record field
+        assert_snapshot!(path(10),  @"[0].b");
+
+        // Path to error
+        assert_snapshot!(path(16),  @"[1]");
     }
 }

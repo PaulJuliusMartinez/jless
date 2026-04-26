@@ -441,7 +441,10 @@ impl<D: Document> App<D> {
                 }
 
                 let status_bar_top_line_segments = StatusBarTopLine {
-                    path_to_cursor: None,
+                    path_to_cursor: viewer
+                        .doc
+                        .path_to_cursor(&viewer.current_focus)
+                        .map(Rc::new),
                     filepath: self.input_filename.clone(),
                 }
                 .render(self.screen_dimensions.width);
