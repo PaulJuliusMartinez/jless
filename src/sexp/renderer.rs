@@ -7,7 +7,7 @@ use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
 };
-use crate::sexp::document::CollapseState;
+use crate::sexp::document::{CollapseState, TypesetLine, TypesetLines};
 use crate::sexp::layout::LogicalLine;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -74,7 +74,7 @@ pub fn typeset_logical_line(
     doc_width: NonZeroUsize,
     core: &DocCore,
     collapsible_nodes: &BTreeMap<NodeIndex, CollapseState>,
-) -> Vec<Vec<Segment<NodeIndex, SegmentKind>>> {
+) -> TypesetLines {
     let doc_content = core.pretty_printed.data();
     let compositor = Compositor::new(doc_content, doc_width);
 
@@ -88,7 +88,14 @@ pub fn typeset_logical_line(
 
     typesetter.typeset();
 
-    typesetter.compositor.finish()
+    TypesetLines(
+        typesetter
+            .compositor
+            .finish()
+            .into_iter()
+            .map(|x| TypesetLine(x))
+            .collect(),
+    )
 }
 
 impl<'a> Typesetter<'a> {
@@ -526,9 +533,10 @@ impl<'a> RenderContext<'a> {
 // 'l for lifetime of the line renderer, 's for the lifetime of rendering the whole screen
 pub fn style_typeset_line<'l, 's>(
     context: &'l RenderContext<'s>,
-    segments: &'l Vec<Segment<NodeIndex, SegmentKind>>,
+    segments: &'l TypesetLine,
 ) -> Vec<PreHighlightingStyledSegment> {
     segments
+        .0
         .iter()
         .map(|segment| {
             let focused = if let Some(node_index) = segment.doc_ref {
@@ -627,7 +635,7 @@ mod tests {
         let typeset_lines = doc.typeset_logical_line(&logical_lines[line]);
 
         let mut s = String::new();
-        for (i, typeset_line) in typeset_lines.iter().enumerate() {
+        for (i, typeset_line) in typeset_lines.0.iter().enumerate() {
             if i > 0 {
                 s.push_str("\n\n");
             }

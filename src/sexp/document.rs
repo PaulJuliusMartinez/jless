@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
 use std::num::NonZeroUsize;
-use std::ops::{Range, RangeInclusive};
+use std::ops::{Index, Range, RangeInclusive};
 use std::rc::Rc;
 
 use crate::document::{ContentRange, Document};
@@ -101,13 +101,31 @@ impl InitialNestedCollapseStateForTopLevelNodes {
     }
 }
 
-type TypesetLine = Vec<Segment<NodeIndex, SegmentKind>>;
+#[derive(Clone, Debug)]
+pub(super) struct TypesetLine(pub Vec<Segment<NodeIndex, SegmentKind>>);
+
+#[derive(Clone, Debug)]
+pub(super) struct TypesetLines(pub Vec<TypesetLine>);
+
+impl TypesetLines {
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl Index<usize> for TypesetLines {
+    type Output = TypesetLine;
+
+    fn index(&self, index: usize) -> &TypesetLine {
+        &self.0[index]
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct ScreenLine {
     pub logical_line: LogicalLine,
     pub doc_width: NonZeroUsize,
-    pub typeset_lines: Rc<Vec<TypesetLine>>,
+    pub typeset_lines: Rc<TypesetLines>,
     pub index: usize,
 }
 
@@ -172,7 +190,7 @@ impl ScreenLine {
     }
 
     fn typeset_line(&self) -> &TypesetLine {
-        &self.typeset_lines[self.index]
+        &self.typeset_lines.0[self.index]
     }
 }
 
@@ -934,7 +952,7 @@ impl SexpDocument {
         RenderContext::new(&color_scheme, &self.core, focus)
     }
 
-    pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> Vec<TypesetLine> {
+    pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> TypesetLines {
         renderer::typeset_logical_line(
             &logical_line,
             NonZeroUsize::new(self.width).expect("Can't have 0 width document"),
@@ -1102,6 +1120,7 @@ impl Document for SexpDocument {
         let fallback = screen_line.logical_line.start_index;
         screen_line
             .typeset_line()
+            .0
             .iter()
             .find_map(|segment| segment.doc_ref)
             .unwrap_or(fallback)
@@ -1331,7 +1350,7 @@ impl Document for SexpDocument {
 
         let mut highlighted_cursor = false;
 
-        for segment in screen_line.typeset_line().iter() {
+        for segment in screen_line.typeset_line().0.iter() {
             match &segment.content {
                 Text::SourceRange(range) => {
                     let content = std::str::from_utf8(&self.core.pretty_printed[range.clone()])
