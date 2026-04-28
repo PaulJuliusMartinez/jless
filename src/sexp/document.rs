@@ -111,6 +111,20 @@ impl TypesetLines {
     fn len(&self) -> usize {
         self.0.len()
     }
+
+    fn index_of_closest_line_to_byte_index(&self, byte_index: usize) -> usize {
+        for (i, typeset_line) in self.0.iter().enumerate() {
+            for segment in typeset_line.0.iter() {
+                if let Text::SourceRange(range) = &segment.content {
+                    if byte_index < range.end {
+                        return i;
+                    }
+                }
+            }
+        }
+
+        self.len() - 1
+    }
 }
 
 impl Index<usize> for TypesetLines {
@@ -1426,9 +1440,16 @@ impl Document for SexpDocument {
     fn raw_byte_index_to_visible_screen_line(&self, byte_index: usize) -> ScreenLine {
         let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
         let closest_visible_ancestor = self.closest_visible_ancestor(&closest_node_to_byte_index);
-        self.first_typeset_screen_line_for_logical_line(
-            self.logical_line_of_node_index(closest_visible_ancestor),
-        )
+        let logical_line = self.logical_line_of_node_index(closest_visible_ancestor);
+        let typeset_lines = self.typeset_logical_line(&logical_line);
+        let closest_index = typeset_lines.index_of_closest_line_to_byte_index(byte_index);
+
+        ScreenLine {
+            logical_line,
+            doc_width: NonZeroUsize::new(self.width).expect("width can't be 0"),
+            typeset_lines: Rc::new(typeset_lines),
+            index: closest_index,
+        }
     }
 
     fn is_raw_byte_range_visible(&self, byte_range: Range<usize>) -> bool {
@@ -1509,7 +1530,7 @@ pub mod test_helpers {
         let mut next_visible_line = Some(top_screen_line);
 
         while let Some(visible_line) = &next_visible_line {
-            writeln!(
+            let _ = writeln!(
                 output,
                 "{}",
                 doc.debug_text_content(visible_line, &FAR_AWAY_CURSOR)
@@ -2220,28 +2241,27 @@ mod tests {
     }
 
     #[test]
-    fn test_converting_between_raw_bytes_and_visible_cursors_and_screen_lines() {
+    fn test_converting_between_raw_byte_indexes_and_visible_cursors_and_screen_lines() {
         let mut doc = new_doc(
             b"(((aa 11)(bb (Var1 22))(cc (33 (Var2 (dd 44)) (Var3 55))))
             ((xx false)(yy ())(zz \"\")))",
         );
         assert_snapshot!(dump_with_byte_indexes(&doc), @r#"
-         0..=5  :   0..=9   : (((aa 11)
-         6..=9  :  10..=19  :   (bb (Var1
-        10..=12 :  20..=24  :     22))
-        13..=15 :  25..=30  :   (cc (
-        16..=16 :  30..=32  :     33
-        17..=18 :  33..=38  :     (Var2
-        19..=23 :  39..=47  :       (dd 44))
-        24..=25 :  48..=53  :     (Var3
-        26..=30 :  54..=60  :       55))))
-        31..=35 :  61..=72  :  ((xx false)
-        36..=39 :  73..=80  :   (yy ())
-        40..=45 :  81..=90  :   (zz "")))
+         0..=5  :   0..9   : (((aa 11)
+         6..=9  :  10..19  :   (bb (Var1
+        10..=12 :  20..24  :     22))
+        13..=15 :  25..30  :   (cc (
+        16..=16 :  30..32  :     33
+        17..=18 :  33..38  :     (Var2
+        19..=23 :  39..47  :       (dd 44))
+        24..=25 :  48..53  :     (Var3
+        26..=30 :  54..60  :       55))))
+        31..=35 :  61..72  :  ((xx false)
+        36..=39 :  73..80  :   (yy ())
+        40..=45 :  81..90  :   (zz "")))
         "#);
 
         fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
-            // TODO: SCREEN LINE FIX THIS TEST MAKE IT MORE ROBUST
             let LogicalLine {
                 start_index,
                 end_index,
@@ -2269,6 +2289,38 @@ mod tests {
         assert_eq!(doc.closest_visible_ancestor(&NodeIndex(26)), NodeIndex(15));
         assert_eq!(doc.closest_visible_cursor(&NodeIndex(26)), NodeIndex(13));
         assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"13..=15");
+    }
+
+    #[test]
+    fn test_raw_byte_indexes_to_screen_lines_with_line_wrapping() {
+        let mut doc = new_doc(b"000001111122222333334444\n(0000111112222)");
+        doc.resize(5);
+        assert_snapshot!(dump_with_byte_indexes(&doc), @r"
+        0..=0  :   0..24  : 000001111122222333334444
+        1..=3  :  25..40  : (0000111112222)
+        ");
+
+        fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
+            let screen_line = doc.raw_byte_index_to_visible_screen_line(index);
+            let LogicalLine {
+                start_index,
+                end_index,
+                ..
+            } = screen_line.logical_line;
+
+            format!(
+                "{}..={} [{}]",
+                start_index.0, end_index.0, screen_line.index
+            )
+        }
+
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 0),  @"0..=0 [0]");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 4),  @"0..=0 [0]");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 5),  @"0..=0 [1]");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 23), @"0..=0 [4]");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 25), @"1..=3 [0]");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 33), @"1..=3 [1]");
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 39), @"1..=3 [2]");
     }
 
     #[test]
