@@ -2176,17 +2176,17 @@ mod tests {
     #[test]
     fn test_converting_between_raw_bytes_and_cursors() {
         let doc = new_doc(b"((aa 11)(bb (Var1 22))(cc (33 (Var2 (dd 44)) (Var3 55))))");
-        assert_snapshot!(dump_with_byte_indexes(&doc), @r#"
-         0..=4  :   0..=8   : ((aa 11)
-         5..=8  :   9..=18  :  (bb (Var1
-         9..=11 :  19..=23  :    22))
-        12..=14 :  24..=29  :  (cc (
-        15..=15 :  29..=31  :    33
-        16..=17 :  32..=37  :    (Var2
-        18..=22 :  38..=46  :      (dd 44))
-        23..=24 :  47..=52  :    (Var3
-        25..=29 :  53..=59  :      55))))
-        "#);
+        assert_snapshot!(dump_with_byte_indexes(&doc), @r"
+         0..=4  :   0..8   : ((aa 11)
+         5..=8  :   9..18  :  (bb (Var1
+         9..=11 :  19..23  :    22))
+        12..=14 :  24..29  :  (cc (
+        15..=15 :  29..31  :    33
+        16..=17 :  32..37  :    (Var2
+        18..=22 :  38..46  :      (dd 44))
+        23..=24 :  47..52  :    (Var3
+        25..=29 :  53..59  :      55))))
+        ");
 
         assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(0)), @"0..1");
         assert_eq!(doc.raw_byte_index_to_cursor(0), NodeIndex(0));
@@ -2275,12 +2275,12 @@ mod tests {
     fn test_is_raw_byte_range_visible() {
         let mut doc = new_doc(b"((k1 a)(k2 (Var b))(k3 c)(k4 (Var d)))");
         assert_snapshot!(dump_with_byte_indexes(&doc), @r"
-         0..=4  :   0..=7   : ((k1 a)
-         5..=8  :   8..=16  :  (k2 (Var
-         9..=11 :  17..=20  :    b))
-        12..=15 :  21..=27  :  (k3 c)
-        16..=19 :  28..=36  :  (k4 (Var
-        20..=23 :  37..=41  :    d)))
+         0..=4  :   0..7   : ((k1 a)
+         5..=8  :   8..16  :  (k2 (Var
+         9..=11 :  17..20  :    b))
+        12..=15 :  21..27  :  (k3 c)
+        16..=19 :  28..36  :  (k4 (Var
+        20..=23 :  37..41  :    d)))
         ");
 
         let var = 14..16;

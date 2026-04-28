@@ -459,7 +459,7 @@ pub mod tests {
 
             let _ = write!(output, "{:>2}..={:<2} : ", start_index.0, end_index.0);
             if show_byte_indexes {
-                let _ = write!(output, "{:>3}..={:<3} : ", start_range.start, end_range.end);
+                let _ = write!(output, "{:>3}..{:<3} : ", start_range.start, end_range.end);
             }
 
             let _ = write!(output, "{: <indentation$}", "");

@@ -658,8 +658,8 @@ mod tests {
         let mut doc = new_doc(b"((num_field 123)(bool_field true))");
         doc.resize(10);
         assert_snapshot!(dump_with_byte_indexes(&doc), @r"
-        0..=4  :   0..=16  : ((num_field 123)
-        5..=9  :  17..=35  :  (bool_field true))
+        0..=4  :   0..16  : ((num_field 123)
+        5..=9  :  17..35  :  (bool_field true))
         ");
 
         assert_snapshot!(render_doc_line(&doc, 0, NodeIndex(1)), @r"
