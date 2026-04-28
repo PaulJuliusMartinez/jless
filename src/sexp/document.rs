@@ -1789,7 +1789,7 @@ mod tests {
     }
 
     #[test]
-    fn expanding_and_collapsing_nodes() {
+    fn test_expanding_and_collapsing_nodes() {
         // Basic collapsing of a list
         let mut doc = new_doc(b"(1 2 3)");
 
@@ -1848,11 +1848,12 @@ mod tests {
         ");
 
         // Basic collapsing of a Variant
-        let mut doc = new_doc(b"(Variant 1)");
+        let mut doc = new_doc(b"(Variant 1 2)");
 
         assert_snapshot!(dump(&doc), @r"
         0..=1  : (Variant
-        2..=3  :   1)
+        2..=2  :   1
+        3..=4  :   2)
         ");
 
         let movements =
@@ -1877,7 +1878,7 @@ mod tests {
     }
 
     #[test]
-    fn collapsing_values_of_records() {
+    fn test_collapsing_values_of_records() {
         // Collapsing list value
         let mut doc = new_doc(b"((a 1)(b (2 3)))");
 
@@ -1911,12 +1912,13 @@ mod tests {
         ");
 
         // Collapsing variant value
-        let mut doc = new_doc(b"((a 1)(b (Variant 2)))");
+        let mut doc = new_doc(b"((a 1)(b (Variant 2 3)))");
 
         assert_snapshot!(dump(&doc), @r"
-        0..=4  : ((a 1)
-        5..=8  :  (b (Variant
-        9..=12 :    2)))
+         0..=4  : ((a 1)
+         5..=8  :  (b (Variant
+         9..=9  :    2
+        10..=13 :    3)))
         ");
 
         let movements =
@@ -1970,12 +1972,13 @@ mod tests {
         ");
 
         // Collapsing singleton variant value
-        let mut doc = new_doc(b"((a 1)(b ((Variant 2))))");
+        let mut doc = new_doc(b"((a 1)(b ((Variant 2 3))))");
 
         assert_snapshot!(dump(&doc), @r"
          0..=4  : ((a 1)
          5..=9  :  (b ((Variant
-        10..=14 :    2))))
+        10..=10 :    2
+        11..=15 :    3))))
         ");
 
         let movements = show_cursor_movements(
@@ -2196,17 +2199,17 @@ mod tests {
 
     #[test]
     fn test_converting_between_raw_bytes_and_cursors() {
-        let doc = new_doc(b"((aa 11)(bb (Var1 22))(cc (33 (Var2 (dd 44)) (Var3 55))))");
+        let doc = new_doc(b"((aa 11)(bb (Var1 22 33))(cc (44 (Var2 (dd 55)) (Var3 66))))");
         assert_snapshot!(dump_with_byte_indexes(&doc), @r"
          0..=4  :   0..8   : ((aa 11)
          5..=8  :   9..18  :  (bb (Var1
-         9..=11 :  19..23  :    22))
-        12..=14 :  24..29  :  (cc (
-        15..=15 :  29..31  :    33
-        16..=17 :  32..37  :    (Var2
-        18..=22 :  38..46  :      (dd 44))
-        23..=24 :  47..52  :    (Var3
-        25..=29 :  53..59  :      55))))
+         9..=9  :  19..21  :    22
+        10..=12 :  22..26  :    33))
+        13..=15 :  27..32  :  (cc (
+        16..=16 :  32..34  :    44
+        17..=18 :  35..40  :    (Var2
+        19..=23 :  41..49  :      (dd 55))
+        24..=30 :  50..62  :    (Var3 66))))
         ");
 
         assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(0)), @"0..1");
@@ -2231,34 +2234,34 @@ mod tests {
         assert_eq!(doc.raw_byte_index_to_cursor(20), NodeIndex(9));
 
         // Variant tuples and records include their constructor
-        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(16)), @"32..37");
-        assert_eq!(doc.raw_byte_index_to_cursor(34), NodeIndex(16));
-        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(23)), @"47..52");
-        assert_eq!(doc.raw_byte_index_to_cursor(48), NodeIndex(23));
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(17)), @"35..40");
+        assert_eq!(doc.raw_byte_index_to_cursor(37), NodeIndex(17));
+        assert_debug_snapshot!(doc.raw_byte_range_of_cursor(&NodeIndex(24)), @"50..55");
+        assert_eq!(doc.raw_byte_index_to_cursor(52), NodeIndex(24));
 
-        // Trailing parens at the end of first sexp
-        assert_eq!(doc.raw_byte_index_to_cursor(58), NodeIndex(25));
+        // Trailing parens at the end of the sexp
+        assert_eq!(doc.raw_byte_index_to_cursor(60), NodeIndex(26));
     }
 
     #[test]
     fn test_converting_between_raw_byte_indexes_and_visible_cursors_and_screen_lines() {
         let mut doc = new_doc(
-            b"(((aa 11)(bb (Var1 22))(cc (33 (Var2 (dd 44)) (Var3 55))))
+            b"(((aa 11)(bb (Var1 (x 22)))(cc (33 (Var2 (dd 44)) (Var3 (y 55)))))
             ((xx false)(yy ())(zz \"\")))",
         );
         assert_snapshot!(dump_with_byte_indexes(&doc), @r#"
          0..=5  :   0..9   : (((aa 11)
          6..=9  :  10..19  :   (bb (Var1
-        10..=12 :  20..24  :     22))
-        13..=15 :  25..30  :   (cc (
-        16..=16 :  30..32  :     33
-        17..=18 :  33..38  :     (Var2
-        19..=23 :  39..47  :       (dd 44))
-        24..=25 :  48..53  :     (Var3
-        26..=30 :  54..60  :       55))))
-        31..=35 :  61..72  :  ((xx false)
-        36..=39 :  73..80  :   (yy ())
-        40..=45 :  81..90  :   (zz "")))
+        10..=15 :  20..28  :     (x 22)))
+        16..=18 :  29..34  :   (cc (
+        19..=19 :  34..36  :     33
+        20..=21 :  37..42  :     (Var2
+        22..=26 :  43..51  :       (dd 44))
+        27..=28 :  52..57  :     (Var3
+        29..=36 :  58..68  :       (y 55)))))
+        37..=41 :  69..80  :  ((xx false)
+        42..=45 :  81..88  :   (yy ())
+        46..=51 :  89..98  :   (zz "")))
         "#);
 
         fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
@@ -2276,19 +2279,19 @@ mod tests {
         assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 0), @"0..=5");
         assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 15), @"6..=9");
 
-        // Byte index of the actual "55" (coincidentally).
-        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"26..=30");
+        // Byte index of the "55".
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 61), @"29..=36");
 
         // Collapse "(Var3 ....)"
-        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(24));
-        assert_eq!(doc.closest_visible_cursor(&NodeIndex(26)), NodeIndex(24));
-        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"24..=25");
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(27));
+        assert_eq!(doc.closest_visible_cursor(&NodeIndex(29)), NodeIndex(27));
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 61), @"27..=28");
 
         // Collapse "(cc ....)"
-        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(13));
-        assert_eq!(doc.closest_visible_ancestor(&NodeIndex(26)), NodeIndex(15));
-        assert_eq!(doc.closest_visible_cursor(&NodeIndex(26)), NodeIndex(13));
-        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 55), @"13..=15");
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(16));
+        assert_eq!(doc.closest_visible_ancestor(&NodeIndex(29)), NodeIndex(18));
+        assert_eq!(doc.closest_visible_cursor(&NodeIndex(29)), NodeIndex(16));
+        assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 61), @"16..=18");
     }
 
     #[test]
@@ -2325,25 +2328,27 @@ mod tests {
 
     #[test]
     fn test_is_raw_byte_range_visible() {
-        let mut doc = new_doc(b"((k1 a)(k2 (Var b))(k3 c)(k4 (Var d)))");
+        let mut doc = new_doc(b"((k1 a)(k2 (Var b c))(k3 d)(k4 (Var e f)))");
         assert_snapshot!(dump_with_byte_indexes(&doc), @r"
          0..=4  :   0..7   : ((k1 a)
          5..=8  :   8..16  :  (k2 (Var
-         9..=11 :  17..20  :    b))
-        12..=15 :  21..27  :  (k3 c)
-        16..=19 :  28..36  :  (k4 (Var
-        20..=23 :  37..41  :    d)))
+         9..=9  :  17..18  :    b
+        10..=12 :  19..22  :    c))
+        13..=16 :  23..29  :  (k3 d)
+        17..=20 :  30..38  :  (k4 (Var
+        21..=21 :  39..40  :    e
+        22..=25 :  41..45  :    f)))
         ");
 
         let var = 14..16;
-        let hidden_var_value = 17..19;
-        let hidden_into_next_line = 17..23;
-        let hidden_into_next_line_into_hidden = 17..38;
+        let hidden_var_value = 19..21;
+        let hidden_into_next_line = 19..25;
+        let hidden_into_next_line_into_hidden = 19..42;
 
         assert_snapshot!(doc.core.pretty_printed[var.clone()].as_bstr(), @"ar");
-        assert_snapshot!(doc.core.pretty_printed[hidden_var_value.clone()].as_bstr(), @"b)");
-        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line.clone()].as_bstr(), @"b)) (k");
-        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line_into_hidden.clone()].as_bstr(), @"b)) (k3 c) (k4 (Var d");
+        assert_snapshot!(doc.core.pretty_printed[hidden_var_value.clone()].as_bstr(), @"c)");
+        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line.clone()].as_bstr(), @"c)) (k");
+        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line_into_hidden.clone()].as_bstr(), @"c)) (k3 d) (k4 (Var e f");
 
         assert_snapshot!(doc.is_raw_byte_range_visible(var.clone()), @"true");
         assert_snapshot!(doc.is_raw_byte_range_visible(hidden_var_value.clone()), @"true");

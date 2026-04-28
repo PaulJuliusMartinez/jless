@@ -1,5 +1,6 @@
 use std::iter::DoubleEndedIterator;
 
+use crate::sexp::core::invariants;
 use crate::sexp::core::{AtomKind, DocCore, DocumentToken, ListKind, ListMetadata, NodeIndex};
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -39,9 +40,10 @@ struct LayoutEngine<'a> {
 #[derive(Copy, Clone)]
 enum LayoutState {
     StartOfLine { leading_parens: usize },
-    RecordFieldKey,
-    RecordFieldValue,
-    VariantConstructor { as_record_value: bool },
+    ExpectingRecordFieldKey,
+    ExpectingRecordFieldValue,
+    ExpectingVariantConstructor,
+    ExpectingSingleVariantTupleValue,
 }
 
 impl Default for LayoutState {
@@ -133,6 +135,8 @@ impl<'a> LayoutEngine<'a> {
                 debug_assert!(matches!(list_kind, ListKind::DateTime));
                 self.put_next_token_on_current_line(); // StartOfList
 
+                invariants::date_times_have_no_comments_errors_or_commented_out_sexps();
+
                 debug_assert!(matches!(
                     self.next_token().atom_kind(),
                     Some(AtomKind::Date)
@@ -212,8 +216,6 @@ impl<'a> LayoutEngine<'a> {
     fn run(&mut self) {
         use SemanticTokenKind as STK;
 
-        // TODO: COMMENTED OUT THINGS???
-
         while self.next_index <= self.end_index_incl {
             let next_token_kind = STK::from_document_token(self.next_token());
 
@@ -250,7 +252,7 @@ impl<'a> LayoutEngine<'a> {
                                 self.put_opening_paren_on_current_line(
                                     self.current_line_indentation + leading_parens + 1,
                                 );
-                                self.layout_state = LayoutState::RecordFieldKey;
+                                self.layout_state = LayoutState::ExpectingRecordFieldKey;
                             }
                         }
                         STK::Variant => {
@@ -260,9 +262,7 @@ impl<'a> LayoutEngine<'a> {
                                 self.put_opening_paren_on_current_line(
                                     self.current_line_indentation + leading_parens + 1,
                                 );
-                                self.layout_state = LayoutState::VariantConstructor {
-                                    as_record_value: false,
-                                };
+                                self.layout_state = LayoutState::ExpectingVariantConstructor;
                             }
                         }
                         STK::List => {
@@ -294,38 +294,23 @@ impl<'a> LayoutEngine<'a> {
                         }
                     }
                 }
-                LayoutState::RecordFieldKey => {
-                    match next_token_kind {
-                        STK::AtomLike => {
-                            self.put_atom_like_on_current_line();
-                            self.layout_state = LayoutState::RecordFieldValue;
-                        }
-                        STK::Comment => {
-                            self.put_comment_on_current_line();
-                            // We stay in the same state.
-                            self.end_line_and_set_state(LayoutState::RecordFieldKey);
-                        }
-                        STK::Error => {
-                            // Errors always go on their own line.
-                            if self.current_line_start_index != self.next_index {
-                                self.end_line_and_set_state(LayoutState::RecordFieldKey);
-                            }
-
-                            self.put_next_token_on_current_line();
-
-                            // We stay in the same state.
-                            self.end_line_and_set_state(LayoutState::RecordFieldKey);
-                        }
-                        STK::RecordField
-                        | STK::Variant
-                        | STK::Singleton
-                        | STK::List
-                        | STK::EndOfList => {
-                            panic!("Unexpected next token while formatting VariantConstructor")
-                        }
+                LayoutState::ExpectingRecordFieldKey => match next_token_kind {
+                    STK::AtomLike => {
+                        self.put_atom_like_on_current_line();
+                        self.layout_state = LayoutState::ExpectingRecordFieldValue;
                     }
-                }
-                LayoutState::RecordFieldValue => {
+                    STK::RecordField
+                    | STK::Variant
+                    | STK::Singleton
+                    | STK::List
+                    | STK::EndOfList
+                    | STK::Comment
+                    | STK::Error => {
+                        invariants::record_keys_are_the_first_child_of_record_fields();
+                        panic!("Unexpected next token while in state ExpectingVariantConstructor");
+                    }
+                },
+                LayoutState::ExpectingRecordFieldValue => {
                     match next_token_kind {
                         STK::AtomLike => {
                             self.put_atom_like_on_current_line();
@@ -338,12 +323,10 @@ impl<'a> LayoutEngine<'a> {
                             //    varant-param-1
                             //    varant-param-2)))
                             self.put_opening_paren_on_current_line(
-                                // We'll update the indentation after we see the Constructor.
+                                // We'll update the indentation when we see the constructor.
                                 self.elem_indentation_for_current_list(),
                             );
-                            self.layout_state = LayoutState::VariantConstructor {
-                                as_record_value: true,
-                            };
+                            self.layout_state = LayoutState::ExpectingVariantConstructor;
                         }
                         STK::Singleton => {
                             // We'll nest a bunch of singletons together when they're the value
@@ -374,39 +357,86 @@ impl<'a> LayoutEngine<'a> {
                             self.end_line_and_reset_to_default_state();
                         }
                         STK::EndOfList => {
-                            panic!("Unexpected next token while formatting RecordFieldValue")
+                            panic!(
+                                "Unexpected next token while in state ExpectingRecordFieldValue"
+                            );
                         }
                     }
                 }
-                LayoutState::VariantConstructor { as_record_value } => match next_token_kind {
-                    STK::Error => {
-                        self.end_line_and_set_state(LayoutState::VariantConstructor {
-                            as_record_value: false,
-                        });
-                    }
-                    STK::Comment => {
-                        if as_record_value {
-                            self.increase_current_indendation(2);
-                        } else {
-                            self.put_comment_on_current_line();
+                LayoutState::ExpectingVariantConstructor => {
+                    match next_token_kind {
+                        STK::AtomLike => {
+                            let variant_is_singleton_tuple_with_no_data_or_comments = {
+                                invariants::constructors_are_the_first_child_of_variants();
+                                // Variant should be a VariantTuple, and its single child
+                                // should not have a next sibling.
+
+                                let is_variant_tuple = matches!(
+                                    self.doc.token(self.next_index - 1).list_kind(),
+                                    Some(ListKind::VariantTuple)
+                                );
+
+                                let first_tuple_value_has_no_next_sibling =
+                                    self.doc.node(self.next_index + 1).next_sibling.is_none();
+
+                                is_variant_tuple && first_tuple_value_has_no_next_sibling
+                            };
+
+                            self.put_atom_like_on_current_line();
+                            self.increase_current_indendation(1);
+
+                            if variant_is_singleton_tuple_with_no_data_or_comments {
+                                self.layout_state = LayoutState::ExpectingSingleVariantTupleValue;
+                            } else {
+                                self.end_line_and_reset_to_default_state();
+                            }
                         }
-                        self.end_line_and_set_state(LayoutState::VariantConstructor {
-                            as_record_value: false,
-                        });
+                        STK::RecordField
+                        | STK::Variant
+                        | STK::Singleton
+                        | STK::List
+                        | STK::EndOfList
+                        | STK::Comment
+                        | STK::Error => {
+                            invariants::constructors_are_the_first_child_of_variants();
+                            panic!(
+                                "Unexpected next token while in state ExpectingVariantConstructor"
+                            );
+                        }
                     }
-                    STK::AtomLike => {
-                        self.put_atom_like_on_current_line();
-                        self.increase_current_indendation(1);
-                        self.end_line_and_reset_to_default_state();
+                }
+                LayoutState::ExpectingSingleVariantTupleValue => {
+                    match next_token_kind {
+                        STK::AtomLike => {
+                            self.put_atom_like_on_current_line();
+                            self.consume_closing_parens();
+                            self.end_line_and_reset_to_default_state();
+                        }
+                        STK::Singleton => {
+                            self.put_opening_paren_on_current_line(
+                                self.elem_indentation_for_current_list(),
+                            );
+                        }
+                        STK::List => {
+                            self.put_opening_paren_on_current_line(
+                                self.elem_indentation_for_current_list(),
+                            );
+                            self.end_line_and_reset_to_default_state();
+                        }
+                        STK::Variant => {
+                            // Don't want to nest variants, e.g.:
+                            // (Variant (Foo (Bar
+                            //   bar_val)))
+                            self.end_line_and_reset_to_default_state();
+                        }
+                        STK::RecordField => {
+                            panic!("Shouldn't see a RecordField in a VariantTuple while in state ExpectingSingleVariantTupleValue");
+                        }
+                        STK::EndOfList | STK::Comment | STK::Error => {
+                            panic!("Unexpected next token while in state ExpectingSingleVariantTupleValue");
+                        }
                     }
-                    STK::RecordField
-                    | STK::Variant
-                    | STK::Singleton
-                    | STK::List
-                    | STK::EndOfList => {
-                        panic!("Unexpected next token while formatting VariantConstructor")
-                    }
-                },
+                }
             }
         }
     }
@@ -542,9 +572,10 @@ pub mod tests {
         // DateTimes are treated like atoms
         assert_snapshot!(layout(b"(key (2025-01-13 11:28:37.000000000))"), @" 0..=6  : (key (2025-01-13 11:28:37.000000000))");
 
-        assert_snapshot!(layout(b"(key (Variant value))"), @r"
+        assert_snapshot!(layout(b"(key (Variant one two))"), @r"
         0..=3  : (key (Variant
-        4..=6  :   value))
+        4..=4  :   one
+        5..=7  :   two))
         ");
         assert_snapshot!(layout(b"(key ((Variant_in_singleton (a 1)(b 2))))"), @r"
         0..=4  : (key ((Variant_in_singleton
@@ -570,17 +601,19 @@ pub mod tests {
         3..=3  :  ; comment after value
         4..=4  : )
         ");
-        assert_snapshot!(layout(b"(key (Variant 1) ; comment after value\n)"), @r"
+        assert_snapshot!(layout(b"(key (Variant 1 2) ; comment after value\n)"), @r"
         0..=3  : (key (Variant
-        4..=5  :   1)
-        6..=6  :  ; comment after value
-        7..=7  : )
+        4..=4  :   1
+        5..=6  :   2)
+        7..=7  :  ; comment after value
+        8..=8  : )
         ");
-        assert_snapshot!(layout(b"(key ; comment before variant value\n(Variant value))"), @r"
+        assert_snapshot!(layout(b"(key ; comment before variant value\n(Variant one two))"), @r"
         0..=1  : (key
         2..=2  :    ; comment before variant value
         3..=4  :    (Variant
-        5..=7  :      value))
+        5..=5  :      one
+        6..=8  :      two))
         ");
 
         // This is not treated as a variant because there is a comment before the constructor.
@@ -734,6 +767,111 @@ pub mod tests {
     }
 
     #[test]
+    fn layout_singleton_variant_tuples() {
+        // When a variant tuple has a single value, the variant value goes on the same line.
+        let output = layout(b"(Variant 1)");
+        assert_snapshot!(&output, @" 0..=3  : (Variant 1)");
+
+        let output = layout(b"(Variant (((single))))");
+        assert_snapshot!(&output, @" 0..=9  : (Variant (((single))))");
+
+        // Comments/errors ruin it though
+        let output = layout(b"(Variant #| comment |# 1)");
+        assert_snapshot!(&output, @r"
+        0..=1  : (Variant
+        2..=2  :   #| comment |#
+        3..=4  :   1)
+        ");
+
+        let output = layout(b"(Variant 1 #; )");
+        assert_snapshot!(&output, @r##"
+        0..=1  : (Variant
+        2..=2  :   1
+        3..=3  :   ERR: Saw unexpected ')' after sexp comment "#;"
+        4..=4  : )
+        "##);
+
+        // A variant record is not laid out this way
+        let output = layout(b"(Variant (a 1))");
+        assert_snapshot!(&output, @r"
+        0..=1  : (Variant
+        2..=6  :   (a 1))
+        ");
+
+        // Lists and records have their elems indented once relative to constructor
+        let output = layout(b"(Variant (1 2))");
+        assert_snapshot!(&output, @r"
+        0..=2  : (Variant (
+        3..=3  :   1
+        4..=6  :   2))
+        ");
+
+        let output = layout(b"(Variant ((a 1) (b 2)))");
+        assert_snapshot!(&output, @r"
+        0..=2  : (Variant (
+        3..=6  :   (a 1)
+        7..=12 :   (b 2)))
+        ");
+
+        // Singletons pile up
+        let output = layout(b"(Variant (((1 2))))");
+        assert_snapshot!(&output, @r"
+        0..=4  : (Variant (((
+        5..=5  :   1
+        6..=10 :   2))))
+        ");
+
+        let output = layout(b"(Variant ((((a 1) (b 2)))))");
+        assert_snapshot!(&output, @r"
+        0..=4  : (Variant (((
+        5..=8  :   (a 1)
+        9..=16 :   (b 2)))))
+        ");
+
+        // All the same applies if it's a record value
+        let output = layout(b"((a 1) (b (Variant 1)))");
+        assert_snapshot!(&output, @r"
+        0..=4  : ((a 1)
+        5..=12 :  (b (Variant 1)))
+        ");
+
+        // Indented relative to record key
+        let output = layout(b"((a 1) (b (Variant (1 2))))");
+        assert_snapshot!(&output, @r"
+         0..=4  : ((a 1)
+         5..=9  :  (b (Variant (
+        10..=10 :    1
+        11..=15 :    2))))
+        ");
+
+        let output = layout(b"((a (Variant ((a 1) (b 2)))) (b 2))");
+        assert_snapshot!(&output, @r"
+         0..=5  : ((a (Variant (
+         6..=9  :    (a 1)
+        10..=16 :    (b 2))))
+        17..=21 :  (b 2))
+        ");
+
+        // Exactly same as above, but nested in more singletons
+        let output = layout(b"(((a (Variant ((a 1) (b 2)))) (b 2)))");
+        assert_snapshot!(&output, @r"
+         0..=6  : (((a (Variant (
+         7..=10 :     (a 1)
+        11..=17 :     (b 2))))
+        18..=23 :   (b 2)))
+        ");
+
+        let output = layout(b"((((a (Variant ((a 1) (b 2)))) (b 2))))");
+        assert_snapshot!(&output, @r"
+         0..=1  : ((
+         2..=7  :   ((a (Variant (
+         8..=11 :      (a 1)
+        12..=18 :      (b 2))))
+        19..=25 :    (b 2))))
+        ");
+    }
+
+    #[test]
     fn layout_sexp_pp_config() {
         let sexp_pp_config = br"
             ((indent 2)
@@ -773,15 +911,13 @@ pub mod tests {
         31..=31 :    Yellow
         32..=32 :    Cyan
         33..=35 :    White))
-        36..=39 :  (atom_coloring (Color_first
-        40..=42 :    3))
+        36..=42 :  (atom_coloring (Color_first 3))
         43..=46 :  (atom_printing Escaped)
         47..=50 :  (paren_coloring true)
         51..=54 :  (opening_parens Same_line)
         55..=58 :  (closing_parens Same_line)
         59..=62 :  (comments (Print
-        63..=64 :    (Indent_comment
-        65..=66 :      3)
+        63..=66 :    (Indent_comment 3)
         67..=69 :    (Green)
         70..=72 :    Pretty_print))
         73..=76 :  (singleton_limit (Singleton_limit
