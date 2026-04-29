@@ -593,35 +593,37 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     }
 
     fn copy_content(&mut self, ch: char) {
-        use std::io::Write;
-
         let Some(access_method) = &self.clipboard_access_method else {
-            // TODO: Display error: "Don't know how to access clipboard"
+            self.set_error_message("Unable to access clipboard".to_string());
             return;
-        };
-
-        let mut sink = match clipboard::start_copy(access_method) {
-            Ok(sink) => sink,
-            Err(_) => {
-                // TODO: Display error: Can't start clipboard cmd
-                return;
-            }
         };
 
         match &self.viewer {
             None => {
-                let _ = write!(sink, "can't copy, still waiting for input");
+                self.set_info_message("Can't copy; still waiting for input".to_string());
+                return;
             }
             Some(viewer) => {
-                // TODO: Handle errors here.
-                let _ = viewer
+                let mut sink = match clipboard::start_copy(access_method) {
+                    Ok(sink) => sink,
+                    Err(err) => {
+                        self.set_error_message(err);
+                        return;
+                    }
+                };
+
+                if let Err(err) = viewer
                     .doc
-                    .yank_content(&mut sink, &viewer.current_focus, ch);
+                    .yank_content(&mut sink, &viewer.current_focus, ch)
+                {
+                    self.set_error_message(err);
+                }
+
+                if let Err(err) = sink.finish_copy() {
+                    self.set_error_message(err);
+                }
             }
         }
-
-        // TODO: Display error: Copy may have failed
-        let _ = sink.finish_copy();
     }
 
     fn draw_screen(&mut self) {

@@ -19,6 +19,7 @@ use crate::sexp::layout::LogicalLine;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
 
+use ocaml_sexplib::atom::PlausibleSerializedAtom;
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
 use ocaml_sexplib::Ref;
 use wabi_tree::OSBTreeMap;
@@ -217,10 +218,9 @@ impl ScreenLine {
 }
 
 enum CopyTarget {
-    PrettyPrintedValue,
-    MachineValue,
-    RecordField,
-    MachineRecordField,
+    Value { machine: bool },
+    RecordField { machine: bool },
+    Siblings { machine: bool },
     Key,
     Constructor,
     String,
@@ -1092,23 +1092,36 @@ impl SexpDocument {
         let value_node_index = record_field_value_node_index.unwrap_or(node_index);
 
         let res = match target {
-            CopyTarget::PrettyPrintedValue => {
-                self.yank_pretty_printed_node(output, value_node_index)
+            CopyTarget::Value { machine } => {
+                if machine {
+                    self.yank_machine_node(output, value_node_index)
+                } else {
+                    let write_trailing_newline = true;
+                    self.yank_pretty_printed_node(output, value_node_index, write_trailing_newline)
+                }
             }
-            CopyTarget::MachineValue => self.yank_machine_node(output, value_node_index),
-            CopyTarget::RecordField | CopyTarget::MachineRecordField => {
+            CopyTarget::RecordField { machine } => {
                 if matches!(
                     self.core.token(node_index).list_kind(),
                     Some(ListKind::RecordField),
                 ) {
-                    if matches!(target, CopyTarget::MachineRecordField) {
+                    if machine {
                         self.yank_machine_node(output, node_index)
                     } else {
-                        self.yank_pretty_printed_node(output, node_index)
+                        let write_trailing_newline = true;
+                        self.yank_pretty_printed_node(output, node_index, write_trailing_newline)
                     }
                 } else {
                     return Err("Can't yank record field; not focused on record field".to_string());
                 }
+            }
+            CopyTarget::Siblings { machine } => {
+                let first_sibling = match self.core.parent_index(node_index) {
+                    Some(parent_index) => parent_index + 1,
+                    None => NodeIndex(0),
+                };
+
+                self.yank_siblings(output, first_sibling, machine)
             }
             CopyTarget::Key => {
                 if matches!(
@@ -1134,17 +1147,16 @@ impl SexpDocument {
                 }
             }
             CopyTarget::String => match self.core.token(value_node_index) {
-                DocumentToken::Atom(AtomMetadata { quoted, valid, .. }) => {
-                    if *valid {
-                        if !*quoted {
-                            output.write_all(self.core.raw_bytes_for_node(value_node_index))
-                        } else {
-                            unimplemented!("Don't know how to unescape quoted values yet");
-                        }
-                    } else {
-                        return Err(
-                            "Can't yank raw atom value; atom contains invalid escapes".to_string()
-                        );
+                // TODO: Escape control characters (and give user feedback that this happened).
+                DocumentToken::Atom(AtomMetadata { .. }) => {
+                    let raw_bytes = self.core.raw_bytes_for_node(value_node_index);
+                    let atom = PlausibleSerializedAtom::new(raw_bytes)
+                        .expect("doc content should always be valid-ish sexp");
+                    let mut scratch = vec![];
+
+                    match atom.unescape(&mut scratch) {
+                        Ok(atom) => output.write_all(atom.bytes()),
+                        Err(err) => return Err(format!("unable to escape atom: {err:?}")),
                     }
                 }
                 _ => {
@@ -1158,17 +1170,44 @@ impl SexpDocument {
         res.map_err(|e| e.to_string())
     }
 
+    fn yank_siblings<W: std::io::Write>(
+        &self,
+        mut output: W,
+        first_sibling: NodeIndex,
+        machine: bool,
+    ) -> std::io::Result<()> {
+        let mut next_sibling = Some(first_sibling);
+
+        while let Some(sibling) = next_sibling {
+            if machine {
+                if self.core.token(sibling).is_data() {
+                    self.yank_machine_node(&mut output, sibling)?;
+                }
+            } else {
+                let write_trailing_newline = false;
+                self.yank_pretty_printed_node(&mut output, sibling, write_trailing_newline)?;
+            }
+            write!(output, "\n")?;
+
+            next_sibling = self.core.node(sibling).next_sibling();
+        }
+
+        Ok(())
+    }
+
     fn yank_pretty_printed_node<W: std::io::Write>(
         &self,
         mut output: W,
         node_index: NodeIndex,
+        write_trailing_newline: bool,
     ) -> std::io::Result<()> {
         let pretty_printed_logical_lines =
             layout::layout_fully_expanded_node(&self.core, node_index);
 
-        let multiple_lines = pretty_printed_logical_lines.len() > 1;
+        let num_lines = pretty_printed_logical_lines.len();
+        let multiple_lines = num_lines > 1;
 
-        for line in pretty_printed_logical_lines.into_iter() {
+        for (i, line) in pretty_printed_logical_lines.into_iter().enumerate() {
             for _ in 0..line.indentation {
                 output.write_all(b" ")?;
             }
@@ -1211,7 +1250,9 @@ impl SexpDocument {
             }
 
             if multiple_lines {
-                let _ = output.write_all(b"\n");
+                if i < num_lines - 1 || write_trailing_newline {
+                    output.write_all(b"\n")?;
+                }
             }
         }
 
@@ -2116,10 +2157,12 @@ impl Document for SexpDocument {
         target: char,
     ) -> Result<(), String> {
         let copy_target = match target {
-            'y' => CopyTarget::PrettyPrintedValue,
-            'm' => CopyTarget::MachineValue,
-            't' | 'r' => CopyTarget::RecordField,
-            'T' | 'R' => CopyTarget::MachineRecordField,
+            'y' => CopyTarget::Value { machine: false },
+            'Y' | 'm' => CopyTarget::Value { machine: true },
+            't' | 'r' => CopyTarget::RecordField { machine: false },
+            'T' | 'R' => CopyTarget::RecordField { machine: true },
+            'a' => CopyTarget::Siblings { machine: false },
+            'A' => CopyTarget::Siblings { machine: true },
             'k' => CopyTarget::Key,
             'c' => CopyTarget::Constructor,
             's' => CopyTarget::String,
