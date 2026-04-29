@@ -1,18 +1,16 @@
 extern crate lazy_static;
 
-use rustyline::history::MemHistory;
-use rustyline::Editor;
-use signal_hook::consts::SIGWINCH;
-use termion::cursor::HideCursor;
-use termion::event::Event as TermionEvent;
-use termion::input::{MouseTerminal, TermRead};
-use termion::raw::IntoRawMode;
-use termion::screen::IntoAlternateScreen;
-
-use std::io::{self, Read};
+use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
+
+use rustyline::history::MemHistory;
+use rustyline::Editor;
+use signal_hook::consts::SIGWINCH;
+use termion::event::Event as TermionEvent;
+use termion::input::TermRead;
+use termion::raw::IntoRawMode;
 
 mod action;
 mod app;
@@ -44,20 +42,16 @@ fn main() {
 
     let mut exit_code = 0;
 
-    // Introduce scope to ensure [stdout] gets dropped, and terminal attributes are
-    // restored.
     {
-        let stdout = std::io::stdout();
-        // Enable raw mode, switch to alternate screen, hide the cursor, and enable mouse input.
-        let stdout = stdout
+        // Switches to alternate screen, hide the cursor, enable mouse input. When it gets
+        // dropped when we exit the program, it will switch back to the main screen, show the
+        // cursor, and disable mouse input.
+        let _terminal_settings = TerminalSettings::new();
+
+        // Switch to raw mode.
+        let stdout = std::io::stdout()
             .into_raw_mode()
             .expect("unable to switch terminal into raw mode");
-        let stdout = stdout
-            .into_alternate_screen()
-            .expect("unable to switch to alternate screen");
-        let stdout = HideCursor::from(stdout);
-        let stdout = MouseTerminal::from(stdout);
-        let stdout: Box<dyn std::io::Write> = Box::new(stdout);
 
         let editor_config = rustyline::config::Config::builder()
             .keyseq_timeout(Some(0))
@@ -308,4 +302,79 @@ fn get_document_data(
     });
 
     utf8_filename
+}
+
+pub(crate) struct TerminalSettings;
+
+impl TerminalSettings {
+    // https://docs.rs/termion/4.0.6/src/termion/input.rs.html#188-192
+    //
+    // The termion MouseTerminal sends the following escape codes:
+    //
+    // ESC [ ? 1000 h
+    // ESC [ ? 1002 h
+    // ESC [ ? 1015 h
+    // ESC [ ? 1006 h
+    //
+    // https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+    //
+    // 1000 enables better mouse support; 1002 enables button-event tracking,
+    // then 1015 and 1006 change the format that mouse events are sent in.
+    const ENABLE_MOUSE_INPUT: &str = "\x1b[?1000h\x1b[?1002h\x1b[?1015h\x1b[?1006h";
+    const DISABLE_MOUSE_INPUT: &str = "\x1b[?1006l\x1b[?1015l\x1b[?1002l\x1b[?1000l";
+
+    pub fn enable_mouse_input() -> std::io::Result<()> {
+        write!(std::io::stdout(), "{}", Self::ENABLE_MOUSE_INPUT)
+    }
+
+    pub fn disable_mouse_input() -> std::io::Result<()> {
+        write!(std::io::stdout(), "{}", Self::DISABLE_MOUSE_INPUT)
+    }
+
+    const HIDE_CURSOR: &str = "\x1b[?25l";
+    const SHOW_CURSOR: &str = "\x1b[?25h";
+
+    pub fn hide_cursor() -> std::io::Result<()> {
+        write!(std::io::stdout(), "{}", Self::HIDE_CURSOR)
+    }
+
+    pub fn show_cursor() -> std::io::Result<()> {
+        write!(std::io::stdout(), "{}", Self::SHOW_CURSOR)
+    }
+
+    const TO_ALTERNATE_SCREEN: &str = "\x1b[?1049h";
+    const TO_MAIN_SCREEN: &str = "\x1b[?1049l";
+
+    pub fn switch_to_alternate_screen() -> std::io::Result<()> {
+        write!(std::io::stdout(), "{}", Self::TO_ALTERNATE_SCREEN)
+    }
+
+    pub fn switch_to_main_screen() -> std::io::Result<()> {
+        write!(std::io::stdout(), "{}", Self::TO_MAIN_SCREEN)
+    }
+
+    pub fn enable_jless_settings() -> std::io::Result<()> {
+        TerminalSettings::switch_to_alternate_screen()?;
+        TerminalSettings::hide_cursor()?;
+        TerminalSettings::enable_mouse_input()?;
+        Ok(())
+    }
+
+    pub fn disable_jless_settings() -> std::io::Result<()> {
+        TerminalSettings::disable_mouse_input()?;
+        TerminalSettings::show_cursor()?;
+        TerminalSettings::switch_to_main_screen()?;
+        Ok(())
+    }
+
+    fn new() -> Self {
+        let _ = Self::enable_jless_settings();
+        TerminalSettings
+    }
+}
+
+impl Drop for TerminalSettings {
+    fn drop(&mut self) {
+        let _ = Self::disable_jless_settings();
+    }
 }

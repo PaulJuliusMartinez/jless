@@ -1,6 +1,7 @@
 use std::fmt::Write;
 use std::io;
 use std::num::NonZeroUsize;
+use std::os::fd::AsFd;
 use std::rc::Rc;
 
 use rustyline::history::MemHistory;
@@ -8,6 +9,7 @@ use rustyline::Editor;
 use termion::event::MouseButton::{WheelDown, WheelUp};
 use termion::event::MouseEvent::Press as TermionMousePress;
 use termion::event::{Event as TermionEvent, Key};
+use termion::raw::RawTerminal;
 
 use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
@@ -17,12 +19,13 @@ use crate::rendering::{AnsiColor, Attrs, StyledSegment};
 use crate::search::{JumpDirection, SearchDirection};
 use crate::status_bar::{CurrentSearchState, StatusBarBottomLine, StatusBarTopLine};
 use crate::terminal::{AnsiTerminal, Terminal};
+use crate::TerminalSettings;
 
 pub const MAX_BUFFER_SIZE: usize = 9;
 const BOTTOM_CHROME_HEIGHT: usize = 2;
 const DEFAULT_SCROLLOFF: usize = 2;
 
-pub struct App<D: Document> {
+pub struct App<W: std::io::Write + AsFd, D: Document> {
     doc_while_waiting_for_input: Option<D>,
     viewer: Option<DocumentViewer<D>>,
     input_state: InputState,
@@ -36,7 +39,7 @@ pub struct App<D: Document> {
     viewer_dimensions: Dimensions,
 
     input_filename: Option<Rc<String>>,
-    stdout: Box<dyn std::io::Write>,
+    stdout: RawTerminal<W>,
 }
 
 // State to determine how to process the next event input.
@@ -65,13 +68,13 @@ impl MessageSeverity {
     }
 }
 
-impl<D: Document> App<D> {
+impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     pub fn new(
         doc: D,
         readline_editor: Editor<(), MemHistory>,
         dimensions: Dimensions,
         input_filename: Option<String>,
-        stdout: Box<dyn std::io::Write>,
+        stdout: RawTerminal<W>,
     ) -> Self {
         App {
             doc_while_waiting_for_input: Some(doc),
@@ -91,6 +94,13 @@ impl<D: Document> App<D> {
     }
 
     pub fn handle_tty_event(&mut self, tty_event: TermionEvent) -> Option<Break> {
+        // Handle this separately.
+        if matches!(tty_event, TermionEvent::Key(Key::Ctrl('z'))) {
+            self.suspend();
+            self.draw_screen();
+            return None;
+        }
+
         let action = match tty_event {
             TermionEvent::Unsupported(_) => return None,
             TermionEvent::Mouse(mouse_event) => {
@@ -297,6 +307,23 @@ impl<D: Document> App<D> {
         }
 
         self.draw_screen();
+    }
+
+    fn suspend(&mut self) {
+        use std::io::Write;
+
+        // Restore terminal prior to suspending
+        let _ = self.stdout.suspend_raw_mode();
+        let _ = TerminalSettings::disable_jless_settings();
+        let _ = std::io::stdout().flush();
+
+        unsafe {
+            libc::kill(0, libc::SIGSTOP);
+        }
+
+        let _ = TerminalSettings::enable_jless_settings();
+        let _ = self.stdout.activate_raw_mode();
+        let _ = std::io::stdout().flush();
     }
 
     fn buffer_input(&mut self, ch: u8) {
