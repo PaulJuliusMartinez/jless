@@ -5,6 +5,7 @@ use std::num::NonZeroUsize;
 use std::ops::{Index, Range, RangeInclusive};
 use std::rc::Rc;
 
+use crate::dimensions;
 use crate::document::{ContentRange, Document};
 use crate::rendering::{PreHighlightingStyledSegment, Segment, Text};
 use crate::search::InvertedPairedDelimeters;
@@ -37,7 +38,7 @@ enum FocusTargetKind {
 }
 
 pub struct SexpDocument {
-    width: usize,
+    width: NonZeroUsize,
     tokenizer: BasicTapeTokenizer,
     core: DocCore,
     next_top_level_node_index: NodeIndex,
@@ -969,7 +970,7 @@ impl SexpDocument {
     pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> TypesetLines {
         renderer::typeset_logical_line(
             &logical_line,
-            NonZeroUsize::new(self.width).expect("Can't have 0 width document"),
+            self.width,
             &self.core,
             &self.collapsible_nodes,
         )
@@ -980,7 +981,7 @@ impl SexpDocument {
 
         ScreenLine {
             logical_line,
-            doc_width: NonZeroUsize::new(self.width).expect("width can't be 0"),
+            doc_width: self.width,
             typeset_lines,
             index: 0,
         }
@@ -996,9 +997,9 @@ impl Document for SexpDocument {
     type Cursor = NodeIndex;
     type ScreenLine = ScreenLine;
 
-    fn new(width: usize) -> Self {
+    fn new() -> Self {
         SexpDocument {
-            width,
+            width: dimensions::DEFAULT_WIDTH,
             tokenizer: BasicTapeTokenizer::new(),
             core: DocCore::new(),
             next_top_level_node_index: NodeIndex(0),
@@ -1010,10 +1011,10 @@ impl Document for SexpDocument {
     }
 
     fn width(&self) -> usize {
-        self.width
+        self.width.get()
     }
 
-    fn resize(&mut self, new_width: usize) {
+    fn resize(&mut self, new_width: NonZeroUsize) {
         self.width = new_width;
         // TODO: Handle resizing
     }
@@ -1089,6 +1090,10 @@ impl Document for SexpDocument {
             .starts_of_logical_lines
             .rank_of(&screen_line.logical_line.start_index)
             .expect("to find logical line start in `starts_of_logical_lines`")
+    }
+
+    fn num_lines(&self) -> usize {
+        self.starts_of_logical_lines.len()
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -1446,7 +1451,7 @@ impl Document for SexpDocument {
 
         ScreenLine {
             logical_line,
-            doc_width: NonZeroUsize::new(self.width).expect("width can't be 0"),
+            doc_width: self.width,
             typeset_lines: Rc::new(typeset_lines),
             index: closest_index,
         }
@@ -1476,7 +1481,7 @@ impl Document for SexpDocument {
 }
 
 #[cfg(test)]
-pub mod test_helpers {
+pub(super) mod test_helpers {
     use super::*;
 
     use crate::document::Document;
@@ -1487,8 +1492,13 @@ pub mod test_helpers {
 
     const FAR_AWAY_CURSOR: NodeIndex = NodeIndex(usize::MAX);
 
+    pub fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
     pub fn new_partial_doc(bytes: &'static [u8]) -> SexpDocument {
-        let mut doc = SexpDocument::new(100);
+        let mut doc = SexpDocument::new();
+        doc.resize(nz(100));
         doc.append(bytes);
         doc
     }
@@ -1559,7 +1569,8 @@ mod tests {
 
     #[test]
     fn add_new_top_level_nodes_as_they_are_available() {
-        let mut doc = SexpDocument::new(100);
+        let mut doc = SexpDocument::new();
+        doc.resize(nz(100));
         assert_snapshot!(show_visible_lines(&doc), @"");
 
         doc.append(b"(key1 value1)(key2 ");
@@ -2297,7 +2308,7 @@ mod tests {
     #[test]
     fn test_raw_byte_indexes_to_screen_lines_with_line_wrapping() {
         let mut doc = new_doc(b"000001111122222333334444\n(0000111112222)");
-        doc.resize(5);
+        doc.resize(nz(5));
         assert_snapshot!(dump_with_byte_indexes(&doc), @r"
         0..=0  :   0..24  : 000001111122222333334444
         1..=3  :  25..40  : (0000111112222)

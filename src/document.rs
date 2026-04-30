@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::num::NonZeroUsize;
 use std::ops::Range;
 
 use crate::rendering::PreHighlightingStyledSegment;
@@ -18,9 +20,9 @@ pub trait Document {
     type ScreenLine: Clone + Eq + Ord + std::fmt::Debug;
     type Cursor: Clone + Ord + std::fmt::Debug;
 
-    fn new(width: usize) -> Self;
+    fn new() -> Self;
     fn width(&self) -> usize;
-    fn resize(&mut self, new_width: usize);
+    fn resize(&mut self, new_width: NonZeroUsize);
 
     fn append(&mut self, data: &[u8]);
     fn eof(&mut self);
@@ -36,6 +38,7 @@ pub trait Document {
 
     // 1-indexed
     fn line_number(&self, screen_line: &Self::ScreenLine) -> usize;
+    fn num_lines(&self) -> usize;
 
     // Someday: Why aren't these methods on a ScreenLine trait? Do they need to take
     // in a Document?

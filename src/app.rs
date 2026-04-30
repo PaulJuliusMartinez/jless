@@ -72,21 +72,20 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     pub fn new(
         doc: D,
         readline_editor: Editor<(), MemHistory>,
-        dimensions: Dimensions,
         input_filename: Option<String>,
         stdout: RawTerminal<W>,
     ) -> Self {
+        let screen_dimensions = Dimensions::default();
+        let viewer_dimensions = Self::compute_viewer_dimensions(screen_dimensions);
+
         App {
             doc_while_waiting_for_input: Some(doc),
             viewer: None,
             input_state: InputState::Default,
             input_buffer: vec![],
             message: None,
-            screen_dimensions: dimensions,
-            viewer_dimensions: Dimensions {
-                width: dimensions.width,
-                height: dimensions.height.saturating_sub(BOTTOM_CHROME_HEIGHT),
-            },
+            screen_dimensions,
+            viewer_dimensions,
             readline_editor,
             input_filename: input_filename.map(Rc::new),
             stdout,
@@ -260,19 +259,24 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
 
     pub fn handle_window_resize(&mut self, new_dimensions: Dimensions) {
         self.screen_dimensions = new_dimensions;
-        self.viewer_dimensions = Dimensions {
-            width: new_dimensions.width,
-            height: new_dimensions.height.saturating_sub(BOTTOM_CHROME_HEIGHT),
-        };
+        self.viewer_dimensions = Self::compute_viewer_dimensions(new_dimensions);
 
-        if let Some(doc) = &mut self.doc_while_waiting_for_input {
-            doc.resize(new_dimensions.width);
-        }
         if let Some(viewer) = &mut self.viewer {
             viewer.resize(self.viewer_dimensions);
         }
 
         self.draw_screen();
+    }
+
+    fn compute_viewer_dimensions(screen_dimensions: Dimensions) -> Dimensions {
+        let height = screen_dimensions
+            .height
+            .saturating_sub(BOTTOM_CHROME_HEIGHT);
+
+        Dimensions {
+            height,
+            ..screen_dimensions
+        }
     }
 
     pub fn handle_document_data(&mut self, data: Option<&[u8]>) {
@@ -458,6 +462,14 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                 let _ = write!(terminal, "{}", state);
             }
             Some(viewer) => {
+                if viewer.dimensions_are_too_small_to_show_content() {
+                    let _ = terminal.clear_screen();
+                    let _ = terminal.position_cursor(1, 1);
+                    let _ = terminal.write_str("Resize screen");
+                    let _ = terminal.flush_contents(&mut self.stdout);
+                    return;
+                }
+
                 let (rows, doc_content) = viewer.render();
 
                 let mut row = 1;

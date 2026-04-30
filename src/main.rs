@@ -100,9 +100,10 @@ fn main() {
             rustyline::Cmd::Interrupt,
         );
 
-        let dimensions = dimensions::current();
-        let sexp_document = sexp::document::SexpDocument::new(dimensions.width);
-        let mut app = App::new(sexp_document, editor, dimensions, input_filename, stdout);
+        let sexp_document = sexp::document::SexpDocument::new();
+        let mut app = App::new(sexp_document, editor, input_filename, stdout);
+
+        app.handle_window_resize(dimensions::current());
 
         loop {
             let app_input_event = app_input_events_receiver.recv();

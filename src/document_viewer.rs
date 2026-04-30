@@ -25,6 +25,7 @@ pub struct DocumentViewer<D: Document> {
     // Soon: Make this private again.
     pub current_focus: D::Cursor,
     dimensions: Dimensions,
+    dimensions_are_too_small_to_show_content: bool,
 
     // We call this scrolloff_setting, to differentiate between
     // what it's set to, and what the scrolloff functionally is
@@ -38,6 +39,8 @@ pub struct DocumentViewer<D: Document> {
 
     pub search_state: Option<SearchState>,
 }
+
+const MIN_LINE_NUMBER_WIDTH: usize = 2;
 
 /// Computed details about how close some content is to the start or end of the document. If one of
 /// these values is `None`, that means the start/end of the document is _more_ than some fixed
@@ -108,16 +111,23 @@ impl<D: Document> DocumentViewer<D> {
         dimensions: Dimensions,
         scrolloff: usize,
     ) -> Self {
-        DocumentViewer {
+        let mut viewer = DocumentViewer {
             doc,
             top_line: first_line,
             current_focus: initial_cursor,
-            dimensions,
+            dimensions: Dimensions::default(),
+            dimensions_are_too_small_to_show_content: false,
             scrolloff_setting: scrolloff,
             tailing_end_of_document: false,
             jump_distance: None,
             search_state: None,
-        }
+        };
+
+        // Doing it this way is a little easier to think about, rather than thinking
+        // about how to initialize things when the dimensions are too small.
+        viewer.resize(dimensions);
+
+        viewer
     }
 
     pub fn set_scrolloff(&mut self, scrolloff: usize) {
@@ -939,51 +949,81 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     pub fn resize(&mut self, new_dimensions: Dimensions) {
+        if new_dimensions.height == 0 {
+            self.dimensions_are_too_small_to_show_content = true;
+            return;
+        }
+
+        let viewer_width = new_dimensions.width;
+        let Some(doc_width) =
+            Self::available_width_for_doc_content(viewer_width, self.doc.num_lines())
+        else {
+            self.dimensions_are_too_small_to_show_content = true;
+            return;
+        };
+
+        self.dimensions_are_too_small_to_show_content = false;
+
         // Handle resizes in two parts: first resize the width, then the height.
-        self.resize_width(new_dimensions.width);
+        self.resize_width(viewer_width, doc_width);
         self.resize_height(new_dimensions.height);
         self.move_current_focus_within_scrolloff_after_resize();
     }
 
-    fn update_dimensions_and_resize_doc(&mut self, dimensions: Dimensions) {
-        self.dimensions = dimensions;
-        self.doc.resize(dimensions.width);
+    fn width_of_line_numbers(num_doc_lines: usize) -> usize {
+        // ilog10(10) = 1
+        // ilog10(99) = 1
+        // ilog10(100) = 2
+        let num_digits_in_max_line_number = (usize::ilog10(num_doc_lines) as usize) + 1;
+        usize::max(num_digits_in_max_line_number, MIN_LINE_NUMBER_WIDTH)
     }
 
-    fn resize_width(&mut self, new_width: usize) {
-        if new_width == self.dimensions.width {
+    fn available_width_for_doc_content(width: usize, num_doc_lines: usize) -> Option<NonZeroUsize> {
+        let width_of_line_numbers = Self::width_of_line_numbers(num_doc_lines);
+        NonZeroUsize::new(width.saturating_sub(width_of_line_numbers + 1))
+    }
+
+    // Someday: Ugh, it is really awkward needing to pass in two separate values here (and makes
+    // resizing in tests more complicated than it needs to be...)
+    fn resize_width(&mut self, viewer_width: usize, doc_width: NonZeroUsize) {
+        if viewer_width == self.dimensions.width {
             return;
         }
 
-        let new_dimensions = Dimensions {
-            width: new_width,
+        let old_cursor_range = self.doc.cursor_range(&self.current_focus);
+        let num_lines_of_cursor_above_viewport = if old_cursor_range.start < self.top_line {
+            self.doc
+                .diff_screen_lines(&self.top_line, &old_cursor_range.start)
+        } else {
+            0
+        };
+        let old_position_of_content_in_viewport =
+            self.position_of_content_in_viewport(&old_cursor_range);
+
+        self.dimensions = Dimensions {
+            width: viewer_width,
             ..self.dimensions
         };
+        self.doc.resize(doc_width);
 
-        let old_cursor_range = self.doc.cursor_range(&self.current_focus);
-
-        match self.position_of_content_in_viewport(&old_cursor_range) {
+        match old_position_of_content_in_viewport {
             PositionOfContentInViewport::StartsAboveViewport { end_index } => {
                 // Don't top line to keep anchored, so we'll keep the end of the line
                 // in the same place.
-                self.update_dimensions_and_resize_doc(new_dimensions);
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
                 self.top_line =
                     self.n_screen_lines_before_or_top_of_doc(new_cursor_range.end, end_index);
             }
             PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
-                let lines_above_top_of_screen = self
-                    .doc
-                    .diff_screen_lines(&self.top_line, &old_cursor_range.start);
-
-                self.update_dimensions_and_resize_doc(new_dimensions);
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
 
                 if old_cursor_range.num_screen_lines == new_cursor_range.num_screen_lines {
                     // If the cursor is the same number of lines long, then we'll keep the lines in
                     // the same spot.
-                    self.top_line = self
-                        .n_screen_lines_after(new_cursor_range.start, lines_above_top_of_screen);
+                    self.top_line = self.n_screen_lines_after(
+                        new_cursor_range.start,
+                        num_lines_of_cursor_above_viewport,
+                    );
                 } else {
                     // If the size of the cursor changed, we'll try to keep the content
                     // near the center of the screen in approximately the same place.
@@ -994,10 +1034,10 @@ impl<D: Document> DocumentViewer<D> {
                     // takes up 60 screen lines, then we want screen line 48 in the middle
                     // of the screen, so the screen will show lines 38-58. This is all
                     // very approximate, so I'm not worried too much about off-by-one errors.
-                    let percentile_of_cursor_in_middle_of_screen: f64 = ((lines_above_top_of_screen
-                        as f64)
-                        + (self.dimensions.height as f64 / 2.0))
-                        / (old_cursor_range.num_screen_lines as f64);
+                    let percentile_of_cursor_in_middle_of_screen: f64 =
+                        ((num_lines_of_cursor_above_viewport as f64)
+                            + (self.dimensions.height as f64 / 2.0))
+                            / (old_cursor_range.num_screen_lines as f64);
                     let new_cursor_index_in_middle_of_screen: usize =
                         (percentile_of_cursor_in_middle_of_screen
                             * (new_cursor_range.num_screen_lines as f64))
@@ -1015,7 +1055,6 @@ impl<D: Document> DocumentViewer<D> {
             }
             PositionOfContentInViewport::EntirelyInViewport { start_index, .. }
             | PositionOfContentInViewport::EndsBelowViewport { start_index } => {
-                self.update_dimensions_and_resize_doc(new_dimensions);
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
                 self.top_line =
                     self.n_screen_lines_before_or_top_of_doc(new_cursor_range.start, start_index);
@@ -1174,21 +1213,34 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    pub fn document_eof(&mut self) {
-        self.doc.eof();
-        self.update_search_matches_after_receiving_more_data();
-    }
-
     pub fn append_document_data(&mut self, data: &[u8]) {
         self.doc.append(data);
-        self.update_search_matches_after_receiving_more_data();
+        self.update_after_receiving_more_data();
+    }
 
+    pub fn document_eof(&mut self) {
+        self.doc.eof();
+        self.update_after_receiving_more_data();
+    }
+
+    fn update_after_receiving_more_data(&mut self) {
         if self.tailing_end_of_document {
             self.focus_bottom();
         }
+
+        self.update_search_matches_after_receiving_more_data();
+
+        // We call resize in case we have to use another column for the line
+        // numbers because we received more data.
+        self.resize(self.dimensions);
     }
 
     pub fn do_action(&mut self, action: Action) {
+        if self.dimensions_are_too_small_to_show_content {
+            // TODO: Maybe return an indication that nothing happened, so we can sound a BEL?
+            return;
+        }
+
         let prev_cursor = self.current_focus.clone();
 
         let mut focused_bottom = false;
@@ -1447,7 +1499,13 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
+    pub fn dimensions_are_too_small_to_show_content(&self) -> bool {
+        self.dimensions_are_too_small_to_show_content
+    }
+
     pub fn render(&self) -> (Vec<Vec<crate::rendering::StyledSegment>>, &[u8]) {
+        assert!(!self.dimensions_are_too_small_to_show_content);
+
         let mut rendered_lines = vec![];
         let default = Attrs::default();
         let inverted = default.invert();
@@ -1569,11 +1627,14 @@ mod test {
         height: usize,
         scrolloff: usize,
     ) -> DocumentViewer<D> {
-        let mut doc = D::new(width);
+        let mut doc = D::new();
         doc.append(contents);
 
         let (top_line, initial_cursor) = doc.top_screen_line_and_cursor().unwrap();
-        let dimensions = Dimensions { width, height };
+        let dimensions = Dimensions {
+            width: MIN_LINE_NUMBER_WIDTH + 1 + width,
+            height,
+        };
         DocumentViewer::new(doc, top_line, initial_cursor, dimensions, scrolloff)
     }
 
@@ -1766,7 +1827,11 @@ mod test {
         fn debug_render(&self) -> String {
             // |12345678       9|
             // | ##|##| <width> |
-            let content_width = self.dimensions.width;
+            let content_width =
+                Self::available_width_for_doc_content(self.dimensions.width, self.doc.num_lines())
+                    .unwrap()
+                    .get();
+
             let mut s = String::new();
             let _ = writeln!(s, "┌SI┬─L#┬─{:─<content_width$}─┐", "");
             for (screen_index, screen_line) in self.viewport_lines().enumerate() {
@@ -1814,9 +1879,15 @@ mod test {
         fn do_change(&mut self, change: Change) {
             match change {
                 Change::Action(action) => self.do_action(action),
-                Change::ResizeWidth(width) => self.resize_width(width),
+                Change::ResizeWidth(width) => self.resize_width(
+                    MIN_LINE_NUMBER_WIDTH + 1 + width,
+                    NonZeroUsize::new(width).unwrap(),
+                ),
                 Change::ResizeHeight(height) => self.resize_height(height),
-                Change::Resize(dimensions) => self.resize(dimensions),
+                Change::Resize(dimensions) => self.resize(Dimensions {
+                    width: MIN_LINE_NUMBER_WIDTH + 1 + dimensions.width,
+                    ..dimensions
+                }),
                 Change::SetScrolloff(scrolloff) => self.set_scrolloff(scrolloff),
                 Change::AppendDocumentData(data) => self.append_document_data(&data),
                 Change::InitializeSearch(search_input, search_direction) => self

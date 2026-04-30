@@ -1,7 +1,9 @@
 use std::cmp::{self, Ordering};
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::rc::Rc;
 
+use crate::dimensions;
 use crate::document::{ContentRange, Document};
 use crate::rendering::PreHighlightingStyledSegment;
 
@@ -278,13 +280,13 @@ impl Document for TextDocument {
     type ScreenLine = ScreenLine;
     type Cursor = Cursor;
 
-    fn new(width: usize) -> Self {
+    fn new() -> Self {
         TextDocument {
             data: vec![],
             complete_line_ranges: vec![],
             next_start: 0,
             trailing_newline: None,
-            width,
+            width: dimensions::DEFAULT_WIDTH.get(),
         }
     }
 
@@ -292,8 +294,8 @@ impl Document for TextDocument {
         self.width
     }
 
-    fn resize(&mut self, new_width: usize) {
-        self.width = new_width;
+    fn resize(&mut self, new_width: NonZeroUsize) {
+        self.width = new_width.get();
     }
 
     fn append(&mut self, data: &[u8]) {
@@ -401,6 +403,10 @@ impl Document for TextDocument {
 
     fn line_number(&self, screen_line: &ScreenLine) -> usize {
         screen_line.line_index + 1
+    }
+
+    fn num_lines(&self) -> usize {
+        self.complete_line_ranges.len()
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -598,9 +604,19 @@ mod tests {
         s
     }
 
+    fn new_text_document(width: usize) -> TextDocument {
+        let mut doc = TextDocument::new();
+        doc.resize(nz(width));
+        doc
+    }
+
+    fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
     #[test]
     fn test_text_document() {
-        let mut doc = TextDocument::new(10);
+        let mut doc = new_text_document(10);
         assert_snapshot!(print_lines(&doc), @"");
 
         doc.append(b"abc");
@@ -629,7 +645,7 @@ mod tests {
 
     #[test]
     fn test_leading_and_trailing_newline() {
-        let mut doc = TextDocument::new(10);
+        let mut doc = new_text_document(10);
         doc.append(b"\nabc\n");
         assert_snapshot!(print_lines(&doc), @r#"
         1: ""
@@ -646,7 +662,7 @@ mod tests {
 
     #[test]
     fn test_crlf_line_endings() {
-        let mut doc = TextDocument::new(10);
+        let mut doc = new_text_document(10);
         doc.append(b"abc\r\n");
         doc.append(b"def\r");
         doc.append(b"\nghi\r");
@@ -685,7 +701,7 @@ mod tests {
 
     #[test]
     fn test_next_and_prev_line() {
-        let mut doc = TextDocument::new(20);
+        let mut doc = new_text_document(20);
         doc.append(b"line.1\n");
         //           0123456789012345
         doc.append(b"long.long.line.2\n");
@@ -697,14 +713,14 @@ mod tests {
         |line.3              |
         ");
 
-        doc.resize(16);
+        doc.resize(nz(16));
         assert_snapshot!(print_screen_lines(&doc), @r"
         |line.1          |
         |long.long.line.2|
         |line.3          |
         ");
 
-        doc.resize(15);
+        doc.resize(nz(15));
         assert_snapshot!(print_screen_lines(&doc), @r"
         |line.1         |
         |long.long.line.|
@@ -712,7 +728,7 @@ mod tests {
         |line.3         |
         ");
 
-        doc.resize(4);
+        doc.resize(nz(4));
         assert_snapshot!(print_screen_lines(&doc), @r"
         |line|
         |.1  |
@@ -739,7 +755,7 @@ mod tests {
 
     #[test]
     fn test_raw_bytes_to_screen_lines() {
-        let mut doc = TextDocument::new(10);
+        let mut doc = new_text_document(10);
         doc.append(b"0123\n");
         doc.append(b"567890123\n");
         doc.append(b"56789012345678\n");
