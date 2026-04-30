@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{Attrs, StyledSegment, Text};
+use crate::rendering::{AnsiColor, Attrs, StyledSegment, Text};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 
 /// The `DocumentViewer` manages what part of a document is displayed on screen
@@ -1505,6 +1505,7 @@ impl<D: Document> DocumentViewer<D> {
 
     pub fn render(&self) -> (Vec<Vec<crate::rendering::StyledSegment>>, &[u8]) {
         assert!(!self.dimensions_are_too_small_to_show_content);
+        let width_of_line_numbers = Self::width_of_line_numbers(self.doc.num_lines());
 
         let mut rendered_lines = vec![];
         let default = Attrs::default();
@@ -1525,6 +1526,10 @@ impl<D: Document> DocumentViewer<D> {
             }
         };
 
+        let mut curr_line_number = 0;
+        let mut rendered_curr_line_number = false;
+        let focused_line_number_attrs = Attrs::from_ansi_fg(AnsiColor::Yellow);
+
         for screen_line in self.viewport_lines() {
             match screen_line {
                 None => {
@@ -1535,6 +1540,41 @@ impl<D: Document> DocumentViewer<D> {
                     rendered_lines.push(vec![empty_line_segment]);
                 }
                 Some(screen_line) => {
+                    let line_number = self.doc.line_number(&screen_line);
+                    let attrs = if self
+                        .doc
+                        .does_screen_line_intersect_cursor(&screen_line, &self.current_focus)
+                    {
+                        focused_line_number_attrs
+                    } else {
+                        dimmed
+                    };
+
+                    if line_number != curr_line_number {
+                        curr_line_number = line_number;
+                        rendered_curr_line_number = false;
+                    }
+
+                    let line_number = if rendered_curr_line_number {
+                        StyledSegment {
+                            content: Text::spaces(width_of_line_numbers),
+                            attrs,
+                        }
+                    } else {
+                        rendered_curr_line_number = true;
+                        let formatted = format!("{:width_of_line_numbers$}", line_number);
+                        StyledSegment {
+                            content: Text::full_string(Rc::new(formatted)),
+                            attrs,
+                        }
+                    };
+
+                    let mut rendered_line = vec![line_number];
+                    rendered_line.push(StyledSegment {
+                        content: Text::spaces(1),
+                        attrs: dimmed,
+                    });
+
                     match self
                         .doc
                         .render_screen_line(&screen_line, &self.current_focus)
@@ -1548,7 +1588,7 @@ impl<D: Document> DocumentViewer<D> {
                                 .flatten()
                                 .collect();
 
-                            rendered_lines.push(highlighted_segments);
+                            rendered_line.extend(highlighted_segments);
                         }
                         None => {
                             // Fallback to `debug_text_content`
@@ -1570,9 +1610,11 @@ impl<D: Document> DocumentViewer<D> {
                                 attrs,
                                 content: Text::String((Rc::new(s), 0..debug_len)),
                             };
-                            rendered_lines.push(vec![debug_segment]);
+                            rendered_line.extend(vec![debug_segment]);
                         }
                     }
+
+                    rendered_lines.push(rendered_line);
                 }
             }
         }
