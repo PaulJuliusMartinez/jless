@@ -85,8 +85,8 @@ fn main() {
             should_get_tty_input_condvar.clone(),
         );
 
-        // 16 bytes for initial testing.
-        let buffer: Vec<u8> = vec![0; 16];
+        // Use a 1mb buffer.
+        let buffer: Vec<u8> = vec![0; 1024 * 1024];
         data_buffer_sender.send(buffer);
 
         let input_filename = get_document_data(
