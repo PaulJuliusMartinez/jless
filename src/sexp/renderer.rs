@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
-use crate::rendering::{Compositor, PreHighlightingStyledSegment, Segment, Text, TokenColorScheme};
+use crate::rendering::{Attrs, Compositor, PreHighlightingStyledSegment, Text, TokenColorScheme};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
@@ -67,6 +67,7 @@ struct Typesetter<'a> {
     core: &'a DocCore,
     collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
     compositor: Compositor<'a, NodeIndex, SegmentKind>,
+    include_cursor: bool,
 }
 
 pub fn typeset_logical_line(
@@ -74,6 +75,7 @@ pub fn typeset_logical_line(
     doc_width: NonZeroUsize,
     core: &DocCore,
     collapsible_nodes: &BTreeMap<NodeIndex, CollapseState>,
+    include_cursor: bool,
 ) -> TypesetLines {
     let doc_content = core.pretty_printed.data();
     let compositor = Compositor::new(doc_content, doc_width);
@@ -84,6 +86,7 @@ pub fn typeset_logical_line(
         core,
         collapsible_nodes,
         compositor,
+        include_cursor,
     };
 
     typesetter.typeset();
@@ -98,11 +101,28 @@ pub fn typeset_logical_line(
     )
 }
 
+const CURSOR_PLACEHOLDER: &str = "◆ ";
+
+const NOT_FOCUSED_LINE: &str = "  ";
+const FOCUSED_LINE: &str = "▶ ";
+const FOCUSED_COLLAPSED_CONTAINER: &str = "▶ ";
+const FOCUSED_EXPANDED_CONTAINER: &str = "▼ ";
+const COLLAPSED_CONTAINER: &str = "▷ ";
+const EXPANDED_CONTAINER: &str = "▽ ";
+
 impl<'a> Typesetter<'a> {
     fn typeset(&mut self) {
         if self.logical_line.indentation > 0 {
             self.compositor.append_spaces(
                 self.logical_line.indentation,
+                SegmentKind::Whitespace,
+                None,
+            );
+        }
+
+        if self.include_cursor {
+            self.compositor.append_content(
+                Text::Static(CURSOR_PLACEHOLDER),
                 SegmentKind::Whitespace,
                 None,
             );
@@ -141,7 +161,7 @@ impl<'a> Typesetter<'a> {
 
                     segment_kind = SegmentKind::Parens;
                 }
-                DocumentToken::EndOfList(end_of_list_metadata) => {
+                DocumentToken::EndOfList(_end_of_list_metadata) => {
                     segment_kind = SegmentKind::Parens;
                 }
                 DocumentToken::Atom(atom_metadata) => {
@@ -486,11 +506,18 @@ impl<'a> Typesetter<'a> {
 
 pub struct RenderContext<'a> {
     color_scheme: &'a ColorScheme,
+    collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
     focused_node_indexes: Vec<NodeIndex>,
+    focus: NodeIndex,
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn new(color_scheme: &'a ColorScheme, core: &'a DocCore, focus: NodeIndex) -> Self {
+    pub fn new(
+        color_scheme: &'a ColorScheme,
+        core: &'a DocCore,
+        collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
+        focus: NodeIndex,
+    ) -> Self {
         let focused_node_indexes = match core.token(focus) {
             DocumentToken::StartOfList(list_metadata) => {
                 let mut indexes = vec![focus];
@@ -525,7 +552,57 @@ impl<'a> RenderContext<'a> {
 
         RenderContext {
             color_scheme,
+            collapsible_nodes,
             focused_node_indexes,
+            focus,
+        }
+    }
+
+    fn cursor_content(&self, logical_line: &LogicalLine) -> &'static str {
+        // If not focused on line, show first collapsible state on line
+        // If focused on line, check collapse state of the actual cursor,
+        // otherwise have it be the first collapsible state on the line.
+
+        let line_contains_cursor = logical_line.contains_node_index(self.focus);
+
+        let collapsible_nodes_in_line = self
+            .collapsible_nodes
+            .range(logical_line.start_index..=logical_line.end_index);
+
+        let mut first_collapse_state = None;
+        let mut first_collapse_state_at_or_after_cursor = None;
+
+        for (node_index, collapse_state) in collapsible_nodes_in_line {
+            first_collapse_state = first_collapse_state.or(Some(*collapse_state));
+
+            if self.focus <= *node_index {
+                first_collapse_state_at_or_after_cursor =
+                    first_collapse_state_at_or_after_cursor.or(Some(*collapse_state));
+            }
+        }
+
+        let Some(first_collapse_state) = first_collapse_state else {
+            // No collapsible nodes in the line; only show a cursor if we're focused on it.
+            if line_contains_cursor {
+                return FOCUSED_LINE;
+            } else {
+                return NOT_FOCUSED_LINE;
+            }
+        };
+
+        if line_contains_cursor {
+            // The cursor just reflects the cursor or whatever is to the right of it.
+            match first_collapse_state_at_or_after_cursor {
+                // If the cursor is _after_ all collapsible nodes, they must all be expanded.
+                None | Some(CollapseState::Expanded) => FOCUSED_EXPANDED_CONTAINER,
+                Some(CollapseState::Collapsed) => FOCUSED_COLLAPSED_CONTAINER,
+            }
+        } else {
+            // If the line doesn't contain the cursor, just reflect the outermost state.
+            match first_collapse_state {
+                CollapseState::Collapsed => COLLAPSED_CONTAINER,
+                CollapseState::Expanded => EXPANDED_CONTAINER,
+            }
         }
     }
 }
@@ -533,12 +610,26 @@ impl<'a> RenderContext<'a> {
 // 'l for lifetime of the line renderer, 's for the lifetime of rendering the whole screen
 pub fn style_typeset_line<'l, 's>(
     context: &'l RenderContext<'s>,
+    logical_line: &'l LogicalLine,
     segments: &'l TypesetLine,
 ) -> Vec<PreHighlightingStyledSegment> {
+    let cursor_attrs = Attrs::default();
+
     segments
         .0
         .iter()
         .map(|segment| {
+            // Check for the cursor placeholder:
+            if matches!(segment.content, Text::Static(CURSOR_PLACEHOLDER)) {
+                let cursor = context.cursor_content(&logical_line);
+
+                return PreHighlightingStyledSegment {
+                    attrs: cursor_attrs,
+                    search_match_attrs: cursor_attrs,
+                    content: Text::Static(cursor),
+                };
+            }
+
             let focused = if let Some(node_index) = segment.doc_ref {
                 context.focused_node_indexes.contains(&node_index)
             } else {
@@ -642,7 +733,7 @@ mod tests {
 
             s.push_str(
                 dump_segments(
-                    style_typeset_line(&render_context, &typeset_line),
+                    style_typeset_line(&render_context, &logical_lines[line], &typeset_line),
                     doc.raw_bytes_for_searching(),
                     &style_map(),
                 )

@@ -45,6 +45,9 @@ pub struct SexpDocument {
     starts_of_logical_lines: OSBTreeMap<NodeIndex, (NodeIndex, usize)>,
     collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
+    // TODO: Probably put this in DocumentViewer; this only exists so I could set
+    // it to false in tests and not update a bunch of them.
+    include_cursor: bool,
 }
 
 // When streaming in input, if the user hits 'C' to deeply collapse all input, then
@@ -964,7 +967,7 @@ impl SexpDocument {
         color_scheme: &'a ColorScheme,
         focus: NodeIndex,
     ) -> RenderContext<'a> {
-        RenderContext::new(&color_scheme, &self.core, focus)
+        RenderContext::new(&color_scheme, &self.core, &self.collapsible_nodes, focus)
     }
 
     pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> TypesetLines {
@@ -973,6 +976,7 @@ impl SexpDocument {
             self.width,
             &self.core,
             &self.collapsible_nodes,
+            self.include_cursor,
         )
     }
 
@@ -1007,6 +1011,7 @@ impl Document for SexpDocument {
             collapsible_nodes: BTreeMap::new(),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
+            include_cursor: if cfg!(test) { false } else { true },
         }
     }
 
@@ -1414,6 +1419,7 @@ impl Document for SexpDocument {
         let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
         Some(style_typeset_line(
             &render_context,
+            &screen_line.logical_line,
             screen_line.typeset_line(),
         ))
     }
