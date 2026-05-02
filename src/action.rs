@@ -52,6 +52,7 @@ pub enum Action {
     JumpUp(Option<NonZeroUsize>),
 
     MoveToSearchMatch(MovementMethod, JumpDirection, usize),
+    MoveToLineIndex(usize),
 
     FocusTop,
     FocusBottom,

@@ -169,8 +169,14 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                                 Some(Action::CollapseNodeAndSiblings(Some(count_or_1)))
                             }
                             Key::Char('C') => Some(Action::CollapseNodeAndSiblings(count)),
-                            Key::Home | Key::Char('g') => Some(Action::FocusTop),
-                            Key::End | Key::Char('G') => Some(Action::FocusBottom),
+                            Key::Home | Key::Char('g') => match count {
+                                None => Some(Action::FocusTop),
+                                Some(n) => Some(Action::MoveToLineIndex(n - 1)),
+                            },
+                            Key::End | Key::Char('G') => match count {
+                                None => Some(Action::FocusBottom),
+                                Some(n) => Some(Action::MoveToLineIndex(n - 1)),
+                            },
                             Key::Ctrl('e') => Some(Action::ScrollViewportDown(count_or_1)),
                             Key::Ctrl('y') => Some(Action::ScrollViewportUp(count_or_1)),
                             Key::PageDown => Some(Action::PageDown(count_or_1)),

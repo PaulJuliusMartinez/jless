@@ -1075,6 +1075,24 @@ impl Document for SexpDocument {
         }
     }
 
+    fn first_visible_cursor_at_or_before_line_index(&self, index: usize) -> Option<Self::Cursor> {
+        let (start_index, (end_index, indentation)) =
+            match self.starts_of_logical_lines.get_by_rank(index) {
+                None => self.starts_of_logical_lines.last_key_value()?,
+                Some(x) => x,
+            };
+
+        let line_at_index = LogicalLine {
+            indentation: *indentation,
+            start_index: *start_index,
+            end_index: *end_index,
+        };
+
+        let visible_line_at_or_before_index = self.first_visible_line_at_or_above(line_at_index);
+
+        Some(visible_line_at_or_before_index.start_index)
+    }
+
     fn next_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
         if let Some(next_typeset_line) = screen_line.next_typeset_line() {
             Some(next_typeset_line)
@@ -2061,6 +2079,45 @@ mod tests {
         Left => NodeIndex(5) Collapsed(7)
         Left => NodeIndex(0)
         ");
+    }
+
+    #[test]
+    fn test_first_visible_cursor_at_or_before_line_index() {
+        let mut doc = new_doc(b"((0 1 2)(3 (4 5))(6 7 8))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=2  : ((0
+         3..=3  :   1
+         4..=5  :   2)
+         6..=7  :  (3
+         8..=9  :   (4
+        10..=12 :    5))
+        13..=14 :  (6
+        15..=15 :   7
+        16..=18 :   8))
+        ");
+
+        let f = |doc: &mut SexpDocument, index| {
+            doc.first_visible_cursor_at_or_before_line_index(index)
+                .unwrap()
+                .0
+        };
+
+        assert_debug_snapshot!(f(&mut doc, 0), @"0");
+        assert_debug_snapshot!(f(&mut doc, 3), @"6");
+        assert_debug_snapshot!(f(&mut doc, 5), @"10");
+        assert_debug_snapshot!(f(&mut doc, 8), @"16");
+        assert_debug_snapshot!(f(&mut doc, 9), @"16");
+        assert_debug_snapshot!(f(&mut doc, 100), @"16");
+
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(6));
+        assert_debug_snapshot!(f(&mut doc, 3), @"6");
+        assert_debug_snapshot!(f(&mut doc, 5), @"6");
+
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(13));
+        assert_debug_snapshot!(f(&mut doc, 100), @"13");
+
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(0));
+        assert_debug_snapshot!(f(&mut doc, 100), @"0");
     }
 
     #[test]

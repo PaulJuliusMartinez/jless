@@ -417,6 +417,13 @@ impl<D: Document> DocumentViewer<D> {
         self.current_focus = cursor;
     }
 
+    fn move_to_line_index(&mut self, index: usize) {
+        if let Some(new_cursor) = self.doc.first_visible_cursor_at_or_before_line_index(index) {
+            self.current_focus = new_cursor;
+            self.update_so_current_focus_is_visible();
+        }
+    }
+
     fn move_focused_elem_to_top(&mut self) {
         let cursor_range = self.doc.cursor_range(&self.current_focus);
         let scrolloff = self.effective_scrolloff();
@@ -1276,6 +1283,7 @@ impl<D: Document> DocumentViewer<D> {
                 focused_bottom = true;
                 self.focus_bottom()
             }
+            Action::MoveToLineIndex(i) => self.move_to_line_index(i),
             Action::MoveFocusedElemToTop => self.move_focused_elem_to_top(),
             Action::MoveFocusedElemToCenter => self.move_focused_elem_to_center(),
             Action::MoveFocusedElemToBottom => self.move_focused_elem_to_bottom(),
@@ -1795,6 +1803,10 @@ mod test {
 
     fn focus_bottom() -> Change {
         Change::Action(Action::FocusBottom)
+    }
+
+    fn move_to_line_number(line_number: usize) -> Change {
+        Change::Action(Action::MoveToLineIndex(line_number - 1))
     }
 
     fn move_focused_elem_to_top() -> Change {
@@ -2496,6 +2508,30 @@ mod test {
         │ 3│ 4 │ d  │ │ 3│*6 │ ff↩│ │ 3│ 6 │↪ff │         │ 3│*6 │↪ff │ │ 3│ 4 │ d  │
         │ 4│ 5 │ e  │ │ 4│*6 │↪ff │ │ 4│ ~ │    │         │ 4│ ~ │    │ │ 4│ 5 │ e  │
         └──┴───┴────┘ └──┴───┴────┘ └──┴───┴────┘         └──┴───┴────┘ └──┴───┴────┘
+        ");
+    }
+
+    #[test]
+    fn test_move_to_line_index() {
+        let mut viewer = init(b"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n", 1, 5, 1);
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_to_line_number(6)],
+                vec![move_to_line_number(100)],
+                vec![move_to_line_number(2)],
+                vec![move_to_line_number(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                     MoveToLineIndex(5) MoveToLineIndex(99) MoveToLineIndex(1) MoveToLineIndex(0)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐       ┌SI┬─L#┬───┐        ┌SI┬─L#┬───┐       ┌SI┬─L#┬───┐
+        │ 0│*1 │ a │ │ 0│ 3 │ c │       │ 0│ 7 │ g │        │ 0│ 1 │ a │       │ 0│*1 │ a │
+        │ 1│ 2 │ b │ │ 1│ 4 │ d │       │ 1│ 8 │ h │        │ 1│*2 │ b │       │ 1│ 2 │ b │
+        │ 2│ 3 │ c │ │ 2│ 5 │ e │       │ 2│ 9 │ i │        │ 2│ 3 │ c │       │ 2│ 3 │ c │
+        │ 3│ 4 │ d │ │ 3│*6 │ f │       │ 3│ 10│ j │        │ 3│ 4 │ d │       │ 3│ 4 │ d │
+        │ 4│ 5 │ e │ │ 4│ 7 │ g │       │ 4│*11│ k │        │ 4│ 5 │ e │       │ 4│ 5 │ e │
+        └──┴───┴───┘ └──┴───┴───┘       └──┴───┴───┘        └──┴───┴───┘       └──┴───┴───┘
         ");
     }
 

@@ -346,6 +346,14 @@ impl Document for TextDocument {
         Some((screen_line, cursor))
     }
 
+    fn first_visible_cursor_at_or_before_line_index(&self, index: usize) -> Option<Cursor> {
+        if self.complete_line_ranges.is_empty() {
+            None
+        } else {
+            Some(usize::min(index, self.complete_line_ranges.len() - 1))
+        }
+    }
+
     fn next_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
         let num_lines = self.num_lines();
         let next_line_index = screen_line.line_index + 1;
