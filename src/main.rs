@@ -1,7 +1,7 @@
 extern crate lazy_static;
 
 use std::ffi::{OsStr, OsString};
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::process::exit;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
@@ -47,13 +47,21 @@ fn main() {
     let mut exit_code = 0;
 
     {
+        let stdout = std::io::stdout();
+
+        if !stdout.is_terminal() {
+            eprintln!("sless can't pipe output to another command");
+            usage();
+            exit(1);
+        }
+
         // Switches to alternate screen, hide the cursor, enable mouse input. When it gets
         // dropped when we exit the program, it will switch back to the main screen, show the
         // cursor, and disable mouse input.
         let _terminal_settings = TerminalSettings::new();
 
         // Switch to raw mode.
-        let stdout = std::io::stdout()
+        let stdout = stdout
             .into_raw_mode()
             .expect("unable to switch terminal into raw mode");
 
@@ -251,8 +259,6 @@ fn parse_args(mut args: &[OsString]) -> Option<&OsString> {
 }
 
 fn open_input(input_arg: Option<&OsString>) -> Box<dyn io::Read + Send> {
-    use std::io::IsTerminal;
-
     let filename = match input_arg {
         None => None,
         Some(arg) => {
