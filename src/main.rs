@@ -1,7 +1,9 @@
 extern crate lazy_static;
 
+use std::ffi::{OsStr, OsString};
 use std::io::{self, Read, Write};
 use std::os::unix::net::UnixStream;
+use std::process::exit;
 use std::sync::{mpsc, Arc, Condvar, Mutex};
 use std::thread;
 
@@ -35,10 +37,11 @@ use app::{App, Break};
 use document::Document;
 
 fn main() {
+    let args: Vec<_> = std::env::args_os().into_iter().collect();
+    let input_arg = parse_args(&args);
+
     let (app_input_events_sender, app_input_events_receiver) = mpsc::channel();
     let (data_buffer_sender, data_buffer_receiver) = mpsc::sync_channel(1);
-
-    let args: Vec<_> = std::env::args_os().into_iter().collect();
 
     let mut exit_code = 0;
 
@@ -92,7 +95,7 @@ fn main() {
         let input_filename = get_document_data(
             app_input_events_sender.clone(),
             data_buffer_receiver,
-            args.get(1).cloned(),
+            input_arg.cloned(),
         );
 
         editor.bind_sequence(
@@ -155,7 +158,68 @@ fn main() {
         }
     }
 
-    std::process::exit(exit_code);
+    exit(exit_code);
+}
+
+const HELP_ARGS: [&'static str; 3] = ["-h", "-help", "--help"];
+
+// Checks for "-h", "-help" and "--help" args (and prints help text accordingly),
+// otherwises returns the filename jless should read from, or None if it
+// should read from stdin.
+fn parse_args(mut args: &[OsString]) -> Option<&OsString> {
+    if args.len() == 0 {
+        eprintln!("No args provided to program");
+        exit(1);
+    }
+
+    args = &args[1..];
+
+    if args.len() == 0 {
+        return None;
+    }
+
+    let explicit_arg_divider = OsStr::new("--");
+    let mut interpret_args = true;
+
+    // Someday: Make the help text/error messages switch between jless and sless.
+
+    fn usage() {
+        eprintln!(
+            r#"
+USAGE:
+sless foo.sexp
+produce-sexps | sless"#
+        );
+    }
+
+    if args[0].as_os_str() == explicit_arg_divider {
+        interpret_args = false;
+        args = &args[1..];
+
+        if args.len() == 0 {
+            eprintln!("Missing filename");
+            usage();
+            exit(1);
+        }
+    }
+
+    if interpret_args {
+        for arg in args.iter() {
+            if HELP_ARGS.iter().any(|help| arg == help) {
+                eprintln!("sless is command-line sexp viewer");
+                usage();
+                exit(0);
+            }
+        }
+    }
+
+    if args.len() > 1 {
+        eprintln!("Too many arguments");
+        usage();
+        exit(1);
+    }
+
+    Some(&args[0])
 }
 
 enum AppInputEvent {
@@ -252,7 +316,7 @@ fn get_tty_input(
 fn get_document_data(
     event_sender: mpsc::Sender<AppInputEvent>,
     buffer_receiver: mpsc::Receiver<Vec<u8>>,
-    filename: Option<std::ffi::OsString>,
+    filename: Option<OsString>,
 ) -> Option<String> {
     let (filename, utf8_filename) = if let Some(filename) = filename {
         let lossy = filename.as_os_str().to_string_lossy();
