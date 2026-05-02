@@ -112,7 +112,7 @@ fn main() {
             stdout,
         );
 
-        app.handle_window_resize(dimensions::current());
+        app.handle_window_resize(dimensions::current(), false);
 
         loop {
             let app_input_event = app_input_events_receiver.recv();
@@ -123,7 +123,9 @@ fn main() {
             );
 
             match app_input_event {
-                Ok(AppInputEvent::Sigwinch) => app.handle_window_resize(dimensions::current()),
+                Ok(AppInputEvent::Sigwinch) => {
+                    app.handle_window_resize(dimensions::current(), true)
+                }
                 Ok(AppInputEvent::TTYEvent(tty_event)) => match app.handle_tty_event(tty_event) {
                     Some(Break) => break,
                     None => (),

@@ -258,7 +258,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         eprintln!("Data Input Error: {io_error:?}");
     }
 
-    pub fn handle_window_resize(&mut self, new_dimensions: Dimensions) {
+    pub fn handle_window_resize(&mut self, new_dimensions: Dimensions, should_draw_screen: bool) {
         self.screen_dimensions = new_dimensions;
         self.viewer_dimensions = Self::compute_viewer_dimensions(new_dimensions);
 
@@ -266,7 +266,9 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             viewer.resize(self.viewer_dimensions);
         }
 
-        self.draw_screen();
+        if should_draw_screen {
+            self.draw_screen();
+        }
     }
 
     fn compute_viewer_dimensions(screen_dimensions: Dimensions) -> Dimensions {
