@@ -213,17 +213,22 @@ impl ScreenLine {
 }
 
 impl SexpDocument {
-    fn process_additional_data(&mut self, current_data: Option<&[u8]>) {
+    fn process_additional_data(&mut self, current_data: Option<&[u8]>, seen_eof: bool) {
         while let Some(witness) = self.tokenizer.has_enough_data_to_produce_tokens() {
             let current_data = current_data.map(|b| Ref::Transient(b));
             match self.tokenizer.next_raw_token(witness, current_data) {
                 Ok(Some(raw_token)) => self.core.append_raw_token(raw_token),
                 Ok(None) => {
-                    println!("Got to EOF!");
                     self.core.append_eof();
                     break;
                 }
-                Err(err) => unimplemented!("TODO: appending errors to sexp::core::DocCore: {err}"),
+                Err(err) => {
+                    self.core.append_tokenizer_error(err);
+                    if seen_eof {
+                        self.core.append_eof();
+                    }
+                    break;
+                }
             }
         }
 
@@ -1026,12 +1031,12 @@ impl Document for SexpDocument {
 
     fn append(&mut self, data: &[u8]) {
         self.tokenizer.feed_more_data(data);
-        self.process_additional_data(Some(data));
+        self.process_additional_data(Some(data), false);
     }
 
     fn eof(&mut self) {
         self.tokenizer.eof();
-        self.process_additional_data(None);
+        self.process_additional_data(None, true);
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
@@ -1576,7 +1581,6 @@ mod tests {
     #[test]
     fn add_new_top_level_nodes_as_they_are_available() {
         let mut doc = SexpDocument::new();
-        doc.resize(nz(100));
         assert_snapshot!(show_visible_lines(&doc), @"");
 
         doc.append(b"(key1 value1)(key2 ");
@@ -1594,6 +1598,48 @@ mod tests {
         (key2 value2)
         trailing_atom
         ");
+    }
+
+    #[test]
+    fn handle_tokenization_errors_in_doc() {
+        let mut doc = SexpDocument::new();
+
+        doc.append(b"a |# b");
+        assert_snapshot!(show_visible_lines(&doc), @r"
+        a
+        TokenizationError(UnexpectedEndOfBlockComment)
+        ");
+
+        // Someday: The `BasicTapeTokenizer` doesn't handle receiving more input
+        // after tokenization errors very well, so we get this awkward and
+        // misleading `EofCalledMultipleTimes` error.
+        doc.eof();
+        assert_snapshot!(show_visible_lines(&doc), @r"
+        a
+        TokenizationError(UnexpectedEndOfBlockComment)
+        TokenizationError(EofCalledMultipleTimes)
+        ");
+    }
+
+    #[test]
+    fn handle_tokenization_errors_at_eof() {
+        let mut doc = SexpDocument::new();
+        doc.append(b"(\"a b");
+        assert_snapshot!(show_visible_lines(&doc), @"");
+
+        doc.eof();
+        assert_snapshot!(show_visible_lines(&doc), @r"
+        (
+         TokenizationError(UnexpectedEofWhileInInQuotedAtom)
+         Unexpected EOF while parsing list
+        ");
+
+        let mut doc = SexpDocument::new();
+        doc.append(b"#| a");
+        assert_snapshot!(show_visible_lines(&doc), @"");
+
+        doc.eof();
+        assert_snapshot!(show_visible_lines(&doc), @"TokenizationError(UnexpectedEofWhileInBlockComment)");
     }
 
     #[derive(Copy, Clone, Debug)]

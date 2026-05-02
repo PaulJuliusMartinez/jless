@@ -557,6 +557,12 @@ impl DocCore {
         }
     }
 
+    pub fn append_tokenizer_error(&mut self, err: ocaml_sexplib::Error) {
+        self.push_new_error_node(ErrorMetadata {
+            message: format!("{:?}", err),
+        });
+    }
+
     pub fn append_eof(&mut self) {
         // We just have to check for errors here, pending sexp comments and unterminated lists.
 
