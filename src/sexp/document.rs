@@ -1959,6 +1959,47 @@ mod tests {
     }
 
     #[test]
+    fn test_tricky_cases_for_moving_right() {
+        let mut doc = new_doc(b"((a 1)(b 2))");
+        assert_snapshot!(dump(&doc), @r"
+        0..=4  : ((a 1)
+        5..=9  :  (b 2))
+        ");
+        let movements = show_cursor_movements(&mut doc, NodeIndex(0), vec![Right, Right]);
+        // BUG: The second right should not move the cursor.
+        assert_snapshot!(movements, @r"
+        Right => NodeIndex(1)
+        Right => NodeIndex(5)
+        ");
+
+        let mut doc = new_doc(b"((a ((b 2))))");
+        assert_snapshot!(dump(&doc), @r"
+        0..=3  : ((a (
+        4..=10 :    (b 2))))
+        ");
+        let movements = show_cursor_movements(&mut doc, NodeIndex(0), vec![Right, Right, Right]);
+        assert_snapshot!(movements, @r"
+        Right => NodeIndex(1)
+        Right => NodeIndex(4)
+        Right => -
+        ");
+
+        let mut doc = new_doc(b"((a (((b 2)))))");
+        assert_snapshot!(dump(&doc), @r"
+        0..=4  : ((a ((
+        5..=12 :    (b 2)))))
+        ");
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(0), vec![Right, Right, Right, Right]);
+        assert_snapshot!(movements, @r"
+        Right => NodeIndex(1)
+        Right => NodeIndex(4)
+        Right => NodeIndex(5)
+        Right => -
+        ");
+    }
+
+    #[test]
     fn test_collapsing_values_of_records() {
         // Collapsing list value
         let mut doc = new_doc(b"((a 1)(b (2 3)))");
