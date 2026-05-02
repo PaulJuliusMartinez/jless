@@ -50,6 +50,7 @@ enum InputState {
 }
 
 pub struct Break;
+pub struct InputWasEmpty;
 
 #[derive(Copy, Clone, Debug)]
 pub enum MessageSeverity {
@@ -279,7 +280,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         }
     }
 
-    pub fn handle_document_data(&mut self, data: Option<&[u8]>) {
+    pub fn handle_document_data(&mut self, data: Option<&[u8]>) -> Option<InputWasEmpty> {
         if let Some(viewer) = &mut self.viewer {
             match data {
                 None => viewer.document_eof(),
@@ -289,28 +290,34 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
 
         if let Some(doc) = &mut self.doc_while_waiting_for_input {
             match data {
-                None => {
-                    doc.eof();
-                    self.doc_while_waiting_for_input = None;
-                }
-                Some(data) => {
-                    doc.append(data);
-                    if let Some((top_screen_line, cursor)) = doc.top_screen_line_and_cursor() {
-                        let doc = self.doc_while_waiting_for_input.take().unwrap();
-                        let viewer = DocumentViewer::new(
-                            doc,
-                            top_screen_line,
-                            cursor,
-                            self.viewer_dimensions,
-                            DEFAULT_SCROLLOFF,
-                        );
-                        self.viewer = Some(viewer);
-                    }
+                None => doc.eof(),
+                Some(data) => doc.append(data),
+            }
+
+            if let Some((top_screen_line, cursor)) = doc.top_screen_line_and_cursor() {
+                let doc = self.doc_while_waiting_for_input.take().unwrap();
+                let viewer = DocumentViewer::new(
+                    doc,
+                    top_screen_line,
+                    cursor,
+                    self.viewer_dimensions,
+                    DEFAULT_SCROLLOFF,
+                );
+                self.viewer = Some(viewer);
+            } else {
+                // If we don't have any data in the doc, and we just saw EOF, then the input
+                // must have been empty.
+                if data.is_none() {
+                    return Some(InputWasEmpty);
                 }
             }
         }
 
-        self.draw_screen();
+        if self.viewer.is_some() {
+            self.draw_screen();
+        }
+
+        None
     }
 
     fn suspend(&mut self) {
@@ -328,6 +335,10 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         let _ = TerminalSettings::enable_jless_settings();
         let _ = self.stdout.activate_raw_mode();
         let _ = std::io::stdout().flush();
+    }
+
+    pub fn suspend_raw_mode(&mut self) {
+        let _ = self.stdout.suspend_raw_mode();
     }
 
     fn buffer_input(&mut self, ch: u8) {

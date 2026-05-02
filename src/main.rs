@@ -33,7 +33,7 @@ mod sexp;
 #[cfg(test)]
 mod test_helpers;
 
-use app::{App, Break};
+use app::{App, Break, InputWasEmpty};
 use document::Document;
 
 fn main() {
@@ -132,7 +132,27 @@ fn main() {
                 Ok(AppInputEvent::DataAvailable(data_input_event)) => match data_input_event {
                     Ok(data) => {
                         let borrowed_data = data.as_ref().map(Vec::as_slice);
-                        app.handle_document_data(borrowed_data);
+
+                        if let Some(InputWasEmpty) = app.handle_document_data(borrowed_data) {
+                            // I can't get this to work correctly when relying on Drop
+                            // implementations, so we manually restore terminal settings
+                            // before exiting.
+                            app.suspend_raw_mode();
+                            let _ = TerminalSettings::disable_jless_settings();
+                            let _ = std::io::stdout().flush();
+
+                            if input_arg.is_some() {
+                                eprintln!("file was empty; exiting\r");
+                            } else {
+                                eprintln!("received no input; exiting\r");
+                            }
+                            let _ = std::io::stderr().flush();
+
+                            // If we break, then as the TerminalSettings and the app get
+                            // dropped and unwinde, the terminal gets messed up, so we
+                            exit(0);
+                        }
+
                         if let Some(buffer) = data {
                             let _ = data_buffer_sender.send(buffer);
                         };
