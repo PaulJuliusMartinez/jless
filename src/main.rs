@@ -39,6 +39,7 @@ use document::Document;
 fn main() {
     let args: Vec<_> = std::env::args_os().into_iter().collect();
     let input_arg = parse_args(&args);
+    let input_stream = open_input(input_arg);
 
     let (app_input_events_sender, app_input_events_receiver) = mpsc::channel();
     let (data_buffer_sender, data_buffer_receiver) = mpsc::sync_channel(1);
@@ -90,12 +91,12 @@ fn main() {
 
         // Use a 1mb buffer.
         let buffer: Vec<u8> = vec![0; 1024 * 1024];
-        data_buffer_sender.send(buffer);
+        let _ = data_buffer_sender.send(buffer);
 
-        let input_filename = get_document_data(
+        get_document_data(
             app_input_events_sender.clone(),
             data_buffer_receiver,
-            input_arg.cloned(),
+            input_stream,
         );
 
         editor.bind_sequence(
@@ -104,7 +105,12 @@ fn main() {
         );
 
         let sexp_document = sexp::document::SexpDocument::new();
-        let mut app = App::new(sexp_document, editor, input_filename, stdout);
+        let mut app = App::new(
+            sexp_document,
+            editor,
+            input_arg.map(|os_str| os_str.to_string_lossy().into_owned()),
+            stdout,
+        );
 
         app.handle_window_resize(dimensions::current());
 
@@ -128,7 +134,7 @@ fn main() {
                         let borrowed_data = data.as_ref().map(Vec::as_slice);
                         app.handle_document_data(borrowed_data);
                         if let Some(buffer) = data {
-                            data_buffer_sender.send(buffer);
+                            let _ = data_buffer_sender.send(buffer);
                         };
                     }
                     Err(data_input_error) => app.handle_data_input_error(data_input_error),
@@ -163,6 +169,15 @@ fn main() {
 
 const HELP_ARGS: [&'static str; 3] = ["-h", "-help", "--help"];
 
+fn usage() {
+    eprintln!(
+        r#"
+USAGE:
+sless foo.sexp
+produce-sexps | sless"#
+    );
+}
+
 // Checks for "-h", "-help" and "--help" args (and prints help text accordingly),
 // otherwises returns the filename jless should read from, or None if it
 // should read from stdin.
@@ -182,15 +197,6 @@ fn parse_args(mut args: &[OsString]) -> Option<&OsString> {
     let mut interpret_args = true;
 
     // Someday: Make the help text/error messages switch between jless and sless.
-
-    fn usage() {
-        eprintln!(
-            r#"
-USAGE:
-sless foo.sexp
-produce-sexps | sless"#
-        );
-    }
 
     if args[0].as_os_str() == explicit_arg_divider {
         interpret_args = false;
@@ -220,6 +226,40 @@ produce-sexps | sless"#
     }
 
     Some(&args[0])
+}
+
+fn open_input(input_arg: Option<&OsString>) -> Box<dyn io::Read + Send> {
+    use std::io::IsTerminal;
+
+    let filename = match input_arg {
+        None => None,
+        Some(arg) => {
+            if arg.as_os_str() == OsStr::new("-") {
+                None
+            } else {
+                Some(arg)
+            }
+        }
+    };
+
+    match filename {
+        None => {
+            let stdin = std::io::stdin();
+            if stdin.is_terminal() {
+                eprintln!("Missing filename");
+                usage();
+                exit(1);
+            }
+            Box::new(stdin)
+        }
+        Some(filename) => match std::fs::File::open(filename) {
+            Ok(fd) => Box::new(fd),
+            Err(err) => {
+                eprintln!("Unable to open file {:?}: {}", filename, err);
+                exit(1);
+            }
+        },
+    }
 }
 
 enum AppInputEvent {
@@ -316,57 +356,33 @@ fn get_tty_input(
 fn get_document_data(
     event_sender: mpsc::Sender<AppInputEvent>,
     buffer_receiver: mpsc::Receiver<Vec<u8>>,
-    filename: Option<OsString>,
-) -> Option<String> {
-    let (filename, utf8_filename) = if let Some(filename) = filename {
-        let lossy = filename.as_os_str().to_string_lossy();
-        match &*lossy {
-            "-" => (None, None),
-            _ => {
-                let lossy = lossy.to_string();
-                (Some(filename), Some(lossy))
+    mut input: Box<dyn io::Read + Send>,
+) {
+    thread::spawn(move || loop {
+        let mut buffer = buffer_receiver.recv().unwrap();
+
+        buffer.resize(buffer.capacity(), 0);
+        match input.read(&mut buffer) {
+            Ok(0) => {
+                let _ = event_sender
+                    .send(AppInputEvent::DataAvailable(Ok(None)))
+                    .unwrap();
+                break;
             }
-        }
-    } else {
-        (None, None)
-    };
-
-    thread::spawn(move || {
-        // Someday: This shouldn't be inside the closure; we should immediately
-        // try to open the file (and fail if it doesn't exist).
-        let mut input: Box<dyn io::Read> = match filename {
-            None => Box::new(std::io::stdin()),
-            Some(filename) => Box::new(std::fs::File::open(filename).unwrap()),
-        };
-
-        loop {
-            let mut buffer = buffer_receiver.recv().unwrap();
-
-            buffer.resize(buffer.capacity(), 0);
-            match input.read(&mut buffer) {
-                Ok(0) => {
-                    let _ = event_sender
-                        .send(AppInputEvent::DataAvailable(Ok(None)))
-                        .unwrap();
-                    break;
-                }
-                Ok(n) => {
-                    buffer.truncate(n);
-                    let _ = event_sender
-                        .send(AppInputEvent::DataAvailable(Ok(Some(buffer))))
-                        .unwrap();
-                }
-                Err(err) => {
-                    let _ = event_sender
-                        .send(AppInputEvent::DataAvailable(Err(err)))
-                        .unwrap();
-                    break;
-                }
+            Ok(n) => {
+                buffer.truncate(n);
+                let _ = event_sender
+                    .send(AppInputEvent::DataAvailable(Ok(Some(buffer))))
+                    .unwrap();
+            }
+            Err(err) => {
+                let _ = event_sender
+                    .send(AppInputEvent::DataAvailable(Err(err)))
+                    .unwrap();
+                break;
             }
         }
     });
-
-    utf8_filename
 }
 
 pub(crate) struct TerminalSettings;
