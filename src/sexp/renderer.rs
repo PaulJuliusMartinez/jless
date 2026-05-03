@@ -270,6 +270,9 @@ impl<'a> Typesetter<'a> {
         let list_metadata = self.core.token(list_index).list_metadata();
         let num_elems = list_metadata.data_length();
 
+        // We've reserved 1; if there's no children it _should_ be an atom, but
+        // if for some reason it's not, we just need to print the two parens, so
+        // we need one more space; otherwise we need two more spaces for both parens.
         let extra_needed_space = if num_elems == 0 { 1 } else { 2 };
         if !self.compositor.reserve_more_space(extra_needed_space) {
             return false;
@@ -277,6 +280,24 @@ impl<'a> Typesetter<'a> {
 
         // Write opening paren
         self.append_reserved_node_as_preview(list_index);
+
+        // For singletons, print the parens and recurse; we still want to keep
+        // diving in and print the elems of the most deeply nested list.
+        if num_elems == 1 {
+            let inner_list_index = list_index + 1;
+            if let DocumentToken::StartOfList(inner_list_metadata) =
+                self.core.token(inner_list_index)
+            {
+                if let Some(inner_closing_paren) = inner_list_metadata.end_index() {
+                    if !self.try_typeset_list_preview(inner_list_index, inner_closing_paren) {
+                        self.append_reserved_ellipsis();
+                    }
+
+                    self.append_reserved_node_as_preview(closing_paren);
+                    return true;
+                }
+            }
+        }
 
         let mut num_elems_written = 0;
         let mut next_elem = Some(list_index + 1);
