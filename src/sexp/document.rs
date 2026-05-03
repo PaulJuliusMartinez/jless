@@ -1228,7 +1228,19 @@ impl Document for SexpDocument {
         // The name of this function gives us our priorities:
         // - Expand something,
         // - Or, move to a focusable node after the cursor,
-        // - Otherwise, if the line has any collapsible nodes, move down
+        // - Otherwise, if the cursor is a list that continues on another line, move down.
+        //
+        // It's tricky knowing when it's okay to move down. Consider three cases:
+        //
+        // ((a 1)        When cursor is at "(a", right shouldn't do anything
+        //  (b 2))
+        //
+        // ((a (         When cursor is at "(a", right should go to the next line because
+        //    (b 2))))   the last ( on the first line is collapsible and after the cursor
+        //
+        // ((a ((        When cursor is at "(a", right should go to the last paren,
+        //    (b 2)))))  on that line, then right again show go down because it continus on
+        //               another line (even though it's not collapsible)
 
         // When we have a plain container (e.g. the first line below), when we're focused
         // on the line, and it's collapsed, the cursor will be the same as the node index of
@@ -1255,11 +1267,6 @@ impl Document for SexpDocument {
             .find(|(focusable_index, _)| *cursor < *focusable_index)
             .map(|(node_index, _)| *node_index);
 
-        // Track whether there are any collapsible nodes, so we know whether
-        // we should try to move down if there's nothing to expand, and nothing
-        // to the right of the cursor.
-        let mut any_collapsible_nodes = false;
-
         let node_to_expand = 'find_node_to_expand: {
             let collapsible_nodes_in_line = self.collapsible_nodes_in_line(&current_line);
 
@@ -1269,8 +1276,6 @@ impl Document for SexpDocument {
             'checking_collapsible_nodes: for (node_index, collapse_state) in
                 collapsible_nodes_in_line
             {
-                any_collapsible_nodes = true;
-
                 // Ignore collapsible nodes before cursor
                 if *node_index < *cursor {
                     continue 'checking_collapsible_nodes;
@@ -1304,9 +1309,12 @@ impl Document for SexpDocument {
             return Some(next_focusable_node_in_line);
         }
 
-        // Nothing else to focus on this line, so if there was anything collapsible, we'll
-        // move down into it, otherwise there's nothing to be done.
-        if any_collapsible_nodes {
+        let should_move_down = match self.core.token(*cursor).list_end_index() {
+            None => false,
+            Some(end_index) => current_line.end_index < end_index,
+        };
+
+        if should_move_down {
             return self.move_cursor_down(1, cursor);
         }
 
@@ -1966,10 +1974,9 @@ mod tests {
         5..=9  :  (b 2))
         ");
         let movements = show_cursor_movements(&mut doc, NodeIndex(0), vec![Right, Right]);
-        // BUG: The second right should not move the cursor.
         assert_snapshot!(movements, @r"
         Right => NodeIndex(1)
-        Right => NodeIndex(5)
+        Right => -
         ");
 
         let mut doc = new_doc(b"((a ((b 2))))");
