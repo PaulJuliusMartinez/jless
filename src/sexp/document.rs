@@ -35,6 +35,7 @@ use CollapseState::*;
 enum FocusTargetKind {
     Normal,
     ListValueOfRecordField,
+    VariantSingletonValue,
 }
 
 pub struct SexpDocument {
@@ -448,6 +449,7 @@ impl SexpDocument {
         let mut last_token_was_record_field = false;
         let mut last_token_was_record_key = false;
         let mut next_token_is_record_value = false;
+        let mut next_token_is_variant_value = false;
         let mut last_token_was_variant = false;
 
         for (i, node_index) in logical_line.node_indexes().enumerate() {
@@ -456,7 +458,9 @@ impl SexpDocument {
             let mut is_this_token_variant = false;
 
             let this_token_is_record_value = next_token_is_record_value;
+            let this_token_is_variant_value = next_token_is_variant_value;
             next_token_is_record_value = false;
+            next_token_is_variant_value = false;
 
             match self.core.token(node_index) {
                 // These are always focusable
@@ -490,6 +494,9 @@ impl SexpDocument {
                     is_this_token_record_key =
                         last_token_was_record_field && matches!(atom_kind, AtomKind::RecordKey);
                     next_token_is_record_value = is_this_token_record_key;
+
+                    next_token_is_variant_value =
+                        last_token_was_variant && matches!(atom_kind, AtomKind::Constructor);
                 }
                 DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => {
                     let should_skip = last_token_was_record_key && !list_kind.is_variant();
@@ -499,6 +506,10 @@ impl SexpDocument {
                         // so we still will consider the next token as the value of a record field.
                         next_token_is_record_value = matches!(list_kind, ListKind::Singleton);
                         ListValueOfRecordField
+                    } else if this_token_is_variant_value {
+                        // Same deal as above with coalescing singletons
+                        next_token_is_variant_value = matches!(list_kind, ListKind::Singleton);
+                        VariantSingletonValue
                     } else {
                         Normal
                     };
@@ -793,7 +804,8 @@ impl SexpDocument {
                 } else {
                     match cursor_focus_target_kind {
                         FocusTargetKind::Normal => true,
-                        FocusTargetKind::ListValueOfRecordField => {
+                        FocusTargetKind::ListValueOfRecordField
+                        | FocusTargetKind::VariantSingletonValue => {
                             // Pretty sure this couldn't actually ever be none.
                             prev_focusable_node_in_line.is_none()
                         }
@@ -1874,8 +1886,7 @@ mod tests {
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(3), vec![Left]);
-        // BUG: Should go to 0.
-        assert_snapshot!(movements, @"Left => NodeIndex(2)");
+        assert_snapshot!(movements, @"Left => NodeIndex(0)");
 
         // Singleton variant as first elem in list
         let mut doc = new_doc(b"((Variant (1 2)) 3 4)");
@@ -1889,10 +1900,9 @@ mod tests {
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(5), vec![Left, LeftNoCollapse]);
-        // BUG: Should go to 1.
         assert_snapshot!(movements, @r"
-        Left =>           NodeIndex(3)
-        LeftNoCollapse => NodeIndex(1)
+        Left =>           NodeIndex(1)
+        LeftNoCollapse => NodeIndex(0)
         ");
 
         // Singleton variants as first and regular elem in record
@@ -1908,17 +1918,15 @@ mod tests {
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(6), vec![Left, LeftNoCollapse]);
-        // BUG: Should go to 1 immediately.
         assert_snapshot!(movements, @r"
-        Left =>           NodeIndex(5)
-        LeftNoCollapse => NodeIndex(3)
+        Left =>           NodeIndex(1)
+        LeftNoCollapse => NodeIndex(0)
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(18), vec![Left, LeftNoCollapse]);
-        // BUG: Should go to 11 immediately.
         assert_snapshot!(movements, @r"
-        Left =>           NodeIndex(17)
-        LeftNoCollapse => NodeIndex(16)
+        Left =>           NodeIndex(11)
+        LeftNoCollapse => NodeIndex(0)
         ");
     }
 
