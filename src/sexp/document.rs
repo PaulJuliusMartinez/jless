@@ -1824,7 +1824,7 @@ mod tests {
     }
 
     #[test]
-    fn moving_around_variants() {
+    fn test_moving_around_variants() {
         let mut doc = new_doc(b"((Variant (foo 1) (bar 2)))");
 
         assert_snapshot!(dump(&doc), @r"
@@ -1860,8 +1860,66 @@ mod tests {
         ");
 
         let movements = show_cursor_movements(&mut doc, NodeIndex(6), vec![Up(1)]);
-        // This is fine, but maybe one day we'd want to do something else.
         assert_snapshot!(movements, @"Up(1) => NodeIndex(5)");
+    }
+
+    #[test]
+    fn test_moving_around_singleton_variants() {
+        // Basic singleton variant
+        let mut doc = new_doc(b"(Variant (1 2))");
+        assert_snapshot!(dump(&doc), @r"
+        0..=2  : (Variant (
+        3..=3  :   1
+        4..=6  :   2))
+        ");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(3), vec![Left]);
+        // BUG: Should go to 0.
+        assert_snapshot!(movements, @"Left => NodeIndex(2)");
+
+        // Singleton variant as first elem in list
+        let mut doc = new_doc(b"((Variant (1 2)) 3 4)");
+
+        assert_snapshot!(dump(&doc), @r"
+        0..=3  : ((Variant (
+        4..=4  :    1
+        5..=7  :    2))
+        8..=8  :  3
+        9..=10 :  4)
+        ");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(5), vec![Left, LeftNoCollapse]);
+        // BUG: Should go to 1.
+        assert_snapshot!(movements, @r"
+        Left =>           NodeIndex(3)
+        LeftNoCollapse => NodeIndex(1)
+        ");
+
+        // Singleton variants as first and regular elem in record
+        let mut doc = new_doc(b"((a (Variant (1 2)))(b (Other (((3 4))))))");
+
+        assert_snapshot!(dump(&doc), @r"
+         0..=5  : ((a (Variant (
+         6..=6  :    1
+         7..=10 :    2)))
+        11..=17 :  (b (Other (((
+        18..=18 :    3
+        19..=25 :    4))))))
+        ");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(6), vec![Left, LeftNoCollapse]);
+        // BUG: Should go to 1 immediately.
+        assert_snapshot!(movements, @r"
+        Left =>           NodeIndex(5)
+        LeftNoCollapse => NodeIndex(3)
+        ");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(18), vec![Left, LeftNoCollapse]);
+        // BUG: Should go to 11 immediately.
+        assert_snapshot!(movements, @r"
+        Left =>           NodeIndex(17)
+        LeftNoCollapse => NodeIndex(16)
+        ");
     }
 
     #[test]
