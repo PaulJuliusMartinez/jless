@@ -676,15 +676,87 @@ impl<D: Document> DocumentViewer<D> {
             ..
         } = acceptable_start_index_range;
 
+        // The content can start anywhere between `start_index` and `end_index`, inclusive.
+        // We can convert those to possible top lines by calculating `content_range - index`,
+        // which counterintuitively associates the earlier start with the end index:
+        //
+        //                            Start at `end_index:    Start at `start_index`:
+        //                 +-----+            +-----+                 +-----+
+        //                 |     |           7|     |                9|     |
+        // start_index +-> |     |           8|     |            -> 10|     |
+        //     to      |   |     |           9|     |               11|     |
+        //   end_index +-> |     |       -> 10|     |               12|     |
+        //                 +-----+            +-----+                 +-----+
         let first_acceptable_top_line =
             self.n_screen_lines_before(content_range.start.clone(), end_index);
         let last_acceptable_top_line =
             self.n_screen_lines_before(content_range.start.clone(), start_index);
 
+        // We want to clamp the top line into the range of acceptable top lines,
+        // i.e., [7, 9] in the above example. This is reasonable when the content
+        // is close to the current viewport, but if you're jumping to the next search
+        // match, and it's far away, it'll show up at the bottom and you won't see
+        // what comes after it. In that case, you probably just want to put the
+        // content closer to the middle of the screen, so the user can see context
+        // on both sides.
+        //
+        // How do we decide whether to clamp or snap to middle? vim does this in
+        // a way such that if it does snap to middle, there are no lines in common
+        // between the previous viewport and the new viewport, which works out to
+        // snapping if the top line has to move by more than half the screen height
+        // when the content is a single line tall. (The exact calculations are more
+        // complicated if the content takes up a significant portion of the screen,
+        // but it's not worth it to make this perfectly "correct" since this is just
+        // a heuristic.)
+        let middle_acceptable_top_line = self.n_screen_lines_before(
+            content_range.start.clone(),
+            start_index + (end_index - start_index) / 2,
+        );
+        let max_move_before_snap = self.dimensions.height / 2;
+
         if self.top_line < first_acceptable_top_line {
-            self.top_line = first_acceptable_top_line;
+            // We are scrolling down to view the content range.
+            let diff = self.doc.diff_screen_lines_bounded(
+                &first_acceptable_top_line,
+                &self.top_line,
+                max_move_before_snap,
+            );
+            let would_move_too_far = diff.is_none();
+
+            if would_move_too_far {
+                // When we're snapping the viewport to view the content, we don't want to show
+                // past the end of the document if we don't have to.
+                let (bottom_screen_line, _) = self.doc.bottom_screen_line_and_cursor().expect(
+                    "bottom_screen_line_and_cursor to be Some if we've created a DocumentViewer",
+                );
+
+                let top_line_if_bottom_of_doc_at_bottom = self.n_screen_lines_before_or_top_of_doc(
+                    bottom_screen_line,
+                    self.dimensions.height - 1,
+                );
+
+                self.top_line = if top_line_if_bottom_of_doc_at_bottom < middle_acceptable_top_line
+                {
+                    top_line_if_bottom_of_doc_at_bottom
+                } else {
+                    middle_acceptable_top_line
+                };
+            } else {
+                self.top_line = first_acceptable_top_line;
+            }
         } else if last_acceptable_top_line < self.top_line {
-            self.top_line = last_acceptable_top_line;
+            let diff = self.doc.diff_screen_lines_bounded(
+                &self.top_line,
+                &last_acceptable_top_line,
+                max_move_before_snap,
+            );
+            let would_move_too_far = diff.is_none();
+
+            if would_move_too_far {
+                self.top_line = middle_acceptable_top_line;
+            } else {
+                self.top_line = last_acceptable_top_line;
+            }
         } else {
             // Top line is already in an ok spot!
         }
@@ -2140,6 +2212,78 @@ mod test {
     }
 
     #[test]
+    fn test_snap_cursor_to_middle_if_moving_far_enough_away() {
+        let content = b"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\nq\nr\ns\nt\n";
+        let mut viewer = init(content, 1, 5, 0);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![focus_top(), move_cursor_down(6)],
+                vec![focus_top(), move_cursor_down(7)],
+                vec![focus_top(), move_cursor_down(100)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                     FocusTop          FocusTop          FocusTop
+                     MoveCursorDown(6) MoveCursorDown(7) MoveCursorDown(100)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐      ┌SI┬─L#┬───┐      ┌SI┬─L#┬───┐
+        │ 0│*1 │ a │ │ 0│ 3 │ c │      │ 0│ 6 │ f │      │ 0│ 16│ p │
+        │ 1│ 2 │ b │ │ 1│ 4 │ d │      │ 1│ 7 │ g │      │ 1│ 17│ q │
+        │ 2│ 3 │ c │ │ 2│ 5 │ e │      │ 2│*8 │ h │      │ 2│ 18│ r │
+        │ 3│ 4 │ d │ │ 3│ 6 │ f │      │ 3│ 9 │ i │      │ 3│ 19│ s │
+        │ 4│ 5 │ e │ │ 4│*7 │ g │      │ 4│ 10│ j │      │ 4│*20│ t │
+        └──┴───┴───┘ └──┴───┴───┘      └──┴───┴───┘      └──┴───┴───┘
+        ");
+
+        viewer.do_action(Action::FocusTop);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![focus_top(), move_cursor_down(4)],
+                vec![move_cursor_down(2)],
+                vec![focus_top(), move_cursor_down(4)],
+                vec![move_cursor_down(3)],
+            ],
+        );
+
+        // Doesn't matter where the cursor is at the start, only where the top line.
+        assert_snapshot!(output, @r"
+                     FocusTop          MoveCursorDown(2) FocusTop          MoveCursorDown(3)
+                     MoveCursorDown(4)                   MoveCursorDown(4)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐      ┌SI┬─L#┬───┐      ┌SI┬─L#┬───┐      ┌SI┬─L#┬───┐
+        │ 0│*1 │ a │ │ 0│ 1 │ a │      │ 0│ 3 │ c │      │ 0│ 1 │ a │      │ 0│ 6 │ f │
+        │ 1│ 2 │ b │ │ 1│ 2 │ b │      │ 1│ 4 │ d │      │ 1│ 2 │ b │      │ 1│ 7 │ g │
+        │ 2│ 3 │ c │ │ 2│ 3 │ c │      │ 2│ 5 │ e │      │ 2│ 3 │ c │      │ 2│*8 │ h │
+        │ 3│ 4 │ d │ │ 3│ 4 │ d │      │ 3│ 6 │ f │      │ 3│ 4 │ d │      │ 3│ 9 │ i │
+        │ 4│ 5 │ e │ │ 4│*5 │ e │      │ 4│*7 │ g │      │ 4│*5 │ e │      │ 4│ 10│ j │
+        └──┴───┴───┘ └──┴───┴───┘      └──┴───┴───┘      └──┴───┴───┘      └──┴───┴───┘
+        ");
+
+        viewer.do_action(Action::FocusBottom);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![focus_bottom(), move_cursor_up(6)],
+                vec![focus_bottom(), move_cursor_up(7)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                     FocusBottom     FocusBottom
+                     MoveCursorUp(6) MoveCursorUp(7)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐    ┌SI┬─L#┬───┐
+        │ 0│ 16│ p │ │ 0│*14│ n │    │ 0│ 11│ k │
+        │ 1│ 17│ q │ │ 1│ 15│ o │    │ 1│ 12│ l │
+        │ 2│ 18│ r │ │ 2│ 16│ p │    │ 2│*13│ m │
+        │ 3│ 19│ s │ │ 3│ 17│ q │    │ 3│ 14│ n │
+        │ 4│*20│ t │ │ 4│ 18│ r │    │ 4│ 15│ o │
+        └──┴───┴───┘ └──┴───┴───┘    └──┴───┴───┘
+        ");
+    }
+
+    #[test]
     fn test_move_cursor_up_and_down_to_very_long_line() {
         let mut viewer = init(b"a\nb\nc\nd\ne1e2e3e4e5e6e7e8\nf\ng\nh\ni\n", 2, 4, 1);
         let output = run(
@@ -2153,10 +2297,10 @@ mod test {
         assert_snapshot!(output, @r"
                       MoveCursorDown(3) MoveCursorDown(1) MoveCursorDown(1)
         ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐     ┌SI┬─L#┬────┐     ┌SI┬─L#┬────┐
-        │ 0│*1 │ a  │ │ 0│ 2 │ b  │     │ 0│*5 │ e1↩│     │ 0│ 5 │↪e7↩│
-        │ 1│ 2 │ b  │ │ 1│ 3 │ c  │     │ 1│*5 │↪e2↩│     │ 1│ 5 │↪e8 │
-        │ 2│ 3 │ c  │ │ 2│*4 │ d  │     │ 2│*5 │↪e3↩│     │ 2│*6 │ f  │
-        │ 3│ 4 │ d  │ │ 3│ 5 │ e1↩│     │ 3│*5 │↪e4↩│     │ 3│ 7 │ g  │
+        │ 0│*1 │ a  │ │ 0│ 2 │ b  │     │ 0│*5 │ e1↩│     │ 0│ 5 │↪e8 │
+        │ 1│ 2 │ b  │ │ 1│ 3 │ c  │     │ 1│*5 │↪e2↩│     │ 1│*6 │ f  │
+        │ 2│ 3 │ c  │ │ 2│*4 │ d  │     │ 2│*5 │↪e3↩│     │ 2│ 7 │ g  │
+        │ 3│ 4 │ d  │ │ 3│ 5 │ e1↩│     │ 3│*5 │↪e4↩│     │ 3│ 8 │ h  │
         └──┴───┴────┘ └──┴───┴────┘     └──┴───┴────┘     └──┴───┴────┘
         ");
 
@@ -2172,10 +2316,10 @@ mod test {
         assert_snapshot!(output, @r"
                       MoveCursorDown(100) MoveCursorUp(3) MoveCursorUp(1) MoveCursorUp(1)
         ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐       ┌SI┬─L#┬────┐   ┌SI┬─L#┬────┐   ┌SI┬─L#┬────┐
-        │ 0│ 5 │↪e7↩│ │ 0│ 6 │ f  │       │ 0│ 5 │↪e8 │   │ 0│*5 │ e1↩│   │ 0│ 3 │ c  │
-        │ 1│ 5 │↪e8 │ │ 1│ 7 │ g  │       │ 1│*6 │ f  │   │ 1│*5 │↪e2↩│   │ 1│*4 │ d  │
-        │ 2│*6 │ f  │ │ 2│ 8 │ h  │       │ 2│ 7 │ g  │   │ 2│*5 │↪e3↩│   │ 2│ 5 │ e1↩│
-        │ 3│ 7 │ g  │ │ 3│*9 │ i  │       │ 3│ 8 │ h  │   │ 3│*5 │↪e4↩│   │ 3│ 5 │↪e2↩│
+        │ 0│ 5 │↪e8 │ │ 0│ 6 │ f  │       │ 0│ 5 │↪e8 │   │ 0│*5 │ e1↩│   │ 0│ 3 │ c  │
+        │ 1│*6 │ f  │ │ 1│ 7 │ g  │       │ 1│*6 │ f  │   │ 1│*5 │↪e2↩│   │ 1│*4 │ d  │
+        │ 2│ 7 │ g  │ │ 2│ 8 │ h  │       │ 2│ 7 │ g  │   │ 2│*5 │↪e3↩│   │ 2│ 5 │ e1↩│
+        │ 3│ 8 │ h  │ │ 3│*9 │ i  │       │ 3│ 8 │ h  │   │ 3│*5 │↪e4↩│   │ 3│ 5 │↪e2↩│
         └──┴───┴────┘ └──┴───┴────┘       └──┴───┴────┘   └──┴───┴────┘   └──┴───┴────┘
         ");
     }
@@ -2969,10 +3113,10 @@ mod test {
                        /a                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 2) JumpToSearchMatch(Prev, 3)
                        JumpToSearchMatch(Next, 1)
         ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐             ┌SI┬─L#┬─────┐
-        │ 0│*1 │ 1   │ │ 0│ 1 │ 1   │             │ 0│ 1 │ 1   │             │ 0│ 4 │ 4   │             │ 0│*2 │ 2a  │
-        │ 1│ 2 │ 2a  │ │ 1│*2 │ 2a  │             │ 1│ 2 │ 2a  │             │ 1│ 5 │ 5   │             │ 1│ 3 │ 3a  │
-        │ 2│ 3 │ 3a  │ │ 2│ 3 │ 3a  │             │ 2│*3 │ 3a  │             │ 2│ 6 │ 6b  │             │ 2│ 4 │ 4   │
-        │ 3│ 4 │ 4   │ │ 3│ 4 │ 4   │             │ 3│ 4 │ 4   │             │ 3│*7 │ 7aa │             │ 3│ 5 │ 5   │
+        │ 0│*1 │ 1   │ │ 0│ 1 │ 1   │             │ 0│ 1 │ 1   │             │ 0│ 6 │ 6b  │             │ 0│*2 │ 2a  │
+        │ 1│ 2 │ 2a  │ │ 1│*2 │ 2a  │             │ 1│ 2 │ 2a  │             │ 1│*7 │ 7aa │             │ 1│ 3 │ 3a  │
+        │ 2│ 3 │ 3a  │ │ 2│ 3 │ 3a  │             │ 2│*3 │ 3a  │             │ 2│ 8 │ 8   │             │ 2│ 4 │ 4   │
+        │ 3│ 4 │ 4   │ │ 3│ 4 │ 4   │             │ 3│ 4 │ 4   │             │ 3│ 9 │ 9b  │             │ 3│ 5 │ 5   │
         └──┴───┴─────┘ └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘             └──┴───┴─────┘
                        /a [1/4]                   /a [2/4]                   /a [4/4]                   /a [1/4]
         ");
@@ -3042,11 +3186,11 @@ mod test {
                         /H                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1)
                         JumpToSearchMatch(Next, 1)
         ┌SI┬─L#┬──────┐ ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐
-        │ 0│*1 │ a    │ │ 0│ 4 │ d    │            │ 0│ 4 │ d    │            │ 0│*6 │↪5   ↩│            │ 0│*6 │↪8 H ↩│            │ 0│*6 │↪11H ↩│
-        │ 1│ 2 │ b    │ │ 1│ 5 │ e    │            │ 1│ 5 │ e    │            │ 1│*6 │↪6   ↩│            │ 1│*6 │↪9   ↩│            │ 1│*6 │↪12  ↩│
-        │ 2│ 3 │ c    │ │ 2│*6 │ 1   ↩│            │ 2│*6 │ 1   ↩│            │ 2│*6 │↪7   ↩│            │ 2│*6 │↪10  ↩│            │ 2│*6 │↪12  ↩│
-        │ 3│ 4 │ d    │ │ 3│*6 │↪2H H↩│            │ 3│*6 │↪2H H↩│            │ 3│*6 │↪8 H ↩│            │ 3│*6 │↪11H ↩│            │ 3│*6 │↪14H ↩│
-        │ 4│ 5 │ e    │ │ 4│*6 │↪3   ↩│            │ 4│*6 │↪3   ↩│            │ 4│*6 │↪9   ↩│            │ 4│*6 │↪12  ↩│            │ 4│*6 │↪15   │
+        │ 0│*1 │ a    │ │ 0│ 5 │ e    │            │ 0│ 5 │ e    │            │ 0│*6 │↪6   ↩│            │ 0│*6 │↪8 H ↩│            │ 0│*6 │↪12  ↩│
+        │ 1│ 2 │ b    │ │ 1│*6 │ 1   ↩│            │ 1│*6 │ 1   ↩│            │ 1│*6 │↪7   ↩│            │ 1│*6 │↪9   ↩│            │ 1│*6 │↪12  ↩│
+        │ 2│ 3 │ c    │ │ 2│*6 │↪2H H↩│            │ 2│*6 │↪2H H↩│            │ 2│*6 │↪8 H ↩│            │ 2│*6 │↪10  ↩│            │ 2│*6 │↪14H ↩│
+        │ 3│ 4 │ d    │ │ 3│*6 │↪3   ↩│            │ 3│*6 │↪3   ↩│            │ 3│*6 │↪9   ↩│            │ 3│*6 │↪11H ↩│            │ 3│*6 │↪15   │
+        │ 4│ 5 │ e    │ │ 4│*6 │↪4   ↩│            │ 4│*6 │↪4   ↩│            │ 4│*6 │↪10  ↩│            │ 4│*6 │↪12  ↩│            │ 4│ 7 │ v    │
         └──┴───┴──────┘ └──┴───┴──────┘            └──┴───┴──────┘            └──┴───┴──────┘            └──┴───┴──────┘            └──┴───┴──────┘
                         /H [1/5]                   /H [2/5]                   /H [3/5]                   /H [4/5]                   /H [5/5]
         ");
@@ -3062,11 +3206,11 @@ mod test {
         assert_snapshot!(output, @r"
                         MoveCursorDown(2) JumpToSearchMatch(Prev, 2) JumpToSearchMatch(Next, 2)
         ┌SI┬─L#┬──────┐ ┌SI┬─L#┬──────┐   ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐
-        │ 0│*6 │↪11H ↩│ │ 0│ 6 │↪14H ↩│   │ 0│*6 │↪10  ↩│            │ 0│*6 │ 1   ↩│
-        │ 1│*6 │↪12  ↩│ │ 1│ 6 │↪15   │   │ 1│*6 │↪11H ↩│            │ 1│*6 │↪2H H↩│
-        │ 2│*6 │↪12  ↩│ │ 2│ 7 │ v    │   │ 2│*6 │↪12  ↩│            │ 2│*6 │↪3   ↩│
-        │ 3│*6 │↪14H ↩│ │ 3│*8 │ w    │   │ 3│*6 │↪12  ↩│            │ 3│*6 │↪4   ↩│
-        │ 4│*6 │↪15   │ │ 4│ 9 │ x    │   │ 4│*6 │↪14H ↩│            │ 4│*6 │↪5   ↩│
+        │ 0│*6 │↪12  ↩│ │ 0│ 6 │↪14H ↩│   │ 0│*6 │↪9   ↩│            │ 0│ 5 │ e    │
+        │ 1│*6 │↪12  ↩│ │ 1│ 6 │↪15   │   │ 1│*6 │↪10  ↩│            │ 1│*6 │ 1   ↩│
+        │ 2│*6 │↪14H ↩│ │ 2│ 7 │ v    │   │ 2│*6 │↪11H ↩│            │ 2│*6 │↪2H H↩│
+        │ 3│*6 │↪15   │ │ 3│*8 │ w    │   │ 3│*6 │↪12  ↩│            │ 3│*6 │↪3   ↩│
+        │ 4│ 7 │ v    │ │ 4│ 9 │ x    │   │ 4│*6 │↪12  ↩│            │ 4│*6 │↪4   ↩│
         └──┴───┴──────┘ └──┴───┴──────┘   └──┴───┴──────┘            └──┴───┴──────┘
         /H [5/5]                          /H [4/5]                   /H [1/5] W
         ");

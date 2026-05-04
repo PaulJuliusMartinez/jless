@@ -103,6 +103,30 @@ pub trait Document {
         diff
     }
 
+    // Computes a bounded diff between screen lines, for when we only care about the
+    // exact diff if it's smaller enough. If `diff_screen_lines(a, b)` would return more
+    // than `max`, this will return `None` instead.
+    fn diff_screen_lines_bounded(
+        &self,
+        a: &Self::ScreenLine,
+        b: &Self::ScreenLine,
+        max: usize,
+    ) -> Option<usize> {
+        debug_assert!(a >= b);
+        let mut diff = 0;
+        let mut t = a.clone();
+        while t != *b {
+            t = self
+                .prev_screen_line(&t)
+                .expect("a >= b, but never found b before a");
+            diff += 1;
+            if diff > max {
+                return None;
+            }
+        }
+        Some(diff)
+    }
+
     // Actions
 
     fn move_cursor_down(&mut self, lines: usize, cursor: &Self::Cursor) -> Option<Self::Cursor>;
