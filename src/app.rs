@@ -241,6 +241,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         self.draw_screen();
         self.message = None;
 
+        /*
         match tty_event {
             TermionEvent::Key(Key::Char(':')) => {
                 // These [unwrap]s should be handled once this is moved out of
@@ -253,6 +254,9 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             }
             _ => None,
         }
+        */
+
+        None
     }
 
     // Someday: Do something here.
