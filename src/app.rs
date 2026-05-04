@@ -321,8 +321,16 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             }
         }
 
-        if self.viewer.is_some() {
-            self.draw_screen();
+        if let Some(viewer) = &self.viewer {
+            let showing_matches = if let Some(search_state) = &viewer.search_state {
+                search_state.should_show_matches()
+            } else {
+                false
+            };
+
+            if showing_matches || viewer.should_draw_screen_after_appended_data() {
+                self.draw_screen();
+            }
         }
 
         None
@@ -470,7 +478,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     fn draw_screen(&mut self) {
         let mut terminal = AnsiTerminal::new(String::new());
 
-        match &self.viewer {
+        match &mut self.viewer {
             None => {
                 let state = if self.doc_while_waiting_for_input.is_some() {
                     "Waiting for input..."

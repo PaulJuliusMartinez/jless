@@ -35,12 +35,15 @@ pub struct DocumentViewer<D: Document> {
     scrolloff_setting: usize,
 
     tailing_end_of_document: bool,
+    // Used as an optimization to not redraw the screen when new data is appened
+    // to the document.
+    last_render_drew_empty_lines_after_end_of_doc: bool,
     jump_distance: Option<NonZeroUsize>,
 
     pub search_state: Option<SearchState>,
 }
 
-const MIN_LINE_NUMBER_WIDTH: usize = 2;
+const MIN_LINE_NUMBER_WIDTH: usize = 4;
 
 /// Computed details about how close some content is to the start or end of the document. If one of
 /// these values is `None`, that means the start/end of the document is _more_ than some fixed
@@ -119,6 +122,7 @@ impl<D: Document> DocumentViewer<D> {
             dimensions_are_too_small_to_show_content: false,
             scrolloff_setting: scrolloff,
             tailing_end_of_document: false,
+            last_render_drew_empty_lines_after_end_of_doc: true,
             jump_distance: None,
             search_state: None,
         };
@@ -132,6 +136,13 @@ impl<D: Document> DocumentViewer<D> {
 
     pub fn set_scrolloff(&mut self, scrolloff: usize) {
         self.scrolloff_setting = scrolloff;
+    }
+
+    pub fn should_draw_screen_after_appended_data(&self) -> bool {
+        // Someday: Maybe we should also check if the width of the line numbers changed.
+        // Right now the they'll just update the next time something happens, but that's
+        // probably fine.
+        self.tailing_end_of_document || self.last_render_drew_empty_lines_after_end_of_doc
     }
 
     // Cap scrolloff at half the size of the screen.
@@ -1583,7 +1594,7 @@ impl<D: Document> DocumentViewer<D> {
         self.dimensions_are_too_small_to_show_content
     }
 
-    pub fn render(&self) -> (Vec<Vec<crate::rendering::StyledSegment>>, &[u8]) {
+    pub fn render(&mut self) -> (Vec<Vec<crate::rendering::StyledSegment>>, &[u8]) {
         assert!(!self.dimensions_are_too_small_to_show_content);
         let width_of_line_numbers = Self::width_of_line_numbers(self.doc.num_lines());
 
@@ -1610,6 +1621,8 @@ impl<D: Document> DocumentViewer<D> {
         let mut rendered_curr_line_number = false;
         let focused_line_number_attrs = Attrs::from_ansi_fg(AnsiColor::Yellow);
 
+        let mut rendered_empty_line = false;
+
         for screen_line in self.viewport_lines() {
             match screen_line {
                 None => {
@@ -1618,6 +1631,7 @@ impl<D: Document> DocumentViewer<D> {
                         content: Text::Static("~"),
                     };
                     rendered_lines.push(vec![empty_line_segment]);
+                    rendered_empty_line = true;
                 }
                 Some(screen_line) => {
                     let line_number = self.doc.line_number(&screen_line);
@@ -1698,6 +1712,8 @@ impl<D: Document> DocumentViewer<D> {
                 }
             }
         }
+
+        self.last_render_drew_empty_lines_after_end_of_doc = rendered_empty_line;
 
         (rendered_lines, self.doc.raw_bytes_for_searching())
     }
