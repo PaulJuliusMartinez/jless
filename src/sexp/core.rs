@@ -432,6 +432,15 @@ impl DocCore {
         self.all_nodes[node_index.0].parent_index()
     }
 
+    pub fn depth(&self, mut node_index: NodeIndex) -> usize {
+        let mut depth = 0;
+        while let Some(parent_index) = self.parent_index(node_index) {
+            depth += 1;
+            node_index = parent_index;
+        }
+        depth
+    }
+
     pub fn token(&self, node_index: NodeIndex) -> &DocumentToken {
         &self.all_nodes[node_index.0].token
     }

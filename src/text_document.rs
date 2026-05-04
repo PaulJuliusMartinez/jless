@@ -524,6 +524,22 @@ impl Document for TextDocument {
         None
     }
 
+    fn move_cursor_to_next_sibling_or_down(
+        &mut self,
+        _cursor: &Self::Cursor,
+    ) -> Option<Self::Cursor> {
+        None
+    }
+
+    fn move_cursor_to_prev_sibling_or_up(
+        &mut self,
+        _cursor: &Self::Cursor,
+    ) -> Option<Self::Cursor> {
+        None
+    }
+
+    fn clear_adjacent_sibling_nav_state(&mut self) {}
+
     fn collapse_node_and_siblings(
         &mut self,
         _cursor: &Cursor,

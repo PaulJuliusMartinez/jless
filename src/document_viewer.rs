@@ -267,6 +267,22 @@ impl<D: Document> DocumentViewer<D> {
         self.position_of_content_in_viewport(&self.doc.cursor_range(&self.current_focus))
     }
 
+    fn move_n_times_then_update_so_current_focus_is_visible<F>(&mut self, mut n: usize, mut f: F)
+    where
+        F: FnMut(&mut Self) -> Option<D::Cursor>,
+    {
+        while n > 0 {
+            let Some(new_cursor) = f(self) else {
+                break;
+            };
+
+            n -= 1;
+            self.current_focus = new_cursor;
+        }
+
+        self.update_so_current_focus_is_visible();
+    }
+
     fn move_cursor_down(&mut self, lines: usize) {
         if let Some(new_cursor) = self.doc.move_cursor_down(lines, &self.current_focus) {
             self.current_focus = new_cursor;
@@ -398,36 +414,31 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
-    fn move_cursor_to_next_indentation_change(&mut self, mut n: usize) {
-        while n > 0 {
-            let Some(new_cursor) = self
-                .doc
-                .move_cursor_to_next_indentation_change(&self.current_focus)
-            else {
-                break;
-            };
-
-            n -= 1;
-            self.current_focus = new_cursor;
-        }
-
-        self.update_so_current_focus_is_visible();
+    fn move_cursor_to_next_sibling_or_down(&mut self, n: usize) {
+        self.move_n_times_then_update_so_current_focus_is_visible(n, |me| {
+            me.doc
+                .move_cursor_to_next_sibling_or_down(&me.current_focus)
+        })
     }
 
-    fn move_cursor_to_prev_indentation_change(&mut self, mut n: usize) {
-        while n > 0 {
-            let Some(new_cursor) = self
-                .doc
-                .move_cursor_to_prev_indentation_change(&self.current_focus)
-            else {
-                break;
-            };
+    fn move_cursor_to_prev_sibling_or_up(&mut self, n: usize) {
+        self.move_n_times_then_update_so_current_focus_is_visible(n, |me| {
+            me.doc.move_cursor_to_prev_sibling_or_up(&me.current_focus)
+        })
+    }
 
-            n -= 1;
-            self.current_focus = new_cursor;
-        }
+    fn move_cursor_to_next_indentation_change(&mut self, n: usize) {
+        self.move_n_times_then_update_so_current_focus_is_visible(n, |me| {
+            me.doc
+                .move_cursor_to_next_indentation_change(&me.current_focus)
+        })
+    }
 
-        self.update_so_current_focus_is_visible();
+    fn move_cursor_to_prev_indentation_change(&mut self, n: usize) {
+        self.move_n_times_then_update_so_current_focus_is_visible(n, |me| {
+            me.doc
+                .move_cursor_to_prev_indentation_change(&me.current_focus)
+        })
     }
 
     fn focus_top(&mut self) {
@@ -1344,6 +1355,9 @@ impl<D: Document> DocumentViewer<D> {
         let prev_closest_visible_cursor_to_last_search_match =
             self.closest_visible_cursor_to_last_search_match();
 
+        let intentionally_moving_cursor = action.is_intentionally_moving_cursor();
+        let moving_to_adjacent_sibling = action.is_moving_to_adjacent_sibling();
+
         match action {
             Action::NoOp => (),
             Action::MoveCursorDown(n) => self.move_cursor_down(n),
@@ -1355,6 +1369,8 @@ impl<D: Document> DocumentViewer<D> {
             }
             Action::MoveCursorToFirstSibling => self.move_cursor_to_first_sibling(),
             Action::MoveCursorToLastSibling => self.move_cursor_to_last_sibling(),
+            Action::MoveCursorToNextSiblingOrDown(n) => self.move_cursor_to_next_sibling_or_down(n),
+            Action::MoveCursorToPrevSiblingOrUp(n) => self.move_cursor_to_prev_sibling_or_up(n),
             Action::MoveCursorToNextIndentationChange(n) => {
                 self.move_cursor_to_next_indentation_change(n)
             }
@@ -1385,6 +1401,13 @@ impl<D: Document> DocumentViewer<D> {
         }
 
         let cursor_moved = prev_cursor != self.current_focus;
+
+        if !moving_to_adjacent_sibling {
+            if cursor_moved || intentionally_moving_cursor {
+                self.doc.clear_adjacent_sibling_nav_state();
+            }
+        }
+
         let new_closest_visible_cursor_to_last_search_match =
             self.closest_visible_cursor_to_last_search_match();
 
@@ -1866,6 +1889,14 @@ mod test {
 
     fn press_right() -> Change {
         Change::Action(Action::ExpandOrMoveCursorRightOrDown)
+    }
+
+    fn next_sibling(n: usize) -> Change {
+        Change::Action(Action::MoveCursorToNextSiblingOrDown(n))
+    }
+
+    fn prev_sibling(n: usize) -> Change {
+        Change::Action(Action::MoveCursorToPrevSiblingOrUp(n))
     }
 
     fn collapse_node_and_siblings(depth: Option<usize>) -> Change {
@@ -2461,6 +2492,69 @@ mod test {
         │ 2│ 3 │ ((a 2)  │ │ 2│ 7 │ ((a 4)  │           │ 2│ 6 │  (b 3)) │
         │ 3│ 4 │  (b 2)) │ │ 3│ 8 │  (b 4)) │           │ 3│ 7 │ ((a 4)  │
         └──┴───┴─────────┘ └──┴───┴─────────┘           └──┴───┴─────────┘
+        ");
+    }
+
+    #[test]
+    fn test_move_to_adjacent_sibling_forgets_desired_depth_after_other_movement() {
+        let text = b"((a ((x (1 2)) (y 3))) (b 4))";
+        let mut viewer = init_sexp(text, 10, 5, 1);
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(1), next_sibling(1)],
+                vec![next_sibling(1)],
+                vec![prev_sibling(1)],
+            ],
+        );
+        assert_snapshot!(output, @r"
+                              MoveCursorDown(1)                MoveCursorToNextSiblingOrDown(1) MoveCursorToPrevSiblingOrUp(1)
+                              MoveCursorToNextSiblingOrDown(1)
+        ┌SI┬─L#┬────────────┐ ┌SI┬─L#┬────────────┐            ┌SI┬─L#┬────────────┐            ┌SI┬─L#┬────────────┐
+        │ 0│*1 │ [(a (      │ │ 0│ 2 │    (x (    │            │ 0│ 2 │    (x (    │            │ 0│ 2 │    (x (    │
+        │ 1│ 2 │    (x (    │ │ 1│ 3 │      1     │            │ 1│ 3 │      1     │            │ 1│ 3 │      1     │
+        │ 2│ 3 │      1     │ │ 2│ 4 │      2))   │            │ 2│ 4 │      2))   │            │ 2│ 4 │      2))   │
+        │ 3│ 4 │      2))   │ │ 3│*5 │    [y 3))) │            │ 3│ 5 │    (y 3))) │            │ 3│*5 │    [y 3))) │
+        │ 4│ 5 │    (y 3))) │ │ 4│ 6 │  (b 4))    │            │ 4│*6 │  [b 4))    │            │ 4│ 6 │  (b 4))    │
+        └──┴───┴────────────┘ └──┴───┴────────────┘            └──┴───┴────────────┘            └──┴───┴────────────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![vec![move_cursor_down(1)], vec![prev_sibling(1)]],
+        );
+        assert_snapshot!(output, @r"
+                              MoveCursorDown(1)     MoveCursorToPrevSiblingOrUp(1)
+        ┌SI┬─L#┬────────────┐ ┌SI┬─L#┬────────────┐ ┌SI┬─L#┬────────────┐
+        │ 0│ 2 │    (x (    │ │ 0│ 2 │    (x (    │ │ 0│*1 │ ([a (      │
+        │ 1│ 3 │      1     │ │ 1│ 3 │      1     │ │ 1│ 2 │    (x (    │
+        │ 2│ 4 │      2))   │ │ 2│ 4 │      2))   │ │ 2│ 3 │      1     │
+        │ 3│*5 │    [y 3))) │ │ 3│ 5 │    (y 3))) │ │ 3│ 4 │      2))   │
+        │ 4│ 6 │  (b 4))    │ │ 4│*6 │  [b 4))    │ │ 4│ 5 │    (y 3))) │
+        └──┴───┴────────────┘ └──┴───┴────────────┘ └──┴───┴────────────┘
+        ");
+
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![move_cursor_down(1), next_sibling(2)],
+                vec![move_cursor_down(1)],
+                vec![prev_sibling(1)],
+            ],
+        );
+        // Even if cursor doesn't actually move, if the user tried to move the cursor
+        // not using J/K, then the depth is forgotten.
+        assert_snapshot!(output, @r"
+                              MoveCursorDown(1)                MoveCursorDown(1)     MoveCursorToPrevSiblingOrUp(1)
+                              MoveCursorToNextSiblingOrDown(2)
+        ┌SI┬─L#┬────────────┐ ┌SI┬─L#┬────────────┐            ┌SI┬─L#┬────────────┐ ┌SI┬─L#┬────────────┐
+        │ 0│*1 │ ([a (      │ │ 0│ 2 │    (x (    │            │ 0│ 2 │    (x (    │ │ 0│*1 │ ([a (      │
+        │ 1│ 2 │    (x (    │ │ 1│ 3 │      1     │            │ 1│ 3 │      1     │ │ 1│ 2 │    (x (    │
+        │ 2│ 3 │      1     │ │ 2│ 4 │      2))   │            │ 2│ 4 │      2))   │ │ 2│ 3 │      1     │
+        │ 3│ 4 │      2))   │ │ 3│ 5 │    (y 3))) │            │ 3│ 5 │    (y 3))) │ │ 3│ 4 │      2))   │
+        │ 4│ 5 │    (y 3))) │ │ 4│*6 │  [b 4))    │            │ 4│*6 │  [b 4))    │ │ 4│ 5 │    (y 3))) │
+        └──┴───┴────────────┘ └──┴───┴────────────┘            └──┴───┴────────────┘ └──┴───┴────────────┘
         ");
     }
 

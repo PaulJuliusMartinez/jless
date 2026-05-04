@@ -145,6 +145,15 @@ pub trait Document {
     fn move_cursor_to_first_sibling(&mut self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
     fn move_cursor_to_last_sibling(&mut self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
 
+    fn move_cursor_to_next_sibling_or_down(
+        &mut self,
+        cursor: &Self::Cursor,
+    ) -> Option<Self::Cursor>;
+
+    fn move_cursor_to_prev_sibling_or_up(&mut self, cursor: &Self::Cursor) -> Option<Self::Cursor>;
+
+    fn clear_adjacent_sibling_nav_state(&mut self);
+
     fn move_cursor_to_next_indentation_change(
         &mut self,
         cursor: &Self::Cursor,

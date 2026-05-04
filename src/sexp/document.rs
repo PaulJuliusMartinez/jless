@@ -46,6 +46,9 @@ pub struct SexpDocument {
     starts_of_logical_lines: OSBTreeMap<NodeIndex, (NodeIndex, usize)>,
     collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
+    // We should maybe keep track of whether this is some or none in document_viewer,
+    // but I don't want to add another associated type to Document.
+    adjacent_sibling_nav_depth: Option<usize>,
     // TODO: Probably put this in DocumentViewer; this only exists so I could set
     // it to false in tests and not update a bunch of them.
     include_cursor: bool,
@@ -529,6 +532,17 @@ impl SexpDocument {
                 }
             }
 
+            // The start of the line should _always_ be focusable. We'll add a debug
+            // assert to catch this in tests, but in release we can just make sure to
+            // add it and there's no problem.
+            if i == 0 {
+                let contains_first_node = focusable_nodes.len() == 1;
+                debug_assert!(contains_first_node);
+                if !contains_first_node {
+                    focusable_nodes.push((node_index, Normal));
+                }
+            }
+
             last_token_was_record_field = is_this_token_record_field;
             last_token_was_record_key = is_this_token_record_key;
             last_token_was_variant = is_this_token_variant;
@@ -572,6 +586,20 @@ impl SexpDocument {
             Some(focusable_node_index) => focusable_node_index,
             None => node_index,
         }
+    }
+
+    fn current_adjacent_sibling_nav_depth_or_calculate_new_value(
+        &mut self,
+        node_index: NodeIndex,
+    ) -> usize {
+        if self.adjacent_sibling_nav_depth.is_some() {
+            return self.adjacent_sibling_nav_depth.unwrap();
+        }
+
+        let reference_node = self.first_normal_focusable_node_to_left_of_node_or_node(node_index);
+        let depth = self.core.depth(reference_node);
+        self.adjacent_sibling_nav_depth = Some(depth);
+        depth
     }
 
     // Returns true if a node is the first child of its parent, unless the parent is a variant,
@@ -1057,6 +1085,7 @@ impl Document for SexpDocument {
             collapsible_nodes: BTreeMap::new(),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
+            adjacent_sibling_nav_depth: None,
             include_cursor: !cfg!(test),
         }
     }
@@ -1417,6 +1446,125 @@ impl Document for SexpDocument {
         };
 
         list_metadata.last_child_index()
+    }
+
+    fn move_cursor_to_next_sibling_or_down(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
+        let desired_depth = self.current_adjacent_sibling_nav_depth_or_calculate_new_value(*cursor);
+        let curr_depth = self.core.depth(*cursor);
+
+        // If currently at the correct depth, try to move to the next sibling. When
+        // moving backwards, there are concerns that we wouldn't want to focus the
+        // previous sibling (e.g., going from a record field value to the key of the
+        // record field, or from the first value of a variant to the constructor),
+        // but that isn't a concern when moving forward in the document.
+        if curr_depth == desired_depth {
+            if let Some(next_sibling) = self.core.node(*cursor).next_sibling() {
+                return Some(next_sibling);
+            }
+        }
+
+        // Ok, so we can't move to the next sibling. We'll try just going to the next
+        // line, seeing if there's anything at the right depth there, and then skipping
+        // ahead until we find something.
+        let starting_logical_line = self.logical_line_of_node_index(*cursor);
+        let mut candidate_line = self.next_visible_logical_line(&starting_logical_line)?;
+
+        loop {
+            let leading_depth = self.core.depth(candidate_line.start_index);
+
+            match leading_depth.cmp(&desired_depth) {
+                Ordering::Equal => {
+                    // The first node in any line is always focusable, so if we're at the right
+                    // depth, great! We'll stop there.
+                    return Some(candidate_line.start_index);
+                }
+                Ordering::Less => {
+                    // If the line is starts at a higher level, pick the deepest normal focusable
+                    // node (that's not too deep).
+                    let mut best_choice = candidate_line.start_index;
+                    for (node_index, focus_target_kind) in
+                        self.focusable_nodes_in_line(&candidate_line).into_iter()
+                    {
+                        // Stop as soon as we see something more deeply nested. (This might
+                        // help do the right thing when we put more stuff on one line.)
+                        if self.core.depth(node_index) > desired_depth {
+                            break;
+                        }
+
+                        match focus_target_kind {
+                            FocusTargetKind::Normal => {
+                                best_choice = node_index;
+                            }
+                            FocusTargetKind::ListValueOfRecordField
+                            | FocusTargetKind::VariantSingletonValue => {
+                                // Don't move focus to these
+                            }
+                        }
+                    }
+
+                    return Some(best_choice);
+                }
+                Ordering::Greater => {
+                    // We've ended up at more deeply nested line than we want. We'll go to
+                    // the parent, zoom to its ending, then go to the next line after that.
+                    let parent_index = self.core.parent_index(candidate_line.start_index).unwrap();
+                    let closing_paren = self.core.token(parent_index).list_end_index().unwrap();
+                    let closing_paren_line = self.logical_line_of_node_index(closing_paren);
+                    candidate_line = self.next_visible_logical_line(&closing_paren_line)?;
+                }
+            }
+        }
+    }
+
+    fn move_cursor_to_prev_sibling_or_up(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
+        let desired_depth = self.current_adjacent_sibling_nav_depth_or_calculate_new_value(*cursor);
+        let curr_depth = self.core.depth(*cursor);
+
+        // If currently at the correct depth, try to move to the previous sibling, but
+        // make sure that's actually a focusable node! We don't want to move from the
+        // first argument in a variant to the constructor, or from the value of a record
+        // field to the key.
+        if curr_depth == desired_depth {
+            if let Some(prev_sibling) = self.core.node(*cursor).prev_sibling() {
+                return Some(
+                    self.first_normal_focusable_node_to_left_of_node_or_node(prev_sibling),
+                );
+            }
+        }
+
+        // Ok, so we can't move to the prev sibling. We'll just try going backwards until
+        // we fine a line that's with the correct indentation.
+        let starting_logical_line = self.logical_line_of_node_index(*cursor);
+        // When not going to a previous sibling, it should work just like hitting 'k'.
+        let mut candidate_cursor = self.move_cursor_up_one_line(*cursor)?;
+
+        loop {
+            let leading_depth = self.core.depth(candidate_cursor);
+
+            match leading_depth.cmp(&desired_depth) {
+                Ordering::Equal => {
+                    // Great! We're at the right depth.
+                    return Some(candidate_cursor);
+                }
+                Ordering::Less => {
+                    // Technically there might be something at the right depth to the
+                    // right of the candidate cursor, but `move_cursor_up_one_line` will
+                    // take us to the rightmost "regularly" focusable line, which is more
+                    // what we want.
+                    return Some(candidate_cursor);
+                }
+                Ordering::Greater => {
+                    // We're too deep. We'll just keep moving left to a parent until we find
+                    // something at the right depth.
+                    candidate_cursor =
+                        self.move_cursor_left_or_up_without_collapsing(&candidate_cursor)?;
+                }
+            }
+        }
+    }
+
+    fn clear_adjacent_sibling_nav_state(&mut self) {
+        self.adjacent_sibling_nav_depth = None;
     }
 
     fn move_cursor_to_next_indentation_change(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
@@ -1925,6 +2073,8 @@ mod tests {
         LeftNoCollapse,
         FirstSibling,
         LastSibling,
+        NextSibling,
+        PrevSibling,
         NextIndentationChange,
         PrevIndentationChange,
         FocusBottom,
@@ -1948,6 +2098,8 @@ mod tests {
                 LeftNoCollapse => self.move_cursor_left_or_up_without_collapsing(&current_cursor),
                 FirstSibling => self.move_cursor_to_first_sibling(&current_cursor),
                 LastSibling => self.move_cursor_to_last_sibling(&current_cursor),
+                NextSibling => self.move_cursor_to_next_sibling_or_down(&current_cursor),
+                PrevSibling => self.move_cursor_to_prev_sibling_or_up(&current_cursor),
                 NextIndentationChange => {
                     self.move_cursor_to_next_indentation_change(&current_cursor)
                 }
@@ -2518,6 +2670,250 @@ mod tests {
     }
 
     #[test]
+    fn test_moving_to_next_and_prev_sibling_basic() {
+        let mut doc =
+            new_doc(b"(((a 1) (b 2)) ((a 3) (b 4))) (((a 5) (b 6))) (((a 7) (b 8)) ((a 9) (b 0)))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=5  : (((a 1)
+         6..=10 :   (b 2))
+        11..=15 :  ((a 3)
+        16..=21 :   (b 4)))
+        22..=27 : (((a 5)
+        28..=33 :   (b 6)))
+        34..=39 : (((a 7)
+        40..=44 :   (b 8))
+        45..=49 :  ((a 9)
+        50..=55 :   (b 0)))
+        ");
+
+        let movements = show_cursor_movements(
+            &mut doc,
+            NodeIndex(1),
+            vec![
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+            ],
+        );
+        assert_snapshot!(movements, @r"
+        NextSibling => NodeIndex(11)
+        NextSibling => NodeIndex(23)
+        NextSibling => NodeIndex(35)
+        NextSibling => NodeIndex(45)
+        NextSibling => -
+        PrevSibling => NodeIndex(35)
+        PrevSibling => NodeIndex(23)
+        PrevSibling => NodeIndex(11)
+        PrevSibling => NodeIndex(1)
+        PrevSibling => NodeIndex(0)
+        PrevSibling => -
+        ");
+
+        let mut doc = new_doc(
+            b"((((a 1) (b 2)) ((a 3) (b 4)))) ((((a 5) (b 6)))) ((((a 7) (b 8)) ((a 9) (b 0))))",
+        );
+        assert_snapshot!(dump(&doc), @r"
+         0..=1  : ((
+         2..=6  :   ((a 1)
+         7..=11 :    (b 2))
+        12..=16 :   ((a 3)
+        17..=23 :    (b 4))))
+        24..=25 : ((
+        26..=30 :   ((a 5)
+        31..=37 :    (b 6))))
+        38..=39 : ((
+        40..=44 :   ((a 7)
+        45..=49 :    (b 8))
+        50..=54 :   ((a 9)
+        55..=61 :    (b 0))))
+        ");
+
+        let movements = show_cursor_movements(
+            &mut doc,
+            NodeIndex(2),
+            vec![
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                NextSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+                PrevSibling,
+            ],
+        );
+        assert_snapshot!(movements, @r"
+        NextSibling => NodeIndex(12)
+        NextSibling => NodeIndex(25)
+        NextSibling => NodeIndex(26)
+        NextSibling => NodeIndex(39)
+        NextSibling => NodeIndex(40)
+        NextSibling => NodeIndex(50)
+        NextSibling => -
+        PrevSibling => NodeIndex(40)
+        PrevSibling => NodeIndex(39)
+        PrevSibling => NodeIndex(26)
+        PrevSibling => NodeIndex(25)
+        PrevSibling => NodeIndex(12)
+        PrevSibling => NodeIndex(2)
+        PrevSibling => NodeIndex(1)
+        PrevSibling => NodeIndex(0)
+        ");
+    }
+
+    #[test]
+    fn test_moving_to_next_and_prev_sibling_edge_cases() {
+        // Don't move to the constructor of a variant
+        let mut doc = new_doc(b"(Variant (field 1) (field 2))");
+        assert_snapshot!(dump(&doc), @r"
+        0..=1  : (Variant
+        2..=5  :   (field 1)
+        6..=10 :   (field 2))
+        ");
+
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(6), vec![PrevSibling, PrevSibling]);
+        assert_snapshot!(movements, @r"
+        PrevSibling => NodeIndex(2)
+        PrevSibling => NodeIndex(0)
+        ");
+
+        // Check for weird things with singleton variants
+        let mut doc = new_doc(b"((a (X ((b (Y ((c Z))))))))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=5  : ((a (X (
+         6..=10 :    (b (Y (
+        11..=21 :      (c Z))))))))
+        ");
+
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(11), vec![PrevSibling, PrevSibling]);
+        assert_snapshot!(movements, @r"
+        PrevSibling => NodeIndex(6)
+        PrevSibling => NodeIndex(1)
+        ");
+
+        // More weird things with singleton variants
+        let mut doc = new_doc(b"((One uno)(Two dos deux)(One uno))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=4  : ((One uno)
+         5..=6  :  (Two
+         7..=7  :    dos
+         8..=9  :    deux)
+        10..=14 :  (One uno))
+        ");
+
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(7), vec![PrevSibling, PrevSibling]);
+        assert_snapshot!(movements, @r"
+        PrevSibling => NodeIndex(5)
+        PrevSibling => NodeIndex(1)
+        ");
+
+        // Not ideal; we don't want to move to a node that's not focusable.
+        let movements = show_cursor_movements(&mut doc, NodeIndex(8), vec![NextSibling]);
+        assert_snapshot!(movements, @"NextSibling => NodeIndex(12)");
+    }
+
+    #[test]
+    fn test_moving_to_next_and_prev_sibling_nodes_at_same_depth_in_different_structures() {
+        let mut doc = new_doc(b"(1 (2 3)) ((a 4) (b 5))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=1  : (1
+         2..=3  :  (2
+         4..=6  :   3))
+         7..=11 : ((a 4)
+        12..=16 :  (b 5))
+        ");
+
+        // The "a" is at the same depth as the starting "2", but not focusable.
+        let movements = show_cursor_movements(
+            &mut doc,
+            NodeIndex(3),
+            vec![NextSibling, NextSibling, NextSibling],
+        );
+        assert_snapshot!(movements, @r"
+        NextSibling => NodeIndex(4)
+        NextSibling => NodeIndex(8)
+        NextSibling => NodeIndex(12)
+        ");
+
+        let mut doc = new_doc(b"((a ((1 2)(3 4)))(b (true)))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=3  : ((a (
+         4..=5  :    (1
+         6..=7  :     2)
+         8..=9  :    (3
+        10..=13 :     4)))
+        14..=20 :  (b (true)))
+        ");
+
+        // The 17 is qualitatively different; should the focus move there? In this case
+        // it seems like no, but if it were [5] instead of [true], maybe?
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(4), vec![NextSibling, NextSibling]);
+        assert_snapshot!(movements, @r"
+        NextSibling => NodeIndex(8)
+        NextSibling => NodeIndex(17)
+        ");
+    }
+
+    #[test]
+    fn test_moving_to_next_and_prev_sibling_nodes_different_depths_due_to_singletons() {
+        // The values of the record are lists of records. If one of the lists is a singleton,
+        // it gets coalesced; should that be focused?
+        let mut doc = new_doc(b"((x (((a 1) (b 2)) ((c 3) (d 4)))) (y (((e 5) (f 6)))))");
+        assert_snapshot!(dump(&doc), @r"
+         0..=3  : ((x (
+         4..=8  :    ((a 1)
+         9..=13 :     (b 2))
+        14..=18 :    ((c 3)
+        19..=25 :     (d 4))))
+        26..=29 :  (y ((
+        30..=33 :    (e 5)
+        34..=41 :    (f 6)))))
+        ");
+
+        // It wouldn't be unreasonable to go to 29 instead of 26.
+        let movements =
+            show_cursor_movements(&mut doc, NodeIndex(4), vec![NextSibling, NextSibling]);
+        assert_snapshot!(movements, @r"
+        NextSibling => NodeIndex(14)
+        NextSibling => NodeIndex(26)
+        ");
+
+        doc.clear_adjacent_sibling_nav_state();
+
+        // 19 is technically at the same depth in the document, but indented greater.
+        // Seems reasonable to still move there.
+        let movements = show_cursor_movements(
+            &mut doc,
+            NodeIndex(34),
+            vec![PrevSibling, PrevSibling, PrevSibling],
+        );
+        assert_snapshot!(movements, @r"
+        PrevSibling => NodeIndex(30)
+        PrevSibling => NodeIndex(26)
+        PrevSibling => NodeIndex(19)
+        ");
+    }
+
+    #[test]
     fn test_moving_to_next_and_prev_indentation_change() {
         let mut doc = new_doc(
             b"(((a (1))(b 2)(c 3))((d 4)(e 6)(f ((g 7)(h ((i 9)(j 10)))(k 11)(l 12)))))((Var 1 2 3)(Bar 4 5 (6)))",
@@ -2550,14 +2946,14 @@ mod tests {
             let mut curr = NodeIndex(0);
 
             while let Some(next) = doc.move_cursor_to_next_indentation_change(&curr) {
-                writeln!(s, "{next:?}");
+                let _ = writeln!(s, "{next:?}");
                 curr = next;
             }
 
-            writeln!(s, "<end>");
+            let _ = writeln!(s, "<end>");
 
             while let Some(prev) = doc.move_cursor_to_prev_indentation_change(&curr) {
-                writeln!(s, "{prev:?}");
+                let _ = writeln!(s, "{prev:?}");
                 curr = prev;
             }
 

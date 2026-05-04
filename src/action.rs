@@ -22,6 +22,8 @@ pub enum Action {
 
     MoveCursorToFirstSibling,
     MoveCursorToLastSibling,
+    MoveCursorToNextSiblingOrDown(usize),
+    MoveCursorToPrevSiblingOrUp(usize),
 
     MoveCursorToNextIndentationChange(usize),
     MoveCursorToPrevIndentationChange(usize),
@@ -62,4 +64,47 @@ pub enum Action {
     MoveFocusedElemToCenter,
     MoveFocusedElemToTop,
     MoveFocusedElemToBottom,
+}
+
+impl Action {
+    pub fn is_intentionally_moving_cursor(&self) -> bool {
+        match self {
+            Action::MoveCursorDown(_)
+            | Action::MoveCursorUp(_)
+            | Action::ExpandOrMoveCursorRightOrDown
+            | Action::CollapseOrMoveCursorLeftOrUp
+            | Action::MoveCursorLeftOrUpWithoutCollapsing
+            | Action::MoveCursorToFirstSibling
+            | Action::MoveCursorToLastSibling
+            | Action::MoveCursorToNextSiblingOrDown(_)
+            | Action::MoveCursorToPrevSiblingOrUp(_)
+            | Action::MoveCursorToNextIndentationChange(_)
+            | Action::MoveCursorToPrevIndentationChange(_)
+            | Action::MoveToSearchMatch(_, _, _)
+            | Action::FocusTop
+            | Action::FocusBottom
+            | Action::MoveToLineIndex(_) => true,
+            Action::NoOp
+            | Action::CollapseNodeAndSiblings(_)
+            | Action::ExpandNodeAndSiblings(_)
+            | Action::ScrollViewportDown(_)
+            | Action::ScrollViewportUp(_)
+            | Action::PageDown(_)
+            | Action::PageUp(_)
+            | Action::JumpDown(_)
+            | Action::JumpUp(_)
+            | Action::MoveFocusedElemToTop
+            | Action::MoveFocusedElemToCenter
+            | Action::MoveFocusedElemToBottom => false,
+        }
+    }
+
+    pub fn is_moving_to_adjacent_sibling(&self) -> bool {
+        match self {
+            Action::MoveCursorToNextSiblingOrDown(_) | Action::MoveCursorToPrevSiblingOrUp(_) => {
+                true
+            }
+            _ => false,
+        }
+    }
 }

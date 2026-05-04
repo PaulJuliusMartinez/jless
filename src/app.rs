@@ -164,6 +164,10 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                             }
                             Key::Char('H') => Some(Action::MoveCursorLeftOrUpWithoutCollapsing),
                             Key::Char('$') => Some(Action::MoveCursorToLastSibling),
+                            Key::Char('J') => {
+                                Some(Action::MoveCursorToNextSiblingOrDown(count_or_1))
+                            }
+                            Key::Char('K') => Some(Action::MoveCursorToPrevSiblingOrUp(count_or_1)),
                             Key::Char('w') => {
                                 Some(Action::MoveCursorToNextIndentationChange(count_or_1))
                             }

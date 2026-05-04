@@ -35,6 +35,9 @@
                    move focus to the right of the focused node, or to a parent
                    of the focused node.
 
+  J             *  Move to the focused node's next     sibling 1 or [4mN[0m times.
+  K             *  Move to the focused node's previous sibling 1 or [4mN[0m times.
+
   w             *  Move to the next change in indentation level
   b             *  Move to the previous change in indentation level.
 
