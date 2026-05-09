@@ -1,0 +1,162 @@
+[0m
+                         sless - a terminal sexp viewer
+
+                            [1mSUMMARY OF SLESS COMMANDS[0m
+
+       Commands marked with * may be preceded by a number, [4mN[0m, which will
+       repeatedly perform a command the given number of times. A key
+       preceded by a caret indicates the Ctrl key; thus ^E is ctrl-E.
+
+       Commands requiring multiple key-presses may be cancelled with the
+       Escape key.
+
+  q  :q[uit] ^c    Exit sless.
+
+  F1 :h[elp]       Show this help screen.
+
+  ^z               Suspend sless.
+
+                                    [1mMOVING[0m
+
+  j  DownArrow  *  Move focus down one line (or [4mN[0m lines).
+  ^n
+
+  k  UpArrow    *  Move focus up   one line (or [4mN[0m lines).
+  ^p
+
+  h  LeftArrow     When focused on an expanded sexp, collapse it. Otherwise,
+                   move focus to the left of the focused node, or to a parent of
+                   the focused node.
+
+  H                Move focus to the left or to a parent of the focused node
+                   without collapsing the focused node.
+
+  l  RightArrow    When focused on a collapsed sexp, expand it. Otherwise,
+                   move focus to the right of the focused node, or to a parent
+                   of the focused node.
+
+  PageDown      *  Move down by one window (or [4mN[0m windows).
+  PageUp        *  Move up   by one window (or [4mN[0m windows).
+
+  0                Move to the focused node's first sibling.
+  $                Move to the focused node's last  sibling.
+
+  Home             Focus the first line in the document.
+  End              Focus the last  line in the document.
+
+  g             *  Focus the first line in the document.
+  G             *  Focus the last  line in the document, and tail the bottom of
+                   document if sless is still receiving input.
+
+                   If a count is given to either of these commands, focus that
+                   line number. If that line is not visible because a parent node
+                   is collapsed, focus the first preceding visible line.
+
+  c             *  Shallowly collapse the focused node and all its siblings.
+  C             *  Deeply    collapse the focused node and all its siblings.
+  e             *  Shallowly expand   the focused node and all its siblings.
+  E             *  Deeply    expand   the focused node and all its siblings.
+
+                   If a count is give to any of these commands, it will
+                   collapse/expand the focused node and all its siblings
+                   [4mN[0m levels to the given depth.
+
+                                    [1mSCROLLING[0m
+
+  ^e            *  Scroll down one line (or [4mN[0m lines).
+  ^y            *  Scroll up   one line (or [4mN[0m lines).
+
+  ^d            *  Scroll down by half the height of the screen (or by [4mN[0m lines).
+  ^u            *  Scroll up   by half the height of the screen (or by [4mN[0m lines).
+
+                   For these commands, focus is also moved by the specified
+                   number of lines. If no count is specified, the number of
+                   lines to scroll is recalled from previous executions.
+
+  zz               Move the focused node to the center of the screen.
+  zt               Move the focused node to the top of the screen.
+  zb               Move the focused node to the bottom of the screen.
+
+                              [1mCOPYING AND PRINTING[0m
+
+      You can copy various parts of the sexp file to your clipboard using
+      any one of a set of commands starting with 'y'.
+
+  yy      Copy the currently focused sexp, pretty printed. When focused on
+          record field, this will [4mnot[0m include the key.
+  ym yY   Copy the currently focused sexp, like yy, but on a single line,
+          similar to [sexp print -machine], but with spaces separating atoms.
+          Excludes comments.
+  ya yA   Copy the currently focused sexp and "all" its siblings either pretty
+          printed like yy (ya), or on one line per node like ym (yA).
+
+  ys      When the currently focused value is an atom, copy the contents
+          of the string, with all escape sequences unescaped.
+
+  yk      When focused on a record field, yank the key.
+
+  yc      When focused on a variant, yank the constructor.
+
+                                     [1mSEARCH[0m
+
+      sless supports full-text search over the input sexp.
+
+  /pattern  *  Search forward   for the given pattern (or its [4mN[0mth occurrence).
+  ?pattern  *  Search backwards for the given pattern (or its [4mN[0mth occurrence).
+
+  n         *  Move in the search direction to the next match (or forward
+               [4mN[0m matches).
+  N         *  Move in the opposite of the search direction to the previous
+               match (or previous [4mN[0m matches).
+
+  ^f        *  Move to the next match like n, but keeps the cursor in the same
+               spot on screen and scrolls the viewport underneath it.
+  ^g        *  Move to the previous match like N, but keeps the cursor in the
+               same spot on screen and scrolls the viewport underneath it.
+
+      Searching uses "smart case" by default. If the input pattern doesn't
+      contain any capital letters, a case insensitive search will be
+      performed. If there are any capital letters, it will be case sensitive.
+      You can force a case-sensitive search by appending '/s' to your query.
+
+      A trailing slash will be removed from a pattern; to search for a
+      pattern ending in '/' (or '/s'), just add another '/' to the end.
+
+      Search patterns are interpreted as mostly standard regular expressions.
+      Because sexps contain endless parentheses, parenthese do *not* take on
+      their usual meaning (grouping), and are instead interpreted literally.
+      To search for a group, escape the parentheses with backslashes.
+
+        /(1 2 3)      matches the list: (1 2 3)
+        /\(b|c|h\)at  matches "bat", "cat", or "hat"
+
+      For exhaustive documentation of the supported regular expression syntax,
+      see the following documentation of the underlying regex engine:
+
+        https://docs.rs/regex/latest/regex/index.html#syntax
+
+                                  [1mSEARCH INPUT[0m
+
+      The search is *not* performed over the original input, but over a "nicely"
+      formatted version of the input sexp that is (usually) formatted on a
+      single line. If the input contains multiple top-level sexps, each one will
+      be on a separate line.
+
+      Consider the following two ways to format an equivalent sexp:
+
+        ((a 1)(b true)(c"x y z"))
+
+        ((a 1)
+         (b true)
+         (c "x y z"))
+
+      sless will create an internal representation formatted as follows:
+
+        ((a 1) (b true) (c "x y z"))
+
+      A sexp may be split across multiple lines in the internal representation
+      if forced to do so due to line comments (e.g. "; this is a comment").
+
+      Searching will be performed over this internal representation so that
+      patterns can include multiple elements without worrying about
+      newlines or the exact input format.

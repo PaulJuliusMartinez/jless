@@ -25,6 +25,9 @@ pub const MAX_BUFFER_SIZE: usize = 9;
 const BOTTOM_CHROME_HEIGHT: usize = 2;
 const DEFAULT_SCROLLOFF: usize = 2;
 
+// Help contents that we pipe to less.
+const HELP: &str = std::include_str!("./sless.help");
+
 pub struct App<W: std::io::Write + AsFd, D: Document> {
     doc_while_waiting_for_input: Option<D>,
     viewer: Option<DocumentViewer<D>>,
@@ -147,8 +150,12 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                         let count_or_1 = count.unwrap_or(1);
 
                         let action = match key_event {
-                            Key::Down | Key::Char('j') => Some(Action::MoveCursorDown(count_or_1)),
-                            Key::Up | Key::Char('k') => Some(Action::MoveCursorUp(count_or_1)),
+                            Key::Down | Key::Char('j') | Key::Ctrl('n') => {
+                                Some(Action::MoveCursorDown(count_or_1))
+                            }
+                            Key::Up | Key::Char('k') | Key::Ctrl('p') => {
+                                Some(Action::MoveCursorUp(count_or_1))
+                            }
                             Key::Right | Key::Char('l') => {
                                 Some(Action::ExpandOrMoveCursorRightOrDown)
                             }
@@ -169,11 +176,13 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                                 Some(Action::CollapseNodeAndSiblings(Some(count_or_1)))
                             }
                             Key::Char('C') => Some(Action::CollapseNodeAndSiblings(count)),
-                            Key::Home | Key::Char('g') => match count {
+                            Key::Home => Some(Action::FocusTop),
+                            Key::End => Some(Action::FocusBottom),
+                            Key::Char('g') => match count {
                                 None => Some(Action::FocusTop),
                                 Some(n) => Some(Action::MoveToLineIndex(n - 1)),
                             },
-                            Key::End | Key::Char('G') => match count {
+                            Key::Char('G') => match count {
                                 None => Some(Action::FocusBottom),
                                 Some(n) => Some(Action::MoveToLineIndex(n - 1)),
                             },
@@ -223,6 +232,10 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                                 {
                                     search_state.stop_searching();
                                 }
+                                None
+                            }
+                            Key::F(1) => {
+                                self.show_help();
                                 None
                             }
                             _ => None,
@@ -359,6 +372,38 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
 
     pub fn suspend_raw_mode(&mut self) {
         let _ = self.stdout.suspend_raw_mode();
+    }
+
+    fn show_help(&mut self) {
+        use std::io::Write;
+
+        // less also uses the alternate screen, so we first clear the screen.
+        // We don't switch back to the main screen, otherwise there's a flicker.
+        let _ = write!(self.stdout, "\x1b[2J");
+        let _ = std::io::stdout().flush();
+
+        let child = std::process::Command::new("less")
+            .arg("-r")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::inherit())
+            .spawn();
+
+        match child {
+            Ok(mut child) => {
+                if let Some(ref mut stdin) = child.stdin {
+                    let _ = stdin.write(HELP.as_bytes());
+                    let _ = stdin.flush();
+                }
+                let _ = child.wait();
+            }
+            Err(err) => {
+                self.set_error_message(format!("Error piping help documentation to less: {err}"));
+            }
+        }
+
+        // Make sure to restore any settings that less might have messed with.
+        let _ = TerminalSettings::enable_jless_settings();
+        let _ = std::io::stdout().flush();
     }
 
     fn buffer_input(&mut self, ch: u8) {
