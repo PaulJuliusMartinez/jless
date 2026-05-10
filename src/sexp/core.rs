@@ -443,6 +443,10 @@ impl DocCore {
         &mut self.all_nodes[node_index.0]
     }
 
+    pub fn parent_index(&self, node_index: NodeIndex) -> Option<NodeIndex> {
+        self.all_nodes[node_index.0].parent_index()
+    }
+
     pub fn token(&self, node_index: NodeIndex) -> &DocumentToken {
         &self.all_nodes[node_index.0].token
     }
