@@ -307,7 +307,7 @@ impl<'a> Typesetter<'a> {
 
             // Skip comments and errors.
             if !node.token.is_data() {
-                next_elem = node.next_sibling;
+                next_elem = node.next_sibling();
                 continue;
             }
 
@@ -330,11 +330,11 @@ impl<'a> Typesetter<'a> {
             if !is_last_elem {
                 // Write the space between elems. We're not at the last elem, so
                 // next_sibling must be Some.
-                self.write_space_before_elem_or_static_space(node.next_sibling.unwrap());
+                self.write_space_before_elem_or_static_space(node.next_sibling().unwrap());
             }
 
             num_elems_written += 1;
-            next_elem = node.next_sibling;
+            next_elem = node.next_sibling();
         }
 
         if num_elems_written < num_elems {
@@ -486,7 +486,7 @@ impl<'a> Typesetter<'a> {
             next_elem = self
                 .core
                 .node(next_elem)
-                .next_sibling
+                .next_sibling()
                 .expect("RecordField or Variant must have additional data");
         }
 

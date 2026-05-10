@@ -377,7 +377,7 @@ impl<'a> LayoutEngine<'a> {
                                 );
 
                                 let first_tuple_value_has_no_next_sibling =
-                                    self.doc.node(self.next_index + 1).next_sibling.is_none();
+                                    self.doc.node(self.next_index + 1).next_sibling().is_none();
 
                                 is_variant_tuple && first_tuple_value_has_no_next_sibling
                             };
@@ -466,7 +466,7 @@ pub mod tests {
         let mut logical_lines = vec![];
         while let Some(top_level_node_index) = next_top_level_node_index {
             logical_lines.extend(layout_fully_expanded_node(&doc, top_level_node_index));
-            next_top_level_node_index = doc.node(top_level_node_index).next_sibling;
+            next_top_level_node_index = doc.node(top_level_node_index).next_sibling();
         }
         show_logical_lines(&doc, logical_lines)
     }

@@ -11,8 +11,8 @@ use crate::rendering::{PreHighlightingStyledSegment, Segment, Text};
 use crate::search::{self, InvertedPairedDelimeters};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
-    invariants, AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, EndOfListMetadata,
-    ListKind, ListMetadata, NodeIndex,
+    invariants, AtomKind, AtomMetadata, DocCore, DocumentToken, EndOfListMetadata, ListKind,
+    ListMetadata, NodeIndex,
 };
 use crate::sexp::layout;
 use crate::sexp::layout::LogicalLine;
@@ -640,7 +640,7 @@ impl SexpDocument {
         let mut closest_visible = *cursor;
         let mut curr = *cursor;
 
-        while let Some(parent_index) = self.core.node(curr).parent_index {
+        while let Some(parent_index) = self.core.node(curr).parent_index() {
             match self.collapsible_nodes.get(&parent_index) {
                 Some(Collapsed) => closest_visible = parent_index,
                 None | Some(Expanded) => (),
@@ -680,11 +680,9 @@ impl SexpDocument {
             }
         };
 
-        let DocumentNode {
-            parent_index,
-            prev_sibling,
-            ..
-        } = self.core.node(cursor);
+        let node = self.core.node(cursor);
+        let parent_index = node.parent_index();
+        let prev_sibling = node.prev_sibling();
 
         // Normally we want to focus the last "normal" focus target in the previous line that is at
         // or before the previous sibling, assuming that the previous line is either a sibling or
@@ -706,11 +704,11 @@ impl SexpDocument {
         let mut relative_node = None;
 
         if prev_sibling.is_some() && prev_logical_line.contains_node_index(prev_sibling.unwrap()) {
-            relative_node = *prev_sibling;
+            relative_node = prev_sibling;
         } else if parent_index.is_some()
             && prev_logical_line.contains_node_index(parent_index.unwrap())
         {
-            relative_node = *parent_index;
+            relative_node = parent_index;
         }
 
         if let Some(relative_node) = relative_node {
@@ -826,7 +824,7 @@ impl SexpDocument {
         }
 
         // Can't move further left on our line, so we'll try to move to our parent.
-        if let Some(parent_index) = self.core.node(*cursor).parent_index {
+        if let Some(parent_index) = self.core.node(*cursor).parent_index() {
             // We don't always want the focus to move to the parent_index. Specifically,
             // if the parent is the value of a record field, then we want to move the
             // cursor to record key, not the parent.
@@ -884,7 +882,7 @@ impl SexpDocument {
     ) -> NodeIndex {
         // If we're updating the collapse state of all the top level nodes, we need to update
         // our initial state to apply to new top-level nodes that stream in.
-        if self.core.node(node_index).parent_index.is_none() {
+        if self.core.node(node_index).parent_index().is_none() {
             self.initial_nested_collapse_state_for_top_level_nodes
                 .update(desired_state, depth);
         }
@@ -897,7 +895,7 @@ impl SexpDocument {
                 self.deep_set_collapse_state_on_node_and_siblings(node_index, desired_state);
             }
             Some(n) => {
-                let first_child = match self.core.node(node_index).parent_index {
+                let first_child = match self.core.node(node_index).parent_index() {
                     None => NodeIndex(0),
                     Some(parent_index) => parent_index + 1,
                 };
@@ -924,7 +922,7 @@ impl SexpDocument {
         node_index: NodeIndex,
         desired_state: CollapseState,
     ) {
-        let range = match self.core.node(node_index).parent_index {
+        let range = match self.core.node(node_index).parent_index() {
             None => {
                 // If we're on a top-level node, we want to update everything in the doc.
                 self.collapsible_nodes.range_mut(..)
@@ -975,7 +973,7 @@ impl SexpDocument {
                 );
             }
 
-            next_sibling = self.core.node(sibling_index).next_sibling;
+            next_sibling = self.core.node(sibling_index).next_sibling();
         }
     }
 
@@ -1347,7 +1345,7 @@ impl Document for SexpDocument {
     }
 
     fn move_cursor_to_first_sibling(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
-        let Some(parent_index) = self.core.node(*cursor).parent_index else {
+        let Some(parent_index) = self.core.node(*cursor).parent_index() else {
             // If we're focused on a top level sexp, we'll move to the first one.
             return Some(NodeIndex(0));
         };
@@ -1372,13 +1370,13 @@ impl Document for SexpDocument {
             ListKind::VariantRecord | ListKind::VariantTuple => {
                 // For variants, we actually want to focus the first thing after the constructor.
                 invariants::constructors_are_the_first_child_of_variants();
-                self.core.node(first_child).next_sibling
+                self.core.node(first_child).next_sibling()
             }
         }
     }
 
     fn move_cursor_to_last_sibling(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
-        let Some(parent_index) = self.core.node(*cursor).parent_index else {
+        let Some(parent_index) = self.core.node(*cursor).parent_index() else {
             // If we're focused on a top level sexp, we'll move to the last one.
             return self.core.node_index_of_last_completed_top_level_sexp;
         };

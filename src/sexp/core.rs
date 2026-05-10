@@ -33,6 +33,51 @@ impl std::ops::Sub<usize> for NodeIndex {
 }
 
 #[cfg_attr(test, derive(Serialize))]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct OptNodeIndex(usize);
+
+impl OptNodeIndex {
+    const NONE_VAL: usize = usize::MAX;
+    const NONE: Self = OptNodeIndex(Self::NONE_VAL);
+
+    fn to_option(&self) -> Option<NodeIndex> {
+        if self.0 == Self::NONE_VAL {
+            None
+        } else {
+            Some(NodeIndex(self.0))
+        }
+    }
+
+    fn is_none(&self) -> bool {
+        self.0 == Self::NONE_VAL
+    }
+}
+
+impl std::fmt::Debug for OptNodeIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.to_option().fmt(f)
+    }
+}
+
+impl From<OptNodeIndex> for Option<NodeIndex> {
+    fn from(x: OptNodeIndex) -> Self {
+        x.to_option()
+    }
+}
+
+impl From<Option<NodeIndex>> for OptNodeIndex {
+    fn from(x: Option<NodeIndex>) -> Self {
+        match x {
+            None => OptNodeIndex::NONE,
+            Some(x) if x.0 == OptNodeIndex::NONE_VAL => {
+                panic!("Tried to make an OptNodeIndex from a NodeIndex that was too big");
+            }
+            Some(x) => OptNodeIndex(x.0),
+        }
+    }
+}
+
+#[cfg_attr(test, derive(Serialize))]
 #[derive(Debug)]
 pub struct DocCore {
     // Someday: This shouldn't be marked public.
@@ -62,14 +107,28 @@ pub struct DocCore {
 #[cfg_attr(test, derive(Serialize))]
 #[derive(Debug)]
 pub struct DocumentNode {
-    pub parent_index: Option<NodeIndex>,
-    pub prev_sibling: Option<NodeIndex>,
-    pub next_sibling: Option<NodeIndex>,
+    parent_index: OptNodeIndex,
+    prev_sibling: OptNodeIndex,
+    next_sibling: OptNodeIndex,
     /// Only set for atoms and the start of lists. Indicates the index of the node
     /// in the parent (or amongst all top-level nodes) if comments are ignored.
     pub data_index_in_parent: Option<usize>,
     pub data_range: Range<usize>,
     pub token: DocumentToken,
+}
+
+impl DocumentNode {
+    pub fn parent_index(&self) -> Option<NodeIndex> {
+        self.parent_index.to_option()
+    }
+
+    pub fn prev_sibling(&self) -> Option<NodeIndex> {
+        self.prev_sibling.to_option()
+    }
+
+    pub fn next_sibling(&self) -> Option<NodeIndex> {
+        self.next_sibling.to_option()
+    }
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -125,7 +184,9 @@ impl DocumentToken {
 
     pub fn list_end_index(&self) -> Option<NodeIndex> {
         match self {
-            DocumentToken::StartOfList(ListMetadata { list_end_index, .. }) => *list_end_index,
+            DocumentToken::StartOfList(ListMetadata { list_end_index, .. }) => {
+                list_end_index.to_option()
+            }
             _ => None,
         }
     }
@@ -160,8 +221,8 @@ impl DocumentToken {
 pub struct ListMetadata {
     pub list_kind: ListKind,
     // first_child_index is just our own index + 1.
-    last_child_index: Option<NodeIndex>,
-    list_end_index: Option<NodeIndex>,
+    last_child_index: OptNodeIndex,
+    list_end_index: OptNodeIndex,
     commented_out: bool,
     data_length: usize,
     contains_non_data: bool,
@@ -171,11 +232,11 @@ impl ListMetadata {
     // Someday: Do we need these functions vs. just marking these fields public?
 
     pub fn last_child_index(&self) -> Option<NodeIndex> {
-        self.last_child_index
+        self.last_child_index.to_option()
     }
 
     pub fn end_index(&self) -> Option<NodeIndex> {
-        self.list_end_index
+        self.list_end_index.to_option()
     }
 
     pub fn data_length(&self) -> usize {
@@ -443,8 +504,8 @@ impl DocCore {
 
                 parent_index = Some(list_start_index);
 
-                prev_sibling = parent_metadata.last_child_index;
-                parent_metadata.last_child_index = Some(new_node_index);
+                prev_sibling = parent_metadata.last_child_index.to_option();
+                parent_metadata.last_child_index = Some(new_node_index).into();
 
                 data_index_in_parent = if token.is_data() && !token.is_commented_out() {
                     let index = parent_metadata.data_length;
@@ -458,7 +519,7 @@ impl DocCore {
         }
 
         if let Some(sibling_index) = prev_sibling {
-            self.node_mut(sibling_index).next_sibling = Some(new_node_index);
+            self.node_mut(sibling_index).next_sibling = Some(new_node_index).into();
         }
 
         if token_is_error {
@@ -466,9 +527,9 @@ impl DocCore {
         }
 
         let document_node = DocumentNode {
-            parent_index,
-            prev_sibling,
-            next_sibling: None,
+            parent_index: parent_index.into(),
+            prev_sibling: prev_sibling.into(),
+            next_sibling: OptNodeIndex::NONE,
             data_index_in_parent,
             data_range,
             token,
@@ -511,16 +572,17 @@ impl DocCore {
         // Wire up sibling connection between the new top-level node and the previous one.
         if let Some(prev_top_level_node_index) = self.node_index_of_last_completed_top_level_sexp {
             self.all_nodes[prev_top_level_node_index.0].next_sibling =
-                Some(new_completed_top_level_node);
+                Some(new_completed_top_level_node).into();
             self.all_nodes[new_completed_top_level_node.0].prev_sibling =
-                Some(prev_top_level_node_index);
+                Some(prev_top_level_node_index).into();
 
             // If the new top level node is a list, also set prev_sibling on the end of the list.
             if let Some(list_end_index) = self.all_nodes[new_completed_top_level_node.0]
                 .token
                 .list_end_index()
             {
-                self.all_nodes[list_end_index.0].prev_sibling = Some(prev_top_level_node_index);
+                self.all_nodes[list_end_index.0].prev_sibling =
+                    Some(prev_top_level_node_index).into();
             }
         }
 
@@ -603,8 +665,8 @@ impl DocCore {
     fn start_new_list(&mut self) {
         let list_metadata = ListMetadata {
             list_kind: ListKind::Plain,
-            last_child_index: None,
-            list_end_index: None,
+            last_child_index: OptNodeIndex::NONE,
+            list_end_index: OptNodeIndex::NONE,
             commented_out: self.consume_pending_sexp_comment(),
             data_length: 0,
             contains_non_data: false,
@@ -640,7 +702,7 @@ impl DocCore {
 
         let list_metadata = self.token(list_start_index).list_metadata();
 
-        let Some(last_child_index) = list_metadata.last_child_index else {
+        let Some(last_child_index) = list_metadata.last_child_index.to_option() else {
             // If no data in previous list, replace it with `Unit`, instead of an actual list.
             let commented_out = list_metadata.commented_out;
             let curr_node = &mut self.all_nodes[list_start_index.0];
@@ -689,7 +751,7 @@ impl DocCore {
 
         let list_start_node = &mut self.all_nodes[list_start_index.0];
         let list_metadata = list_start_node.token.list_metadata_mut();
-        list_metadata.list_end_index = Some(list_end_index);
+        list_metadata.list_end_index = Some(list_end_index).into();
         list_metadata.list_kind = list_kind;
 
         let end_of_list_document_node = {
@@ -732,7 +794,7 @@ impl DocCore {
 
         while let Some(node_index) = next_child_index {
             let node = &self.node(node_index);
-            next_child_index = node.next_sibling;
+            next_child_index = node.next_sibling.into();
 
             if !node.token.is_data() {
                 list_contains_non_data = true;
@@ -938,7 +1000,7 @@ impl DocCore {
                 break;
             }
 
-            data_index = self.node(index).parent_index;
+            data_index = self.node(index).parent_index();
         }
 
         // If we're at a top level comment, don't show any path at all.
@@ -946,7 +1008,7 @@ impl DocCore {
             return None;
         };
 
-        let parent_index = self.node(node_index).parent_index;
+        let parent_index = self.node(node_index).parent_index();
 
         // When we're focused on a top-level node, show "." if it's the only node,
         // otherwise show "[n]". (The recursive version doesn't track what depth
@@ -982,7 +1044,7 @@ impl DocCore {
 
         let should_write_path_from_parent_to_child = self.rec_sexp_get_style_path_to_node(
             buf,
-            self.node(parent_index).parent_index,
+            self.node(parent_index).parent_index(),
             parent_index,
         );
 
@@ -1069,25 +1131,25 @@ mod tests {
     fn show_core_struct_sizes() {
         use std::mem;
 
-        assert_snapshot!(mem::size_of::<DocumentNode>(), @"128");
+        assert_snapshot!(mem::size_of::<DocumentNode>(), @"88");
         assert_snapshot!(mem::align_of::<DocumentNode>(), @"8");
 
-        assert_snapshot!(mem::offset_of!(DocumentNode, parent_index),         @"0");
-        assert_snapshot!(mem::offset_of!(DocumentNode, prev_sibling),         @"16");
-        assert_snapshot!(mem::offset_of!(DocumentNode, next_sibling),         @"32");
-        assert_snapshot!(mem::offset_of!(DocumentNode, data_index_in_parent), @"48");
-        assert_snapshot!(mem::offset_of!(DocumentNode, data_range),           @"112");
-        assert_snapshot!(mem::offset_of!(DocumentNode, token),                @"64");
+        assert_snapshot!(mem::offset_of!(DocumentNode, parent_index),         @"48");
+        assert_snapshot!(mem::offset_of!(DocumentNode, prev_sibling),         @"56");
+        assert_snapshot!(mem::offset_of!(DocumentNode, next_sibling),         @"64");
+        assert_snapshot!(mem::offset_of!(DocumentNode, data_index_in_parent), @"0");
+        assert_snapshot!(mem::offset_of!(DocumentNode, data_range),           @"72");
+        assert_snapshot!(mem::offset_of!(DocumentNode, token),                @"16");
 
-        assert_snapshot!(mem::size_of::<ListMetadata>(), @"48");
+        assert_snapshot!(mem::size_of::<ListMetadata>(), @"32");
         assert_snapshot!(mem::align_of::<ListMetadata>(), @"8");
 
-        assert_snapshot!(mem::offset_of!(ListMetadata, list_kind), @"42");
+        assert_snapshot!(mem::offset_of!(ListMetadata, list_kind), @"24");
         assert_snapshot!(mem::offset_of!(ListMetadata, last_child_index), @"0");
-        assert_snapshot!(mem::offset_of!(ListMetadata, list_end_index), @"16");
-        assert_snapshot!(mem::offset_of!(ListMetadata, commented_out), @"40");
-        assert_snapshot!(mem::offset_of!(ListMetadata, data_length), @"32");
-        assert_snapshot!(mem::offset_of!(ListMetadata, contains_non_data), @"41");
+        assert_snapshot!(mem::offset_of!(ListMetadata, list_end_index), @"8");
+        assert_snapshot!(mem::offset_of!(ListMetadata, commented_out), @"25");
+        assert_snapshot!(mem::offset_of!(ListMetadata, data_length), @"16");
+        assert_snapshot!(mem::offset_of!(ListMetadata, contains_non_data), @"26");
     }
 
     fn dump_doc(doc: &DocCore) -> String {
@@ -1110,6 +1172,10 @@ mod tests {
                 data_index_in_parent,
                 token,
             } = &node;
+
+            let parent_index = parent_index.to_option();
+            let prev_sibling = prev_sibling.to_option();
+            let next_sibling = next_sibling.to_option();
 
             fn fmt_i(node_index: Option<usize>) -> String {
                 node_index
