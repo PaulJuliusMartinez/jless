@@ -161,6 +161,8 @@ pub trait Document {
 
     // Search
 
+    fn get_search_input_under_cursor(&self, cursor: &Self::Cursor) -> Option<String>;
+
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
         InvertedPairedDelimeters {
             square_brackets: false,

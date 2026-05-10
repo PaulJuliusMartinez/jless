@@ -111,6 +111,36 @@ fn invert_paired_delimiters(regex: &str, inverted: InvertedPairedDelimeters) -> 
     })
 }
 
+#[rustfmt::skip]
+fn escape_literal(text: &str, inverted: InvertedPairedDelimeters) -> String {
+    let escaped = regex::escape(text);
+    invert_paired_delimiters(escaped.as_str(), inverted).to_string()
+}
+
+lazy_static::lazy_static! {
+    static ref STARTS_WITH_WORD: StrRegex = StrRegex::new(r"\A\w").unwrap();
+    static ref ENDS_WITH_WORD: StrRegex = StrRegex::new(r"\w\z").unwrap();
+}
+
+/// Creates a regex that will match the literal text passed in as a "word", adding
+/// word boundary escapes ("\<" and "\>") unless the text already starts or ends
+/// with a non-word character.
+pub fn escape_literal_and_maybe_add_word_boundaries(
+    text: &str,
+    inverted: InvertedPairedDelimeters,
+) -> String {
+    let escaped = escape_literal(text, inverted);
+
+    let add_start_boundary = STARTS_WITH_WORD.is_match(escaped.as_ref());
+    let add_end_boundary = ENDS_WITH_WORD.is_match(escaped.as_ref());
+
+    format!(
+        "{}{escaped}{}",
+        if add_start_boundary { r"\<" } else { "" },
+        if add_end_boundary { r"\>" } else { "" }
+    )
+}
+
 lazy_static::lazy_static! {
     static ref UPPER_CASE: StrRegex = StrRegex::new("[[:upper:]]").unwrap();
 }
@@ -521,6 +551,78 @@ mod tests {
             assert_eq!(
                 after,
                 invert_paired_delimiters(before, sexp_inverted_paired_delimiters)
+            );
+        }
+    }
+
+    #[test]
+    fn test_escape_literals() {
+        let json_inverted_paired_delimiters = InvertedPairedDelimeters {
+            square_brackets: true,
+            curly_braces: true,
+            parentheses: false,
+        };
+
+        let json_tests = vec![
+            (r"a\b", r"a\\b"),
+            (r"[]", r"[]"),
+            (r"{}", r"{}"),
+            (r"()", r"\(\)"),
+            (r"\[abc\]", r"\\[abc\\]"),
+            (r"\{1,3\}", r"\\{1,3\\}"),
+            (r"\(.\)", r"\\\(\.\\\)"),
+        ];
+
+        for (before, after) in json_tests.into_iter() {
+            assert_eq!(
+                after,
+                escape_literal(before, json_inverted_paired_delimiters)
+            );
+        }
+
+        let sexp_inverted_paired_delimiters = InvertedPairedDelimeters {
+            square_brackets: false,
+            curly_braces: false,
+            parentheses: true,
+        };
+
+        let sexp_tests = vec![
+            (r"a\b", r"a\\b"),
+            (r"[]", r"\[\]"),
+            (r"{}", r"\{\}"),
+            (r"()", r"()"),
+            (r"\[abc\]", r"\\\[abc\\\]"),
+            (r"\{1,3\}", r"\\\{1,3\\\}"),
+            (r"\(.\)", r"\\(\.\\)"),
+        ];
+
+        for (before, after) in sexp_tests.into_iter() {
+            assert_eq!(
+                after,
+                escape_literal(before, sexp_inverted_paired_delimiters)
+            );
+        }
+    }
+
+    #[test]
+    fn escape_literals_and_add_word_boundaries() {
+        let inverted_paired_delimiters = InvertedPairedDelimeters {
+            square_brackets: true,
+            curly_braces: true,
+            parentheses: false,
+        };
+
+        let tests = vec![
+            (r"abc", r"\<abc\>"),
+            (r"[abc", r"[abc\>"),
+            (r"abc]", r"\<abc]"),
+            (r"(abc)", r"\(abc\)"),
+        ];
+
+        for (before, after) in tests.into_iter() {
+            assert_eq!(
+                after,
+                escape_literal_and_maybe_add_word_boundaries(before, inverted_paired_delimiters,),
             );
         }
     }

@@ -1430,6 +1430,10 @@ impl<D: Document> DocumentViewer<D> {
         Ok(())
     }
 
+    pub fn get_search_input_under_cursor(&self) -> Option<String> {
+        self.doc.get_search_input_under_cursor(&self.current_focus)
+    }
+
     fn update_search_matches_after_receiving_more_data(&mut self) {
         if let Some(search_state) = &mut self.search_state {
             search_state.find_additional_matches(self.doc.raw_bytes_for_searching());

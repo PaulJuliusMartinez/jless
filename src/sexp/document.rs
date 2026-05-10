@@ -8,7 +8,7 @@ use std::rc::Rc;
 use crate::dimensions;
 use crate::document::{ContentRange, Document};
 use crate::rendering::{PreHighlightingStyledSegment, Segment, Text};
-use crate::search::InvertedPairedDelimeters;
+use crate::search::{self, InvertedPairedDelimeters};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocCore, DocumentNode, DocumentToken, EndOfListMetadata,
@@ -1467,6 +1467,41 @@ impl Document for SexpDocument {
         ))
     }
 
+    fn get_search_input_under_cursor(&self, cursor: &NodeIndex) -> Option<String> {
+        let node = self.core.node(*cursor);
+        let data_range = match &node.token {
+            DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => match list_kind {
+                ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
+                    invariants::record_keys_are_the_first_child_of_record_fields();
+                    invariants::constructors_are_the_first_child_of_variants();
+                    let atom_range_end = self.core.node(*cursor + 1).data_range.end;
+                    Some(node.data_range.start..atom_range_end)
+                }
+                ListKind::Plain | ListKind::Record | ListKind::Singleton | ListKind::DateTime => {
+                    None
+                }
+            },
+            DocumentToken::Atom(_) | DocumentToken::Unit { .. } => Some(node.data_range.clone()),
+            DocumentToken::EndOfList(_)
+            | DocumentToken::LineComment
+            | DocumentToken::BlockComment
+            | DocumentToken::Error(_) => None,
+        }?;
+
+        // Right now the only non-UTF-8 content can appear in comments, which we
+        // don't try to convert to search terms.
+        let raw_text = &self.core.pretty_printed[data_range];
+        let text = match std::str::from_utf8(raw_text) {
+            Ok(s) => s,
+            Err(_) => return None,
+        };
+
+        Some(search::escape_literal_and_maybe_add_word_boundaries(
+            text,
+            Self::inverted_paired_delimiters_for_search_input(),
+        ))
+    }
+
     fn inverted_paired_delimiters_for_search_input() -> InvertedPairedDelimeters {
         InvertedPairedDelimeters {
             square_brackets: false,
@@ -2429,6 +2464,46 @@ mod tests {
             check(vec![Collapse(None), Expand(Some(3)), Collapse(Some(2)), Expand(Some(1))]),
             @r#""1 => Expanded, 4 => Collapsed, 6 => Expanded, 8 => Collapsed""#,
         );
+    }
+
+    #[test]
+    fn test_get_search_input_under_cursor() {
+        let doc = new_doc(b"(1 () ; line\n ((a 1) #| block |# (b 2)) (Var (c 3))) (");
+        assert_snapshot!(dump(&doc), @r"
+         0..=1  : (1
+         2..=2  :  ()
+         3..=3  :  ; line
+         4..=8  :  ((a 1)
+         9..=9  :   #| block |#
+        10..=14 :   (b 2))
+        15..=16 :  (Var
+        17..=22 :    (c 3)))
+        23..=23 : (
+        24..=24 :  ERR: Unexpected EOF while parsing list
+        25..=25 :
+        ");
+
+        let f = |i| {
+            doc.get_search_input_under_cursor(&NodeIndex(i))
+                .unwrap_or("<none>".to_string())
+        };
+
+        // Record fields and variants
+        assert_snapshot!(f(5), @r"(a\>");
+        assert_snapshot!(f(15), @r"(Var\>");
+
+        // Atoms and unit
+        assert_snapshot!(f(1), @r"\<1\>");
+        assert_snapshot!(f(2), @"()");
+
+        // Lists and records
+        assert_snapshot!(f(0), @"<none>");
+        assert_snapshot!(f(4), @"<none>");
+
+        // Comments and errors
+        assert_snapshot!(f(3), @"<none>");
+        assert_snapshot!(f(9), @"<none>");
+        assert_snapshot!(f(24), @"<none>");
     }
 
     #[test]

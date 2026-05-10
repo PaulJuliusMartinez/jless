@@ -206,6 +206,14 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                                 SearchDirection::Reverse,
                                 count_or_1,
                             ),
+                            Key::Char('*') => self.get_search_input_under_cursor_and_start_search(
+                                SearchDirection::Forward,
+                                count_or_1,
+                            ),
+                            Key::Char('#') => self.get_search_input_under_cursor_and_start_search(
+                                SearchDirection::Reverse,
+                                count_or_1,
+                            ),
                             Key::Char('n') => self.move_to_search_match(
                                 MovementMethod::MoveCursor,
                                 JumpDirection::Next,
@@ -444,7 +452,37 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         count: usize,
     ) -> Option<Action> {
         let search_input = self.readline(search_direction.prompt_str())?;
+        self.start_search(search_input, search_direction, count)
+    }
 
+    fn get_search_input_under_cursor_and_start_search(
+        &mut self,
+        search_direction: SearchDirection,
+        count: usize,
+    ) -> Option<Action> {
+        let search_input = if let Some(viewer) = &self.viewer {
+            match viewer.get_search_input_under_cursor() {
+                Some(search_input) => search_input,
+                None => {
+                    self.set_warning_message("No search target under cursor".to_string());
+                    return None;
+                }
+            }
+        } else {
+            // Provide an empty string if there's no viewer so that we can handle the
+            // no viewer case consistently in `start_search`.
+            String::new()
+        };
+
+        self.start_search(search_input, search_direction, count)
+    }
+
+    fn start_search(
+        &mut self,
+        search_input: String,
+        search_direction: SearchDirection,
+        count: usize,
+    ) -> Option<Action> {
         let Some(viewer) = &mut self.viewer else {
             // TODO: Display error: "Waiting for input", but eventually store the search
             // input, and give it to the viewer later. (Once we do that though, we still
