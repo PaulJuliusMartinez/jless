@@ -1286,7 +1286,13 @@ impl<D: Document> DocumentViewer<D> {
             self.focus_bottom();
         }
 
-        self.update_search_matches_after_receiving_more_data();
+        if let Some(search_state) = &self.search_state {
+            // Don't bother checking for more search matches if we're not showing them!
+            // We'll do the work when we call `find_search_match`.
+            if search_state.should_show_matches() {
+                self.check_for_more_search_matches();
+            }
+        }
 
         // We call resize in case we have to use another column for the line
         // numbers because we received more data.
@@ -1402,7 +1408,7 @@ impl<D: Document> DocumentViewer<D> {
         self.doc.get_search_input_under_cursor(&self.current_focus)
     }
 
-    fn update_search_matches_after_receiving_more_data(&mut self) {
+    fn check_for_more_search_matches(&mut self) {
         if let Some(search_state) = &mut self.search_state {
             search_state.find_additional_matches(self.doc.raw_bytes_for_searching());
         }
@@ -1497,6 +1503,8 @@ impl<D: Document> DocumentViewer<D> {
         jump_direction: JumpDirection,
         jumps: usize,
     ) -> (D::Cursor, ContentRange<D::ScreenLine>) {
+        self.check_for_more_search_matches();
+
         let search_state = self.search_state.as_mut().unwrap();
 
         // Only capture reference to doc/current focus, and not self, so we can still mutate
@@ -3298,8 +3306,9 @@ mod test {
         ");
 
         viewer.append_document_data(b"5a\n6a\n");
-        // We want this to lazily update.
-        assert_eq!(viewer.search_state.as_ref().unwrap().num_matches(), 4);
+        // We're not showing search matches, so no reason to check for more matches yet.
+        // We will when it's time to jump to the next match though.
+        assert_eq!(viewer.search_state.as_ref().unwrap().num_matches(), 2);
 
         let output = run(
             &mut viewer,
