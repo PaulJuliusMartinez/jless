@@ -2814,25 +2814,27 @@ mod test {
 
     #[test]
     fn tail_end_of_document_after_focus_bottom() {
-        let mut viewer = init(b"a\nb\n", 3, 4, 0);
+        let mut viewer = init(b"a\nb\n", 3, 4, 1);
         let output = run(
             &mut viewer,
             vec![
                 vec![focus_bottom()],
                 vec![append_document_data(b"c\n")],
+                // BUG: The cursor should still be at the bottom of the screen; we
+                // don't need to adhere to scrolloff.
                 vec![append_document_data(b"d\ne\n")],
                 vec![move_cursor_up(1), scroll_viewport_down(2)],
-                vec![append_document_data(b"f\ne\n")],
+                vec![append_document_data(b"f\ng\n")],
             ],
         );
         assert_snapshot!(output, @r"
                        FocusBottom    AppendDocData  AppendDocData  MoveCursorUp(1)       AppendDocData
                                                                     ScrollViewportDown(2)
         ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐        ┌SI┬─L#┬─────┐
-        │ 0│*1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 2 │ b   │ │ 0│*4 │ d   │        │ 0│*4 │ d   │
-        │ 1│ 2 │ b   │ │ 1│*2 │ b   │ │ 1│ 2 │ b   │ │ 1│ 3 │ c   │ │ 1│ 5 │ e   │        │ 1│ 5 │ e   │
-        │ 2│ ~ │     │ │ 2│ ~ │     │ │ 2│*3 │ c   │ │ 2│ 4 │ d   │ │ 2│ ~ │     │        │ 2│ 6 │ f   │
-        │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│*5 │ e   │ │ 3│ ~ │     │        │ 3│ 7 │ e   │
+        │ 0│*1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 3 │ c   │ │ 0│*5 │ e   │        │ 0│ 4 │ d   │
+        │ 1│ 2 │ b   │ │ 1│*2 │ b   │ │ 1│ 2 │ b   │ │ 1│ 4 │ d   │ │ 1│ ~ │     │        │ 1│*5 │ e   │
+        │ 2│ ~ │     │ │ 2│ ~ │     │ │ 2│*3 │ c   │ │ 2│*5 │ e   │ │ 2│ ~ │     │        │ 2│ 6 │ f   │
+        │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │        │ 3│ 7 │ g   │
         └──┴───┴─────┘ └──┴───┴─────┘ └──┴───┴─────┘ └──┴───┴─────┘ └──┴───┴─────┘        └──┴───┴─────┘
         ");
     }
