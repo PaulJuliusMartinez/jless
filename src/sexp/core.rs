@@ -191,15 +191,6 @@ impl DocumentToken {
         }
     }
 
-    pub fn list_start_index(&self) -> Option<NodeIndex> {
-        match self {
-            DocumentToken::EndOfList(EndOfListMetadata {
-                list_start_index, ..
-            }) => Some(*list_start_index),
-            _ => None,
-        }
-    }
-
     pub fn list_kind(&self) -> Option<ListKind> {
         match self {
             DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => Some(*list_kind),
@@ -691,7 +682,7 @@ impl DocCore {
 
         let list_metadata = self.token(list_start_index).list_metadata();
 
-        let Some(last_child_index) = list_metadata.last_child_index.to_option() else {
+        if list_metadata.last_child_index.is_none() {
             // If no data in previous list, replace it with `Unit`, instead of an actual list.
             let commented_out = list_metadata.commented_out;
             let curr_node = &mut self.all_nodes[list_start_index.0];
