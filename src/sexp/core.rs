@@ -259,10 +259,6 @@ pub struct AtomMetadata {
 #[derive(Debug)]
 pub struct EndOfListMetadata {
     pub list_start_index: NodeIndex,
-    // We display closing parens on their own line if:
-    // 1) the last child of the list is a line comment (so we're forced to), or
-    // 2) the last child of the list is an error
-    should_display_on_own_line: bool,
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -648,21 +644,10 @@ impl DocCore {
             message: "Unexpected EOF while parsing list".to_string(),
         });
 
-        // We'll put the first closing ')' on its own line, and then the rest the same line.
-        let mut is_first_unterminated_list = true;
-
         while let Some(list_start_index) = self.starts_of_unterminated_lists.pop() {
-            let should_display_on_own_line = is_first_unterminated_list;
-            is_first_unterminated_list = false;
-
             // We won't actually add the trailing ')' to the internal doc.
             let should_append_to_pretty_printed = false;
-
-            self.complete_single_list(
-                list_start_index,
-                should_display_on_own_line,
-                should_append_to_pretty_printed,
-            );
+            self.complete_single_list(list_start_index, should_append_to_pretty_printed);
         }
     }
 
@@ -724,23 +709,13 @@ impl DocCore {
             return;
         };
 
-        let should_display_on_own_line = match &self.token(last_child_index) {
-            DocumentToken::LineComment | DocumentToken::Error(_) => true,
-            _ => false,
-        };
-
         let should_append_to_pretty_printed = true;
-        self.complete_single_list(
-            list_start_index,
-            should_display_on_own_line,
-            should_append_to_pretty_printed,
-        );
+        self.complete_single_list(list_start_index, should_append_to_pretty_printed);
     }
 
     fn complete_single_list(
         &mut self,
         list_start_index: NodeIndex,
-        should_display_on_own_line: bool,
         should_append_to_pretty_printed: bool,
     ) {
         let list_end_index = NodeIndex(self.all_nodes.len());
@@ -758,22 +733,13 @@ impl DocCore {
         list_metadata.list_end_index = Some(list_end_index).into();
         list_metadata.list_kind = list_kind;
 
-        let end_of_list_document_node = {
-            let end_of_list_metadata = {
-                EndOfListMetadata {
-                    list_start_index,
-                    should_display_on_own_line,
-                }
-            };
-
-            DocumentNode {
-                parent_index: list_start_node.parent_index,
-                prev_sibling: list_start_node.prev_sibling,
-                next_sibling: list_start_node.next_sibling,
-                data_index_in_parent: None,
-                data_range,
-                token: DocumentToken::EndOfList(end_of_list_metadata),
-            }
+        let end_of_list_document_node = DocumentNode {
+            parent_index: list_start_node.parent_index,
+            prev_sibling: list_start_node.prev_sibling,
+            next_sibling: list_start_node.next_sibling,
+            data_index_in_parent: None,
+            data_range,
+            token: DocumentToken::EndOfList(EndOfListMetadata { list_start_index }),
         };
 
         self.all_nodes.push(end_of_list_document_node);
