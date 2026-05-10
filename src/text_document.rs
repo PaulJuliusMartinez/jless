@@ -92,7 +92,7 @@ impl BreakPoints {
         self.0.len()
     }
 
-    fn nth_segment<'a, 'b>(&'a self, bytes: &'b [u8], n: usize) -> &'b [u8] {
+    fn nth_segment<'a>(&self, bytes: &'a [u8], n: usize) -> &'a [u8] {
         let start = self.0[n];
         if n + 1 < self.0.len() {
             let end = self.0[n + 1];
@@ -212,14 +212,12 @@ impl TextDocument {
 
     fn create_ref_to_start_of_line(&self, line_index: usize) -> ScreenLine {
         let line = self.line_zero_indexed(line_index);
-        let segment_of_wrapped_line = match BreakPoints::calculate(line, self.width) {
-            None => None,
-            Some(break_points) => Some(SegmentOfWrappedLine {
+        let segment_of_wrapped_line =
+            BreakPoints::calculate(line, self.width).map(|break_points| SegmentOfWrappedLine {
                 break_points: Rc::new(break_points),
                 index: 0,
                 width: self.width,
-            }),
-        };
+            });
 
         ScreenLine {
             line_index,
@@ -425,28 +423,28 @@ impl Document for TextDocument {
         screen_line
             .segment_of_wrapped_line
             .as_ref()
-            .map_or(false, SegmentOfWrappedLine::is_start)
+            .is_some_and(SegmentOfWrappedLine::is_start)
     }
 
     fn is_end_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
         screen_line
             .segment_of_wrapped_line
             .as_ref()
-            .map_or(false, SegmentOfWrappedLine::is_end)
+            .is_some_and(SegmentOfWrappedLine::is_end)
     }
 
     fn is_after_start_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
         screen_line
             .segment_of_wrapped_line
             .as_ref()
-            .map_or(false, SegmentOfWrappedLine::is_after_start)
+            .is_some_and(SegmentOfWrappedLine::is_after_start)
     }
 
     fn is_before_end_of_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
         screen_line
             .segment_of_wrapped_line
             .as_ref()
-            .map_or(false, SegmentOfWrappedLine::is_before_end)
+            .is_some_and(SegmentOfWrappedLine::is_before_end)
     }
 
     fn cursor_range(&self, cursor: &Cursor) -> ContentRange<ScreenLine> {

@@ -107,10 +107,10 @@ impl InitialNestedCollapseStateForTopLevelNodes {
 }
 
 #[derive(Clone, Debug)]
-pub(super) struct TypesetLine(pub Vec<Segment<NodeIndex, SegmentKind>>);
+pub struct TypesetLine(pub Vec<Segment<NodeIndex, SegmentKind>>);
 
 #[derive(Clone, Debug)]
-pub(super) struct TypesetLines(pub Vec<TypesetLine>);
+pub struct TypesetLines(pub Vec<TypesetLine>);
 
 impl TypesetLines {
     fn len(&self) -> usize {
@@ -169,8 +169,8 @@ impl Ord for ScreenLine {
         );
 
         match self.logical_line.cmp(&other.logical_line) {
-            Ordering::Less => return Ordering::Less,
-            Ordering::Greater => return Ordering::Greater,
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
             Ordering::Equal => self.index.cmp(&other.index),
         }
     }
@@ -216,7 +216,7 @@ impl ScreenLine {
 impl SexpDocument {
     fn process_additional_data(&mut self, current_data: Option<&[u8]>, seen_eof: bool) {
         while let Some(witness) = self.tokenizer.has_enough_data_to_produce_tokens() {
-            let current_data = current_data.map(|b| Ref::Transient(b));
+            let current_data = current_data.map(Ref::Transient);
             match self.tokenizer.next_raw_token(witness, current_data) {
                 Ok(Some(raw_token)) => self.core.append_raw_token(raw_token),
                 Ok(None) => {
@@ -390,9 +390,9 @@ impl SexpDocument {
         self.maybe_logical_line_of_node_index(node_index).unwrap()
     }
 
-    fn collapsible_nodes_in_line<'a, 'b>(
+    fn collapsible_nodes_in_line<'a>(
         &'a self,
-        logical_line: &'b LogicalLine,
+        logical_line: &LogicalLine,
     ) -> impl DoubleEndedIterator<Item = (&'a NodeIndex, &'a CollapseState)> {
         self.collapsible_nodes
             .range(logical_line.start_index..=logical_line.end_index)
@@ -551,7 +551,7 @@ impl SexpDocument {
                     None
                 }
             })
-            .last()
+            .next_back()
         {
             return Some(last_normal_focusable_node);
         }
@@ -653,7 +653,7 @@ impl SexpDocument {
 
     fn first_visible_line_at_or_above(&self, logical_line: LogicalLine) -> LogicalLine {
         let visible_ancestor = self.closest_visible_ancestor(&logical_line.start_index);
-        return self.logical_line_of_node_index(visible_ancestor);
+        self.logical_line_of_node_index(visible_ancestor)
     }
 
     fn prev_visible_logical_line(&self, logical_line: &LogicalLine) -> Option<LogicalLine> {
@@ -715,15 +715,15 @@ impl SexpDocument {
             focusable_nodes.retain(|(node_index, _)| *node_index <= relative_node);
 
             match Self::last_normal_focusable_node_or_last_node(focusable_nodes) {
-                Some(node_index) => return Some(node_index),
+                Some(node_index) => Some(node_index),
                 None => {
                     // Probably shouldn't ever happen; just return the start of the line.
-                    return Some(prev_logical_line.start_index);
+                    Some(prev_logical_line.start_index)
                 }
             }
         } else {
             // Focus first thing in the previous line.
-            return Some(focusable_nodes.first().unwrap().0);
+            Some(focusable_nodes.first().unwrap().0)
         }
     }
 
@@ -982,12 +982,12 @@ impl SexpDocument {
         color_scheme: &'a ColorScheme,
         focus: NodeIndex,
     ) -> RenderContext<'a> {
-        RenderContext::new(&color_scheme, &self.core, &self.collapsible_nodes, focus)
+        RenderContext::new(color_scheme, &self.core, &self.collapsible_nodes, focus)
     }
 
     pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> TypesetLines {
         renderer::typeset_logical_line(
-            &logical_line,
+            logical_line,
             self.width,
             &self.core,
             &self.collapsible_nodes,
@@ -1026,7 +1026,7 @@ impl Document for SexpDocument {
             collapsible_nodes: BTreeMap::new(),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
-            include_cursor: if cfg!(test) { false } else { true },
+            include_cursor: !cfg!(test),
         }
     }
 
@@ -1050,17 +1050,17 @@ impl Document for SexpDocument {
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
-        match self.starts_of_logical_lines.first_key_value() {
-            None => None,
-            Some((start_index, (end_index, indentation))) => Some((
+        self.starts_of_logical_lines.first_key_value().map(|kvp| {
+            let (start_index, (end_index, indentation)) = kvp;
+            (
                 self.first_typeset_screen_line_for_logical_line(LogicalLine {
                     indentation: *indentation,
                     start_index: *start_index,
                     end_index: *end_index,
                 }),
                 *start_index,
-            )),
-        }
+            )
+        })
     }
 
     fn bottom_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
@@ -1422,9 +1422,9 @@ impl Document for SexpDocument {
                         .unwrap_or("INVALID UTF8");
 
                     if !highlighted_cursor && segment.doc_ref == Some(*cursor) {
-                        if content.starts_with("(") {
+                        if let Some(after_paren) = content.strip_prefix("(") {
                             output.push('[');
-                            output.push_str(&content[1..]);
+                            output.push_str(after_paren);
                         } else {
                             output.push('*');
                             let first_grapheme_len = content

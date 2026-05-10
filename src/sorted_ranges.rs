@@ -90,16 +90,13 @@ pub trait SortedRanges {
     /// Returns the index of the elem where `elem.start <= index && index < elem.end`, or `None`
     /// if no such element exists.
     fn index_of_elem_containing(&self, index: usize) -> Option<usize> {
-        match self.index_of_first_elem_ending_after(index) {
-            None => None,
-            Some(elem_index) => {
-                // We know `index < elem.end`, now we need to check if `elem.start <= index`.
-                if Self::elem_start(self.elem(elem_index)) <= index {
-                    Some(elem_index)
-                } else {
-                    None
-                }
-            }
+        let elem_index = self.index_of_first_elem_ending_after(index)?;
+
+        // We know `index < elem.end`, now we need to check if `elem.start <= index`.
+        if Self::elem_start(self.elem(elem_index)) <= index {
+            Some(elem_index)
+        } else {
+            None
         }
     }
 
@@ -180,7 +177,7 @@ impl SortedRanges for [Range<usize>] {
     type Elem = Range<usize>;
 
     fn elems(&self) -> &[Self::Elem] {
-        &*self
+        self
     }
 
     fn elem_start(elem: &Self::Elem) -> usize {

@@ -1,7 +1,6 @@
 use std::default::Default;
 
 use crate::rendering::{AnsiColor, Attrs, Color, TokenColorScheme};
-use crate::sexp::core::AtomKind;
 
 pub struct ColorScheme {
     pub whitespace: TokenColorScheme,
@@ -104,20 +103,6 @@ impl Default for ColorScheme {
                 search_match: default,
                 focused_search_match: default,
             },
-        }
-    }
-}
-
-impl ColorScheme {
-    pub fn for_atom_kind(&self, atom_kind: AtomKind) -> TokenColorScheme {
-        match atom_kind {
-            AtomKind::Constructor => self.constructor_atom,
-            AtomKind::RecordKey => self.record_key_atom,
-            AtomKind::Number => self.number_atom,
-            AtomKind::Bool => self.bool_atom,
-            AtomKind::Date => self.date_atom,
-            AtomKind::Time => self.time_atom,
-            AtomKind::StringifiedList | AtomKind::Plain => self.plain_atom,
         }
     }
 }

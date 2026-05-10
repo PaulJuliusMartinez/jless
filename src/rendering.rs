@@ -302,10 +302,10 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         let unreserved_space = self.remaining_space_on_current_line - reserved_space;
 
         if unreserved_space < extra_space {
-            return false;
+            false
         } else {
             self.reserved_space = Some(reserved_space + extra_space);
-            return true;
+            true
         }
     }
 
@@ -351,7 +351,7 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         delimited: bool,
     ) -> usize {
         if delimited {
-            let content_str = content.as_str(&self.doc_content);
+            let content_str = content.as_str(self.doc_content);
             let inner_range = 1..(content_str.len() - 1);
 
             2 + Self::min_space_needed_to_show_str(&content_str[inner_range])

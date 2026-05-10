@@ -96,7 +96,7 @@ pub fn typeset_logical_line(
             .compositor
             .finish()
             .into_iter()
-            .map(|x| TypesetLine(x))
+            .map(TypesetLine)
             .collect(),
     )
 }
@@ -642,7 +642,7 @@ pub fn style_typeset_line<'l, 's>(
         .map(|segment| {
             // Check for the cursor placeholder:
             if matches!(segment.content, Text::Static(CURSOR_PLACEHOLDER)) {
-                let cursor = context.cursor_content(&logical_line);
+                let cursor = context.cursor_content(logical_line);
 
                 return PreHighlightingStyledSegment {
                     attrs: cursor_attrs,
@@ -657,7 +657,7 @@ pub fn style_typeset_line<'l, 's>(
                 false
             };
 
-            let token_color_scheme = segment.kind.color_scheme(&context.color_scheme);
+            let token_color_scheme = segment.kind.color_scheme(context.color_scheme);
 
             let (attrs, search_match_attrs) = if focused {
                 (

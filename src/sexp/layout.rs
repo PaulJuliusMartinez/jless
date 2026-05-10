@@ -159,10 +159,7 @@ impl<'a> LayoutEngine<'a> {
     }
 
     fn elem_indentation_for_current_list(&self) -> usize {
-        self.list_contents_indentation
-            .last()
-            .map(|x| *x)
-            .unwrap_or(0)
+        self.list_contents_indentation.last().copied().unwrap_or(0)
     }
 
     fn increase_current_indendation(&mut self, by: usize) {

@@ -6,8 +6,8 @@ pub struct Dimensions {
     pub height: usize,
 }
 
-pub const DEFAULT_WIDTH: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(80) };
-pub const DEFAULT_HEIGHT: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(24) };
+pub const DEFAULT_WIDTH: NonZeroUsize = NonZeroUsize::new(80).unwrap();
+pub const DEFAULT_HEIGHT: NonZeroUsize = NonZeroUsize::new(24).unwrap();
 
 impl Default for Dimensions {
     fn default() -> Self {

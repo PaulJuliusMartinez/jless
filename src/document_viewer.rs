@@ -18,7 +18,6 @@ use crate::search::{JumpDirection, SearchDirection, SearchState};
 /// (i.e., where the `Cursor` is) visible within the viewport, and for certain
 /// scrolling actions that manipulate the viewport, the cursor should be updated
 /// to a position in the document that is within the viewport.
-
 pub struct DocumentViewer<D: Document> {
     pub doc: D,
     top_line: D::ScreenLine,
@@ -87,17 +86,17 @@ enum PositionOfScreenLine {
 
 #[derive(Debug, Copy, Clone)]
 enum PositionOfContentInViewport {
-    EntirelyInViewport {
+    EntirelyWithin {
         start_index: usize,
         end_index: usize,
     },
-    StartsAboveViewport {
+    StartsAbove {
         end_index: usize,
     },
-    EndsBelowViewport {
+    EndsBelow {
         start_index: usize,
     },
-    StartsAndEndsOutsideViewport,
+    StartsAboveAndEndsBelow,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -234,9 +233,9 @@ impl<D: Document> DocumentViewer<D> {
             (
                 PositionOfScreenLine::AboveTopLine,
                 PositionOfScreenLine::AtScreenIndex(end_index),
-            ) => PositionOfContentInViewport::StartsAboveViewport { end_index },
+            ) => PositionOfContentInViewport::StartsAbove { end_index },
             (PositionOfScreenLine::AboveTopLine, PositionOfScreenLine::BelowBottomLine) => {
-                PositionOfContentInViewport::StartsAndEndsOutsideViewport
+                PositionOfContentInViewport::StartsAboveAndEndsBelow
             }
             (PositionOfScreenLine::AtScreenIndex(_), PositionOfScreenLine::AboveTopLine) => {
                 panic!("start of cursor is in viewport, but bottom is above the top line");
@@ -244,14 +243,14 @@ impl<D: Document> DocumentViewer<D> {
             (
                 PositionOfScreenLine::AtScreenIndex(start_index),
                 PositionOfScreenLine::AtScreenIndex(end_index),
-            ) => PositionOfContentInViewport::EntirelyInViewport {
+            ) => PositionOfContentInViewport::EntirelyWithin {
                 start_index,
                 end_index,
             },
             (
                 PositionOfScreenLine::AtScreenIndex(start_index),
                 PositionOfScreenLine::BelowBottomLine,
-            ) => PositionOfContentInViewport::EndsBelowViewport { start_index },
+            ) => PositionOfContentInViewport::EndsBelow { start_index },
             (PositionOfScreenLine::BelowBottomLine, PositionOfScreenLine::AboveTopLine) => {
                 panic!("end of cursor is below viewport, but start is above viewport");
             }
@@ -292,19 +291,19 @@ impl<D: Document> DocumentViewer<D> {
     where
         F: FnMut(&mut Self) -> Option<D::Cursor>,
     {
-        let old_cursor_range = &self.doc.cursor_range(&self.current_focus);
+        let old_cursor_range = self.doc.cursor_range(&self.current_focus);
         let old_cursor_position = self.position_of_content_in_viewport(&old_cursor_range);
 
         // We always try to keep the start of the cursor in the same position relative to
         // the top of the screen.
         let (n, relative_position) = match old_cursor_position {
-            PositionOfContentInViewport::EntirelyInViewport { start_index, .. }
-            | PositionOfContentInViewport::EndsBelowViewport { start_index } => {
+            PositionOfContentInViewport::EntirelyWithin { start_index, .. }
+            | PositionOfContentInViewport::EndsBelow { start_index } => {
                 // Most common case; keep the start of the cursor in the same spot as before.
                 (start_index, RelativePosition::Before)
             }
-            PositionOfContentInViewport::StartsAboveViewport { .. }
-            | PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
+            PositionOfContentInViewport::StartsAbove { .. }
+            | PositionOfContentInViewport::StartsAboveAndEndsBelow => {
                 let n = self
                     .doc
                     .diff_screen_lines(&self.top_line, &old_cursor_range.start);
@@ -545,10 +544,10 @@ impl<D: Document> DocumentViewer<D> {
         //
         // Using the start/end index might also mean there will be a tiny bit less visual jitter.
         let focus_index = match self.position_of_current_focus_in_viewport() {
-            PositionOfContentInViewport::StartsAboveViewport { end_index } => end_index,
-            PositionOfContentInViewport::EndsBelowViewport { start_index } => start_index,
-            PositionOfContentInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
-            PositionOfContentInViewport::EntirelyInViewport { end_index, .. } => end_index,
+            PositionOfContentInViewport::StartsAbove { end_index } => end_index,
+            PositionOfContentInViewport::EndsBelow { start_index } => start_index,
+            PositionOfContentInViewport::StartsAboveAndEndsBelow => self.dimensions.height / 2,
+            PositionOfContentInViewport::EntirelyWithin { end_index, .. } => end_index,
         };
 
         let lines_to_move =
@@ -602,13 +601,13 @@ impl<D: Document> DocumentViewer<D> {
     }
 
     fn jump_up(&mut self, num_screen_lines: Option<NonZeroUsize>) {
-        // Note that we pick the `start_index` in the `EntirelyInViewport` case. (See comment
+        // Note that we pick the `start_index` in the `EntirelyWithin` case. (See comment
         // below.)
         let focus_index = match self.position_of_current_focus_in_viewport() {
-            PositionOfContentInViewport::StartsAboveViewport { end_index } => end_index,
-            PositionOfContentInViewport::EndsBelowViewport { start_index } => start_index,
-            PositionOfContentInViewport::StartsAndEndsOutsideViewport => self.dimensions.height / 2,
-            PositionOfContentInViewport::EntirelyInViewport { start_index, .. } => start_index,
+            PositionOfContentInViewport::StartsAbove { end_index } => end_index,
+            PositionOfContentInViewport::EndsBelow { start_index } => start_index,
+            PositionOfContentInViewport::StartsAboveAndEndsBelow => self.dimensions.height / 2,
+            PositionOfContentInViewport::EntirelyWithin { start_index, .. } => start_index,
         };
 
         let lines_to_move = self
@@ -634,8 +633,8 @@ impl<D: Document> DocumentViewer<D> {
             //
             // Importantly, we need to make sure that this actually moves the focus in the case
             // where the focused line is multiple lines tall. If we're already at the top of the
-            // file, the only possibilities for the position of the cursor are `EndsBelowViewport`
-            // and `EntirelyInViewport`, and in both cases we pick the `start_index` as the focus
+            // file, the only possibilities for the position of the cursor are `EndsBelow`
+            // and `EntirelyWithin`, and in both cases we pick the `start_index` as the focus
             // index, so anything before that will be a different node.
             let focus_index = focus_index.saturating_sub(lines_to_move);
             self.move_focus_to_screen_index_or_eof(focus_index);
@@ -888,7 +887,7 @@ impl<D: Document> DocumentViewer<D> {
             // take that amount from both sides so that we don't always have the bigger
             // half of the cursor on top.
 
-            let to_reclaim = (additional_space_needed + 1) / 2;
+            let to_reclaim = additional_space_needed.div_ceil(2);
             first_acceptable_screen_index -= to_reclaim;
             last_acceptable_screen_index += to_reclaim;
         }
@@ -1097,14 +1096,14 @@ impl<D: Document> DocumentViewer<D> {
         self.doc.resize(doc_width);
 
         match old_position_of_content_in_viewport {
-            PositionOfContentInViewport::StartsAboveViewport { end_index } => {
+            PositionOfContentInViewport::StartsAbove { end_index } => {
                 // Don't top line to keep anchored, so we'll keep the end of the line
                 // in the same place.
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
                 self.top_line =
                     self.n_screen_lines_before_or_top_of_doc(new_cursor_range.end, end_index);
             }
-            PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
+            PositionOfContentInViewport::StartsAboveAndEndsBelow => {
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
 
                 if old_cursor_range.num_screen_lines == new_cursor_range.num_screen_lines {
@@ -1143,8 +1142,8 @@ impl<D: Document> DocumentViewer<D> {
                     );
                 }
             }
-            PositionOfContentInViewport::EntirelyInViewport { start_index, .. }
-            | PositionOfContentInViewport::EndsBelowViewport { start_index } => {
+            PositionOfContentInViewport::EntirelyWithin { start_index, .. }
+            | PositionOfContentInViewport::EndsBelow { start_index } => {
                 let new_cursor_range = self.doc.cursor_range(&self.current_focus);
                 self.top_line =
                     self.n_screen_lines_before_or_top_of_doc(new_cursor_range.start, start_index);
@@ -1177,18 +1176,18 @@ impl<D: Document> DocumentViewer<D> {
         let cursor_range = self.doc.cursor_range(&self.current_focus);
 
         match self.position_of_content_in_viewport(&cursor_range) {
-            PositionOfContentInViewport::StartsAboveViewport { end_index } => {
+            PositionOfContentInViewport::StartsAbove { end_index } => {
                 // Keep the end of focused node in the same percentile
                 anchor_screen_line = cursor_range.end;
                 new_index = convert_old_index_to_new_index(end_index);
             }
-            PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
+            PositionOfContentInViewport::StartsAboveAndEndsBelow => {
                 // Keep middle of what's visible on screen in the middle.
                 let half_old_height = self.dimensions.height / 2;
                 anchor_screen_line = self.screen_line_at_screen_index(half_old_height).unwrap();
                 new_index = new_height / 2;
             }
-            PositionOfContentInViewport::EntirelyInViewport {
+            PositionOfContentInViewport::EntirelyWithin {
                 start_index,
                 end_index,
             } => {
@@ -1197,7 +1196,7 @@ impl<D: Document> DocumentViewer<D> {
                 anchor_screen_line = self.screen_line_at_screen_index(middle_index).unwrap();
                 new_index = convert_old_index_to_new_index(middle_index);
             }
-            PositionOfContentInViewport::EndsBelowViewport { start_index } => {
+            PositionOfContentInViewport::EndsBelow { start_index } => {
                 // Keep the start of focused node in the same percentile.
                 anchor_screen_line = cursor_range.start;
                 new_index = convert_old_index_to_new_index(start_index);
@@ -1485,7 +1484,7 @@ impl<D: Document> DocumentViewer<D> {
                 let (ref_screen_line, at_screen_index) = match self
                     .position_of_content_in_viewport(&current_range)
                 {
-                    PositionOfContentInViewport::EntirelyInViewport {
+                    PositionOfContentInViewport::EntirelyWithin {
                         start_index,
                         end_index,
                     } => {
@@ -1500,16 +1499,16 @@ impl<D: Document> DocumentViewer<D> {
                             (center_screen_line, center_index)
                         }
                     }
-                    PositionOfContentInViewport::StartsAboveViewport { end_index } => {
+                    PositionOfContentInViewport::StartsAbove { end_index } => {
                         // If the current match/cursor starts above the viewport, just line up
                         // end of the new match with the end of the previous range.
                         (content_range.end, end_index)
                     }
-                    PositionOfContentInViewport::EndsBelowViewport { start_index } => {
-                        // Same thinking as `StartsAboveViewport` case.
+                    PositionOfContentInViewport::EndsBelow { start_index } => {
+                        // Same thinking as `StartsAbove` case.
                         (content_range.start, start_index)
                     }
-                    PositionOfContentInViewport::StartsAndEndsOutsideViewport => {
+                    PositionOfContentInViewport::StartsAboveAndEndsBelow => {
                         // Just focus the new match in the center.
                         let center_screen_line = self.doc.center_of_content_range(&content_range);
                         let center_index = self.dimensions.height / 2;
@@ -1680,10 +1679,9 @@ impl<D: Document> DocumentViewer<D> {
                         Some(unhighlighted_segments) => {
                             let highlighted_segments: Vec<StyledSegment> = unhighlighted_segments
                                 .into_iter()
-                                .map(|segment| {
+                                .flat_map(|segment| {
                                     segment.highlight_search_matches(search_match_ranges)
                                 })
-                                .flatten()
                                 .collect();
 
                             rendered_line.extend(highlighted_segments);

@@ -1,3 +1,7 @@
+// This recommends `x.is_empty()` instead of `x.len() == 0`, but depending on
+// the type of `x`, `is_empty()` doesn't always fit semantically.
+#![allow(clippy::len_zero)]
+
 extern crate lazy_static;
 
 use std::ffi::{OsStr, OsString};
@@ -37,7 +41,7 @@ use app::{App, Break, InputWasEmpty};
 use document::Document;
 
 fn main() {
-    let args: Vec<_> = std::env::args_os().into_iter().collect();
+    let args: Vec<_> = std::env::args_os().collect();
     let input_arg = parse_args(&args);
     let input_stream = open_input(input_arg);
 
@@ -134,14 +138,15 @@ fn main() {
                 Ok(AppInputEvent::Sigwinch) => {
                     app.handle_window_resize(dimensions::current(), true)
                 }
-                Ok(AppInputEvent::TTYEvent(tty_event)) => match app.handle_tty_event(tty_event) {
-                    Some(Break) => break,
-                    None => (),
-                },
+                Ok(AppInputEvent::TTYEvent(tty_event)) => {
+                    if let Some(Break) = app.handle_tty_event(tty_event) {
+                        break;
+                    }
+                }
                 Ok(AppInputEvent::TTYError(tty_error)) => app.handle_tty_input_error(tty_error),
                 Ok(AppInputEvent::DataAvailable(data_input_event)) => match data_input_event {
                     Ok(data) => {
-                        let borrowed_data = data.as_ref().map(Vec::as_slice);
+                        let borrowed_data = data.as_deref();
 
                         if let Some(InputWasEmpty) = app.handle_document_data(borrowed_data) {
                             // I can't get this to work correctly when relying on Drop
@@ -197,7 +202,7 @@ fn main() {
     exit(exit_code);
 }
 
-const HELP_ARGS: [&'static str; 3] = ["-h", "-help", "--help"];
+const HELP_ARGS: [&str; 3] = ["-h", "-help", "--help"];
 
 fn usage() {
     eprintln!(
@@ -259,16 +264,8 @@ fn parse_args(mut args: &[OsString]) -> Option<&OsString> {
 }
 
 fn open_input(input_arg: Option<&OsString>) -> Box<dyn io::Read + Send> {
-    let filename = match input_arg {
-        None => None,
-        Some(arg) => {
-            if arg.as_os_str() == OsStr::new("-") {
-                None
-            } else {
-                Some(arg)
-            }
-        }
-    };
+    let dash = OsStr::new("-");
+    let filename = input_arg.filter(|arg| arg.as_os_str() != dash);
 
     match filename {
         None => {
@@ -318,7 +315,7 @@ fn register_sigwinch_handler(sender: mpsc::Sender<AppInputEvent>) {
             // the app.
             let _ = sigwinch_read.read_exact(&mut buf);
 
-            if let Err(_) = sender.send(AppInputEvent::Sigwinch) {
+            if sender.send(AppInputEvent::Sigwinch).is_err() {
                 // https://doc.rust-lang.org/std/sync/mpsc/struct.SendError.html
                 //
                 // > A send operation can only fail if the receiving end of a channel
@@ -369,7 +366,7 @@ fn get_tty_input(
                     Some(Err(error)) => sender.send(AppInputEvent::TTYError(error)),
                 };
 
-                if let Err(_) = send_result {
+                if send_result.is_err() {
                     break;
                 }
             }
@@ -392,21 +389,15 @@ fn get_document_data(
         buffer.resize(buffer.capacity(), 0);
         match input.read(&mut buffer) {
             Ok(0) => {
-                let _ = event_sender
-                    .send(AppInputEvent::DataAvailable(Ok(None)))
-                    .unwrap();
+                let _ = event_sender.send(AppInputEvent::DataAvailable(Ok(None)));
                 break;
             }
             Ok(n) => {
                 buffer.truncate(n);
-                let _ = event_sender
-                    .send(AppInputEvent::DataAvailable(Ok(Some(buffer))))
-                    .unwrap();
+                let _ = event_sender.send(AppInputEvent::DataAvailable(Ok(Some(buffer))));
             }
             Err(err) => {
-                let _ = event_sender
-                    .send(AppInputEvent::DataAvailable(Err(err)))
-                    .unwrap();
+                let _ = event_sender.send(AppInputEvent::DataAvailable(Err(err)));
                 break;
             }
         }

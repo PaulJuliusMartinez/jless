@@ -191,11 +191,11 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                             Key::PageDown => Some(Action::PageDown(count_or_1)),
                             Key::PageUp => Some(Action::PageUp(count_or_1)),
                             Key::Ctrl('d') => {
-                                let count = count.map(NonZeroUsize::new).flatten();
+                                let count = count.and_then(NonZeroUsize::new);
                                 Some(Action::JumpDown(count))
                             }
                             Key::Ctrl('u') => {
-                                let count = count.map(NonZeroUsize::new).flatten();
+                                let count = count.and_then(NonZeroUsize::new);
                                 Some(Action::JumpUp(count))
                             }
                             Key::Char('/') => self.get_search_input_and_start_search(
@@ -678,7 +678,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             let _ = terminal.set_inverted(attrs.inverted);
 
             let bytes = content.as_bytes(doc_content);
-            let _ = match std::str::from_utf8(&*bytes) {
+            let _ = match std::str::from_utf8(bytes) {
                 Ok(s) => write!(terminal, "{s}"),
                 Err(_) => write!(terminal, "INVALID SEGMENT"),
             };

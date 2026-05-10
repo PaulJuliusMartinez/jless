@@ -474,8 +474,8 @@ impl SearchState {
 
         let wrapped = match delta.signum() {
             0 => false,
-            1 => num_matches <= (delta.abs() as usize) || new_index < start_index,
-            -1 => num_matches <= (delta.abs() as usize) || start_index < new_index,
+            1 => num_matches <= delta.unsigned_abs() || new_index < start_index,
+            -1 => num_matches <= delta.unsigned_abs() || start_index < new_index,
             _ => unreachable!(),
         };
 

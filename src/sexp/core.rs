@@ -40,7 +40,7 @@ impl OptNodeIndex {
     const NONE_VAL: usize = usize::MAX;
     const NONE: Self = OptNodeIndex(Self::NONE_VAL);
 
-    fn to_option(&self) -> Option<NodeIndex> {
+    fn to_option(self) -> Option<NodeIndex> {
         if self.0 == Self::NONE_VAL {
             None
         } else {
@@ -145,12 +145,10 @@ pub enum DocumentToken {
 
 impl DocumentToken {
     pub fn is_data(&self) -> bool {
-        match self {
-            DocumentToken::StartOfList(_) | DocumentToken::Atom(_) | DocumentToken::Unit { .. } => {
-                true
-            }
-            _ => false,
-        }
+        matches!(
+            self,
+            DocumentToken::StartOfList(_) | DocumentToken::Atom(_) | DocumentToken::Unit { .. },
+        )
     }
 
     fn is_commented_out(&self) -> bool {
@@ -965,9 +963,7 @@ impl DocCore {
         }
 
         // If we're at a top level comment, don't show any path at all.
-        let Some(node_index) = data_index else {
-            return None;
-        };
+        let node_index = data_index?;
 
         let parent_index = self.node(node_index).parent_index();
 

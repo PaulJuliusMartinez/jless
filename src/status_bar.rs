@@ -121,7 +121,7 @@ impl StatusBarTopLine {
         assert!(space_available > 0);
 
         let input_source_content = match &self.filepath {
-            Some(filepath) => Text::full_string(Rc::clone(&filepath)),
+            Some(filepath) => Text::full_string(Rc::clone(filepath)),
             None => Text::Static("STDIN"),
         };
 
@@ -145,9 +145,8 @@ impl StatusBarTopLine {
             space_available -= 1;
 
             let mut bytes_in_prefix = 0;
-            let mut graphemes = input_source.graphemes(true);
 
-            while let Some(grapheme) = graphemes.next() {
+            for grapheme in input_source.graphemes(true) {
                 let grapheme_width = UnicodeWidthStr::width(grapheme);
                 if grapheme_width > space_available {
                     break;
@@ -394,7 +393,7 @@ impl StatusBarBottomLine {
             attrs,
         });
 
-        return space_used + 1;
+        space_used + 1
     }
 }
 
