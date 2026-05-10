@@ -3281,40 +3281,40 @@ mod test {
                     jump_to_next_match(2),
                 ],
                 vec![jump_to_next_match(1)],
-                vec![jump_to_next_match(1)],
+                vec![jump_to_next_match(1), move_cursor_down(1)],
             ],
         );
         assert_snapshot!(output, @r"
                       /a                         JumpToSearchMatch(Next, 1) JumpToSearchMatch(Next, 1)
-                      JumpToSearchMatch(Next, 2)
+                      JumpToSearchMatch(Next, 2)                            MoveCursorDown(1)
         ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐
         │ 0│*1 │ 1  │ │ 0│ 1 │ 1  │              │ 0│ 1 │ 1  │              │ 0│ 1 │ 1  │
         │ 1│ 2 │ 2a │ │ 1│ 2 │ 2a │              │ 1│*2 │ 2a │              │ 1│ 2 │ 2a │
-        │ 2│ 3 │ 3a │ │ 2│*3 │ 3a │              │ 2│ 3 │ 3a │              │ 2│*3 │ 3a │
-        │ 3│ 4 │ 4  │ │ 3│ 4 │ 4  │              │ 3│ 4 │ 4  │              │ 3│ 4 │ 4  │
+        │ 2│ 3 │ 3a │ │ 2│*3 │ 3a │              │ 2│ 3 │ 3a │              │ 2│ 3 │ 3a │
+        │ 3│ 4 │ 4  │ │ 3│ 4 │ 4  │              │ 3│ 4 │ 4  │              │ 3│*4 │ 4  │
         │ 4│ ~ │    │ │ 4│ ~ │    │              │ 4│ ~ │    │              │ 4│ ~ │    │
         └──┴───┴────┘ └──┴───┴────┘              └──┴───┴────┘              └──┴───┴────┘
-                      /a [2/2]                   /a [1/2] W                 /a [2/2]
+                      /a [2/2]                   /a [1/2] W
         ");
+
+        viewer.append_document_data(b"5a\n6a\n");
+        // We want this to lazily update.
+        assert_eq!(viewer.search_state.as_ref().unwrap().num_matches(), 4);
 
         let output = run(
             &mut viewer,
-            vec![
-                vec![append_document_data(b"5a\n6a\n")],
-                vec![jump_to_next_match(2)],
-                vec![jump_to_next_match(1)],
-            ],
+            vec![vec![jump_to_next_match(2)], vec![jump_to_next_match(1)]],
         );
         assert_snapshot!(output, @r"
-                      AppendDocData JumpToSearchMatch(Next, 2) JumpToSearchMatch(Next, 1)
-        ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐
-        │ 0│ 1 │ 1  │ │ 0│ 1 │ 1  │ │ 0│ 2 │ 2a │              │ 0│*2 │ 2a │
-        │ 1│ 2 │ 2a │ │ 1│ 2 │ 2a │ │ 1│ 3 │ 3a │              │ 1│ 3 │ 3a │
-        │ 2│*3 │ 3a │ │ 2│*3 │ 3a │ │ 2│ 4 │ 4  │              │ 2│ 4 │ 4  │
-        │ 3│ 4 │ 4  │ │ 3│ 4 │ 4  │ │ 3│ 5 │ 5a │              │ 3│ 5 │ 5a │
-        │ 4│ ~ │    │ │ 4│ 5 │ 5a │ │ 4│*6 │ 6a │              │ 4│ 6 │ 6a │
-        └──┴───┴────┘ └──┴───┴────┘ └──┴───┴────┘              └──┴───┴────┘
-        /a [2/2]      /a [2/4]      /a [4/4]                   /a [1/4] W
+                      JumpToSearchMatch(Next, 2) JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬────┐ ┌SI┬─L#┬────┐              ┌SI┬─L#┬────┐
+        │ 0│ 1 │ 1  │ │ 0│ 2 │ 2a │              │ 0│*2 │ 2a │
+        │ 1│ 2 │ 2a │ │ 1│ 3 │ 3a │              │ 1│ 3 │ 3a │
+        │ 2│ 3 │ 3a │ │ 2│ 4 │ 4  │              │ 2│ 4 │ 4  │
+        │ 3│*4 │ 4  │ │ 3│ 5 │ 5a │              │ 3│ 5 │ 5a │
+        │ 4│ 5 │ 5a │ │ 4│*6 │ 6a │              │ 4│ 6 │ 6a │
+        └──┴───┴────┘ └──┴───┴────┘              └──┴───┴────┘
+                      /a [4/4]                   /a [1/4] W
         ");
     }
 
