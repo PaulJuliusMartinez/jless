@@ -1056,7 +1056,7 @@ impl<D: Document> DocumentViewer<D> {
         // Handle resizes in two parts: first resize the width, then the height.
         self.resize_width(viewer_width, doc_width);
         self.resize_height(new_dimensions.height);
-        self.move_current_focus_within_scrolloff_after_resize();
+        self.update_so_current_focus_is_visible();
     }
 
     fn width_of_line_numbers(num_doc_lines: usize) -> usize {
@@ -1209,37 +1209,6 @@ impl<D: Document> DocumentViewer<D> {
             height: new_height,
             ..self.dimensions
         };
-    }
-
-    fn move_current_focus_within_scrolloff_after_resize(&mut self) {
-        // After a resize, we'll allow part of the focused node to be outside of scrolloff,
-        // but if that's not the case we'll move the screen slightly to make it so.
-        let acceptable_screen_indexes = self.screen_indexes_within_scrolloff();
-
-        // We use `last_screen_line_at_or_before_screen_index` in `maybe_update_focused_node_after_scroll`
-        // to allow scrolling the end of the file to the very top of the screen. We'll use the same
-        // relaxation here, so that if you do that, and then resize the screen, the cursor won't
-        // "jump" into the scrolloff zone.
-
-        let first_acceptable_screen_line =
-            self.last_screen_line_at_or_before_screen_index(*acceptable_screen_indexes.start());
-        let last_acceptable_screen_line =
-            self.last_screen_line_at_or_before_screen_index(*acceptable_screen_indexes.end());
-
-        let focused_range = self.doc.cursor_range(&self.current_focus);
-
-        if focused_range.end < first_acceptable_screen_line {
-            // Put the end of the focused range at the first acceptable screen index.
-            self.top_line =
-                self.n_screen_lines_before(focused_range.end, *acceptable_screen_indexes.start());
-        } else if last_acceptable_screen_line < focused_range.start {
-            // Put the start of the focused range at the last acceptable screen index.
-            self.top_line =
-                self.n_screen_lines_before(focused_range.start, *acceptable_screen_indexes.end());
-        } else {
-            // Current focused range overlaps with acceptable screen line ranges;
-            // nothing to do!
-        }
     }
 
     // Assumes that this will always exist.
@@ -2820,9 +2789,8 @@ mod test {
             vec![
                 vec![focus_bottom()],
                 vec![append_document_data(b"c\n")],
-                // BUG: The cursor should still be at the bottom of the screen; we
-                // don't need to adhere to scrolloff.
                 vec![append_document_data(b"d\ne\n")],
+                // Move the cursor, so we're no longer tailing the document.
                 vec![move_cursor_up(1), scroll_viewport_down(2)],
                 vec![append_document_data(b"f\ng\n")],
             ],
@@ -2831,10 +2799,10 @@ mod test {
                        FocusBottom    AppendDocData  AppendDocData  MoveCursorUp(1)       AppendDocData
                                                                     ScrollViewportDown(2)
         ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐ ┌SI┬─L#┬─────┐        ┌SI┬─L#┬─────┐
-        │ 0│*1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 3 │ c   │ │ 0│*5 │ e   │        │ 0│ 4 │ d   │
-        │ 1│ 2 │ b   │ │ 1│*2 │ b   │ │ 1│ 2 │ b   │ │ 1│ 4 │ d   │ │ 1│ ~ │     │        │ 1│*5 │ e   │
-        │ 2│ ~ │     │ │ 2│ ~ │     │ │ 2│*3 │ c   │ │ 2│*5 │ e   │ │ 2│ ~ │     │        │ 2│ 6 │ f   │
-        │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │        │ 3│ 7 │ g   │
+        │ 0│*1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 1 │ a   │ │ 0│ 2 │ b   │ │ 0│ 4 │ d   │        │ 0│ 4 │ d   │
+        │ 1│ 2 │ b   │ │ 1│*2 │ b   │ │ 1│ 2 │ b   │ │ 1│ 3 │ c   │ │ 1│*5 │ e   │        │ 1│*5 │ e   │
+        │ 2│ ~ │     │ │ 2│ ~ │     │ │ 2│*3 │ c   │ │ 2│ 4 │ d   │ │ 2│ ~ │     │        │ 2│ 6 │ f   │
+        │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│ ~ │     │ │ 3│*5 │ e   │ │ 3│ ~ │     │        │ 3│ 7 │ g   │
         └──┴───┴─────┘ └──┴───┴─────┘ └──┴───┴─────┘ └──┴───┴─────┘ └──┴───┴─────┘        └──┴───┴─────┘
         ");
     }
