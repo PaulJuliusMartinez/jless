@@ -1065,6 +1065,31 @@ mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
+    #[test]
+    fn show_core_struct_sizes() {
+        use std::mem;
+
+        assert_snapshot!(mem::size_of::<DocumentNode>(), @"128");
+        assert_snapshot!(mem::align_of::<DocumentNode>(), @"8");
+
+        assert_snapshot!(mem::offset_of!(DocumentNode, parent_index),         @"0");
+        assert_snapshot!(mem::offset_of!(DocumentNode, prev_sibling),         @"16");
+        assert_snapshot!(mem::offset_of!(DocumentNode, next_sibling),         @"32");
+        assert_snapshot!(mem::offset_of!(DocumentNode, data_index_in_parent), @"48");
+        assert_snapshot!(mem::offset_of!(DocumentNode, data_range),           @"112");
+        assert_snapshot!(mem::offset_of!(DocumentNode, token),                @"64");
+
+        assert_snapshot!(mem::size_of::<ListMetadata>(), @"48");
+        assert_snapshot!(mem::align_of::<ListMetadata>(), @"8");
+
+        assert_snapshot!(mem::offset_of!(ListMetadata, list_kind), @"42");
+        assert_snapshot!(mem::offset_of!(ListMetadata, last_child_index), @"0");
+        assert_snapshot!(mem::offset_of!(ListMetadata, list_end_index), @"16");
+        assert_snapshot!(mem::offset_of!(ListMetadata, commented_out), @"40");
+        assert_snapshot!(mem::offset_of!(ListMetadata, data_length), @"32");
+        assert_snapshot!(mem::offset_of!(ListMetadata, contains_non_data), @"41");
+    }
+
     fn dump_doc(doc: &DocCore) -> String {
         let mut output = String::new();
 
