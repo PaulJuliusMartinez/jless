@@ -71,12 +71,13 @@ pub trait Document {
         &self,
         content_range: &ContentRange<Self::ScreenLine>,
     ) -> Self::ScreenLine {
-        let diff = (content_range.num_screen_lines - 1) / 2;
+        let mut diff = (content_range.num_screen_lines - 1) / 2;
         let mut screen_line = content_range.start.clone();
         while diff > 0 {
             screen_line = self
                 .next_screen_line(&screen_line)
                 .expect("must be `ScreenLine`s between start and end of `ContentRange`");
+            diff -= 1;
         }
         screen_line
     }

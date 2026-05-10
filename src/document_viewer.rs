@@ -3266,6 +3266,33 @@ mod test {
         └──┴───┴──────┘ └──┴───┴──────┘              └──┴───┴──────┘              └──┴───┴──────┘              └──┴───┴──────┘
                         /H [1/4]                     /H [3/4]                     /H [1/4]                     /H [4/4] W
         ");
+
+        // Test search matches of varying lengths
+        let text = b"a\nb\nc H\nd\ne HHHHHHH\nf\ng\n";
+        let mut viewer = init(text, 4, 5, 2);
+        let output = run(
+            &mut viewer,
+            vec![
+                vec![
+                    initialize_search("H+", SearchDirection::Forward),
+                    jump_to_next_match(1),
+                ],
+                vec![scroll_to_next_match(1)],
+            ],
+        );
+
+        assert_snapshot!(output, @r"
+                        /H+                        ScrollToSearchMatch(Next, 1)
+                        JumpToSearchMatch(Next, 1)
+        ┌SI┬─L#┬──────┐ ┌SI┬─L#┬──────┐            ┌SI┬─L#┬──────┐
+        │ 0│*1 │ a    │ │ 0│ 1 │ a    │            │ 0│ 4 │ d    │
+        │ 1│ 2 │ b    │ │ 1│ 2 │ b    │            │ 1│*5 │ e HH↩│
+        │ 2│ 3 │ c H  │ │ 2│*3 │ c H  │            │ 2│*5 │↪HHHH↩│
+        │ 3│ 4 │ d    │ │ 3│ 4 │ d    │            │ 3│*5 │↪H    │
+        │ 4│ 5 │ e HH↩│ │ 4│ 5 │ e HH↩│            │ 4│ 6 │ f    │
+        └──┴───┴──────┘ └──┴───┴──────┘            └──┴───┴──────┘
+                        /H+ [1/2]                  /H+ [2/2]
+        ");
     }
 
     #[test]
