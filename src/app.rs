@@ -164,6 +164,12 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                             }
                             Key::Char('H') => Some(Action::MoveCursorLeftOrUpWithoutCollapsing),
                             Key::Char('$') => Some(Action::MoveCursorToLastSibling),
+                            Key::Char('w') => {
+                                Some(Action::MoveCursorToNextIndentationChange(count_or_1))
+                            }
+                            Key::Char('b') => {
+                                Some(Action::MoveCursorToPrevIndentationChange(count_or_1))
+                            }
                             // e by default will expand one level, while E will deeply
                             // expand to the maximum depth. Prefixing either command with
                             // a count will expand n levels.

@@ -23,6 +23,9 @@ pub enum Action {
     MoveCursorToFirstSibling,
     MoveCursorToLastSibling,
 
+    MoveCursorToNextIndentationChange(usize),
+    MoveCursorToPrevIndentationChange(usize),
+
     CollapseNodeAndSiblings(Option<usize>),
     ExpandNodeAndSiblings(Option<usize>),
 

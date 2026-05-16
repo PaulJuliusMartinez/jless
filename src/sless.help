@@ -35,6 +35,13 @@
                    move focus to the right of the focused node, or to a parent
                    of the focused node.
 
+  w             *  Move to the next change in indentation level
+  b             *  Move to the previous change in indentation level.
+
+                   The exact semantics of w and b are convoluted, but you can
+                   think of them as moving forward or backwards to the next
+                   "interesting" node.
+
   PageDown      *  Move down by one window (or [4mN[0m windows).
   PageUp        *  Move up   by one window (or [4mN[0m windows).
 
@@ -49,8 +56,10 @@
                    document if sless is still receiving input.
 
                    If a count is given to either of these commands, focus that
-                   line number. If that line is not visible because a parent node
-                   is collapsed, focus the first preceding visible line.
+                   line number. If that line is not visible because a parent
+                   node is collapsed, focus the first preceding visible line.
+
+                            [1mCOLLAPSING AND EXPANDING[0m
 
   c             *  Shallowly collapse the focused node and all its siblings.
   C             *  Deeply    collapse the focused node and all its siblings.

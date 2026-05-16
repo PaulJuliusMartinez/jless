@@ -574,6 +574,37 @@ impl SexpDocument {
         }
     }
 
+    // Returns true if a node is the first child of its parent, unless the parent is a variant,
+    // in which case it only returns true if it is the second child of its parent.
+    fn is_logically_the_first_elem_in_list(&self, node_index: NodeIndex) -> bool {
+        let node = self.core.node(node_index);
+
+        let Some(parent_index) = node.parent_index() else {
+            // If node doesn't have a parent, then just check if it is actually the first
+            // element.
+            return node.prev_sibling().is_none();
+        };
+
+        match self.core.token(parent_index).list_kind() {
+            Some(ListKind::VariantRecord | ListKind::VariantTuple) => {
+                // If parent is a variant, check if the previous sibling is the constructor
+                // (i.e., the first element).
+                match node.prev_sibling() {
+                    None => false,
+                    Some(prev_sibling) => {
+                        invariants::constructors_are_the_first_child_of_variants();
+                        self.core.node(prev_sibling).prev_sibling().is_none()
+                    }
+                }
+            }
+            _ => {
+                // If parent is not a variant, just check if it is actually the first
+                // element.
+                node.prev_sibling().is_none()
+            }
+        }
+    }
+
     // When we're focused on record fields and variants, the cursor points to the list, but we
     // really consider the record key / constructor as currently focused as well. And for DateTimes
     // we also consider the whole list as the cursor.
@@ -1388,6 +1419,152 @@ impl Document for SexpDocument {
         list_metadata.last_child_index()
     }
 
+    fn move_cursor_to_next_indentation_change(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
+        let mut curr_logical_line = self.logical_line_of_node_index(*cursor);
+        let mut starting_indentation = curr_logical_line.indentation;
+        let mut is_first = true;
+
+        loop {
+            let Some(next_logical_line) = self.next_visible_logical_line(&curr_logical_line) else {
+                // If we hit the bottom of the document, just return the start of that line.
+                if *cursor < curr_logical_line.start_index {
+                    return Some(curr_logical_line.start_index);
+                } else {
+                    return None;
+                }
+            };
+
+            if next_logical_line.indentation < starting_indentation {
+                // This is this case:
+                //
+                // start:      (y 1)
+                //             (z 2)))))
+                // end:   (next thing)
+                //
+                // We want to go to (next thing)
+                return Some(next_logical_line.start_index);
+            } else if next_logical_line.indentation > starting_indentation {
+                // We've run up to a nested thing. If this is not the immediate
+                // next line, we'll stop at the parent:
+                //
+                // start:  (a 1)
+                //         (b 2)
+                // end:    (c (
+                //           ...
+                if !is_first {
+                    return Some(curr_logical_line.start_index);
+                }
+
+                // So we started on one line, and the next line is immediately more indented.
+                // This can be tricky:
+                //
+                // start: (((a 1)     Here, it's a little awkward if we move to "(b 2)", because
+                //          (b 2)     it's not the start of the record. And moving to "(c 3)" or
+                //          (c 3))    the next collapsed elem would feel weird. We want to move
+                //         (...))     to "(a 1)".
+                //
+                // start: ((Var       But here, moving to 1 feels more natural, since it's the
+                //           1        first payload in the variant.
+                //           2)
+                //         (Bar ...))
+                //
+                // The heuristic we'll use is to check if the next line is the logically the
+                // "first" elem in a list. If it's not, we'll try to focus the first element
+                // of that list instead.
+                if self.is_logically_the_first_elem_in_list(next_logical_line.start_index) {
+                    return Some(next_logical_line.start_index);
+                }
+
+                let target_index = self
+                    .core
+                    .node(next_logical_line.start_index)
+                    .parent_index()
+                    .unwrap()
+                    + 1;
+
+                // We have to make sure we're not _starting_ at (or after) the first child,
+                // otherwise we won't go anywhere. We want to make sure we actually move
+                // forward.
+                if *cursor < target_index {
+                    return Some(target_index);
+                }
+
+                // And now we have to update our starting indentation to the next line as if
+                // that's the indentation level where we started.
+                starting_indentation = next_logical_line.indentation;
+            }
+
+            is_first = false;
+            curr_logical_line = next_logical_line;
+        }
+    }
+
+    fn move_cursor_to_prev_indentation_change(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
+        let mut curr_logical_line = self.logical_line_of_node_index(*cursor);
+
+        // First just move the cursor to the start of the line if it's not there already.
+        if let Some((start_of_line, _)) = self.focusable_nodes_in_line(&curr_logical_line).first() {
+            if start_of_line != cursor {
+                return Some(*start_of_line);
+            }
+        }
+
+        let mut starting_indentation = curr_logical_line.indentation;
+        let mut is_first = true;
+        loop {
+            let Some(prev_logical_line) = self.prev_visible_logical_line(&curr_logical_line) else {
+                // If we're at the top of the document just go to the start of that line.
+                if curr_logical_line.start_index < *cursor {
+                    return Some(curr_logical_line.start_index);
+                } else {
+                    return None;
+                }
+            };
+
+            if prev_logical_line.indentation > starting_indentation {
+                // This is this case:
+                //
+                //             ((a 1)
+                //              (b 2))
+                // end:        (y 1)
+                //             (z 2)))))
+                // start: (next thing)
+                //
+                // If this is the immediately preceding line, we'll update our starting indentation
+                // and go on from there so we keep going past "(z 2)". But otherwise we stop so we
+                // end up at "(y 1)" and not "(b 2)".
+                if is_first {
+                    starting_indentation = prev_logical_line.indentation;
+                } else {
+                    return Some(curr_logical_line.start_index);
+                }
+            } else if prev_logical_line.indentation < starting_indentation {
+                // We've bumped into a parent. If the current node isn't logically the first child,
+                // we'll move to its sibling.
+                if !self.is_logically_the_first_elem_in_list(curr_logical_line.start_index) {
+                    let first_elem = self
+                        .core
+                        .node(curr_logical_line.start_index)
+                        .parent_index()
+                        .unwrap()
+                        + 1;
+                    return Some(first_elem);
+                }
+
+                // Otherwise, if this the immediately preceding line, we'll move to it, but if
+                // we've been moving for a while, we'll stop before it.
+                if is_first {
+                    return Some(prev_logical_line.start_index);
+                } else {
+                    return Some(curr_logical_line.start_index);
+                }
+            }
+
+            is_first = false;
+            curr_logical_line = prev_logical_line;
+        }
+    }
+
     fn collapse_node_and_siblings(
         &mut self,
         cursor: &NodeIndex,
@@ -1602,9 +1779,35 @@ pub(super) mod test_helpers {
             .collect()
     }
 
+    pub fn visible_logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
+        let mut curr_logical_line = {
+            let (start_index, (end_index, indentation)) =
+                doc.starts_of_logical_lines.iter().next().unwrap();
+            LogicalLine {
+                indentation: *indentation,
+                start_index: *start_index,
+                end_index: *end_index,
+            }
+        };
+
+        let mut visible_logical_lines = vec![curr_logical_line.clone()];
+
+        while let Some(next_logical_line) = doc.next_visible_logical_line(&curr_logical_line) {
+            visible_logical_lines.push(next_logical_line.clone());
+            curr_logical_line = next_logical_line;
+        }
+
+        visible_logical_lines
+    }
+
     pub fn dump(doc: &SexpDocument) -> String {
         let logical_lines = logical_lines(doc);
         crate::sexp::layout::tests::show_logical_lines(&doc.core, logical_lines)
+    }
+
+    pub fn dump_visible(doc: &SexpDocument) -> String {
+        let visible_logical_lines = visible_logical_lines(doc);
+        crate::sexp::layout::tests::show_logical_lines(&doc.core, visible_logical_lines)
     }
 
     pub fn dump_with_byte_indexes(doc: &SexpDocument) -> String {
@@ -1722,6 +1925,8 @@ mod tests {
         LeftNoCollapse,
         FirstSibling,
         LastSibling,
+        NextIndentationChange,
+        PrevIndentationChange,
         FocusBottom,
         Collapse(Option<usize>),
         Expand(Option<usize>),
@@ -1743,6 +1948,12 @@ mod tests {
                 LeftNoCollapse => self.move_cursor_left_or_up_without_collapsing(&current_cursor),
                 FirstSibling => self.move_cursor_to_first_sibling(&current_cursor),
                 LastSibling => self.move_cursor_to_last_sibling(&current_cursor),
+                NextIndentationChange => {
+                    self.move_cursor_to_next_indentation_change(&current_cursor)
+                }
+                PrevIndentationChange => {
+                    self.move_cursor_to_prev_indentation_change(&current_cursor)
+                }
                 FocusBottom => self
                     .bottom_screen_line_and_cursor()
                     .map(|(_, cursor)| cursor),
@@ -2303,6 +2514,121 @@ mod tests {
         assert_snapshot!(movements, @r"
         FirstSibling => NodeIndex(0)
         LastSibling =>  NodeIndex(21)
+        ");
+    }
+
+    #[test]
+    fn test_moving_to_next_and_prev_indentation_change() {
+        let mut doc = new_doc(
+            b"(((a (1))(b 2)(c 3))((d 4)(e 6)(f ((g 7)(h ((i 9)(j 10)))(k 11)(l 12)))))((Var 1 2 3)(Bar 4 5 (6)))",
+        );
+        assert_snapshot!(dump(&doc), @r"
+         0..=7  : (((a (1))
+         8..=11 :   (b 2)
+        12..=16 :   (c 3))
+        17..=21 :  ((d 4)
+        22..=25 :   (e 6)
+        26..=28 :   (f (
+        29..=32 :     (g 7)
+        33..=35 :     (h (
+        36..=39 :       (i 9)
+        40..=45 :       (j 10)))
+        46..=49 :     (k 11)
+        50..=57 :     (l 12)))))
+        58..=60 : ((Var
+        61..=61 :    1
+        62..=62 :    2
+        63..=64 :    3)
+        65..=66 :  (Bar
+        67..=67 :    4
+        68..=68 :    5
+        69..=73 :    (6)))
+        ");
+
+        fn show_all_indentation_changes(doc: &mut SexpDocument) -> String {
+            let mut s = String::new();
+            let mut curr = NodeIndex(0);
+
+            while let Some(next) = doc.move_cursor_to_next_indentation_change(&curr) {
+                writeln!(s, "{next:?}");
+                curr = next;
+            }
+
+            writeln!(s, "<end>");
+
+            while let Some(prev) = doc.move_cursor_to_prev_indentation_change(&curr) {
+                writeln!(s, "{prev:?}");
+                curr = prev;
+            }
+
+            s
+        }
+
+        assert_snapshot!(doc.is_logically_the_first_elem_in_list(NodeIndex(67)), @"true");
+
+        assert_snapshot!(show_all_indentation_changes(&mut doc), @r"
+        NodeIndex(2)
+        NodeIndex(17)
+        NodeIndex(18)
+        NodeIndex(26)
+        NodeIndex(29)
+        NodeIndex(33)
+        NodeIndex(36)
+        NodeIndex(46)
+        NodeIndex(58)
+        NodeIndex(61)
+        NodeIndex(65)
+        NodeIndex(67)
+        NodeIndex(69)
+        <end>
+        NodeIndex(67)
+        NodeIndex(65)
+        NodeIndex(61)
+        NodeIndex(58)
+        NodeIndex(46)
+        NodeIndex(36)
+        NodeIndex(33)
+        NodeIndex(29)
+        NodeIndex(26)
+        NodeIndex(18)
+        NodeIndex(17)
+        NodeIndex(2)
+        NodeIndex(0)
+        ");
+
+        let movements = show_cursor_movements(&mut doc, NodeIndex(5), vec![NextIndentationChange]);
+        // Starting at the (1) doesn't take us backwards.
+        assert_snapshot!(movements, @"NextIndentationChange => NodeIndex(17)");
+
+        // Check movements past collapsed nodes
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(1));
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(26));
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(59));
+        doc.collapse_or_move_cursor_left_or_up(&NodeIndex(65));
+
+        assert_snapshot!(dump_visible(&doc), @r"
+         0..=7  : (((a (1))
+        17..=21 :  ((d 4)
+        22..=25 :   (e 6)
+        26..=28 :   (f (
+        58..=60 : ((Var
+        65..=66 :  (Bar
+        ");
+
+        assert_snapshot!(show_all_indentation_changes(&mut doc), @r"
+        NodeIndex(1)
+        NodeIndex(17)
+        NodeIndex(18)
+        NodeIndex(58)
+        NodeIndex(59)
+        NodeIndex(65)
+        <end>
+        NodeIndex(59)
+        NodeIndex(58)
+        NodeIndex(18)
+        NodeIndex(17)
+        NodeIndex(1)
+        NodeIndex(0)
         ");
     }
 

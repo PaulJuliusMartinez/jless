@@ -398,6 +398,38 @@ impl<D: Document> DocumentViewer<D> {
         }
     }
 
+    fn move_cursor_to_next_indentation_change(&mut self, mut n: usize) {
+        while n > 0 {
+            let Some(new_cursor) = self
+                .doc
+                .move_cursor_to_next_indentation_change(&self.current_focus)
+            else {
+                break;
+            };
+
+            n -= 1;
+            self.current_focus = new_cursor;
+        }
+
+        self.update_so_current_focus_is_visible();
+    }
+
+    fn move_cursor_to_prev_indentation_change(&mut self, mut n: usize) {
+        while n > 0 {
+            let Some(new_cursor) = self
+                .doc
+                .move_cursor_to_prev_indentation_change(&self.current_focus)
+            else {
+                break;
+            };
+
+            n -= 1;
+            self.current_focus = new_cursor;
+        }
+
+        self.update_so_current_focus_is_visible();
+    }
+
     fn focus_top(&mut self) {
         let (top_screen_line, cursor) = self
             .doc
@@ -1323,6 +1355,12 @@ impl<D: Document> DocumentViewer<D> {
             }
             Action::MoveCursorToFirstSibling => self.move_cursor_to_first_sibling(),
             Action::MoveCursorToLastSibling => self.move_cursor_to_last_sibling(),
+            Action::MoveCursorToNextIndentationChange(n) => {
+                self.move_cursor_to_next_indentation_change(n)
+            }
+            Action::MoveCursorToPrevIndentationChange(n) => {
+                self.move_cursor_to_prev_indentation_change(n)
+            }
             Action::CollapseNodeAndSiblings(depth) => self.collapse_node_and_siblings(depth),
             Action::ExpandNodeAndSiblings(depth) => self.expand_node_and_siblings(depth),
             Action::ScrollViewportDown(n) => self.scroll_viewport_down(n),

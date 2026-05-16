@@ -508,11 +508,19 @@ impl Document for TextDocument {
         None
     }
 
-    fn move_cursor_to_first_sibling(&mut self, _cursor: &Self::Cursor) -> Option<Self::Cursor> {
+    fn move_cursor_to_first_sibling(&mut self, _cursor: &Cursor) -> Option<Cursor> {
         None
     }
 
-    fn move_cursor_to_last_sibling(&mut self, _cursor: &Self::Cursor) -> Option<Self::Cursor> {
+    fn move_cursor_to_last_sibling(&mut self, _cursor: &Cursor) -> Option<Cursor> {
+        None
+    }
+
+    fn move_cursor_to_next_indentation_change(&mut self, _cursor: &Cursor) -> Option<Cursor> {
+        None
+    }
+
+    fn move_cursor_to_prev_indentation_change(&mut self, _cursor: &Cursor) -> Option<Cursor> {
         None
     }
 
