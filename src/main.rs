@@ -247,7 +247,7 @@ fn parse_args(mut args: &[OsString]) -> Option<&OsString> {
     if interpret_args {
         for arg in args.iter() {
             if HELP_ARGS.iter().any(|help| arg == help) {
-                eprintln!("sless is command-line sexp viewer");
+                eprintln!("sless is a command-line sexp viewer");
                 usage();
                 exit(0);
             }
