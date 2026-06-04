@@ -301,8 +301,13 @@ lazy_static::lazy_static! {
       [0-9]{2} # Minute
       :
       [0-9]{2} # Second
-      \.       # Decimal
-      [0-9]{9} # ns
+      # Optional decimal seconds
+      (
+          \.          # Decimal
+          [0-9]{3}    # ms
+          ([0-9]{3})? # Optional us
+          ([0-9]{3})? # Optional ns
+      )?
       # Optional timezone
       ( Z                      # UTC
       | (\+|-)[0-9]{2}:[0-9]{2} # Offset
@@ -1344,6 +1349,21 @@ mod tests {
         8   65..75   <7  ^ 0[7 ]  9> Atom(Date)               : "2021-07-20"
         9   76..94   <8  ^ 0[8 ] --> Atom(Time)               : "22:42:32.000000000"
         10  94..95   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        // Time atoms can have exactly 0, 3, 6, or 9 decimals.
+        let doc = dump(br#"(09:30:00 12:59:59.1234 16:00:00.000 20:00:00.000000)"#);
+
+        assert_snapshot!(&doc, @r#"
+        Raw document:
+        (09:30:00 12:59:59.1234 16:00:00.000 20:00:00.000000)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..9     <-- ^ 0[0 ]  2> Atom(Time)               : "09:30:00"
+        2   10..23   <1  ^ 0[1 ]  3> Atom(Plain)              : "12:59:59.1234"
+        3   24..36   <2  ^ 0[2 ]  4> Atom(Time)               : "16:00:00.000"
+        4   37..52   <3  ^ 0[3 ] --> Atom(Time)               : "20:00:00.000000"
+        5   52..53   <-- ^--[--] --> EndOfList                : ")"
         "#);
     }
 
