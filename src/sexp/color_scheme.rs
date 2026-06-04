@@ -81,13 +81,13 @@ impl Default for ColorScheme {
                 AnsiColor::BrightMagenta,
             )),
             bool_atom: inverted_for_focus_with_default_search_match(Attrs::from_ansi_fg(
-                AnsiColor::BrightYellow,
+                AnsiColor::Yellow,
             )),
             date_atom: inverted_for_focus_with_default_search_match(Attrs::from_ansi_fg(
-                AnsiColor::BrightMagenta,
+                AnsiColor::Cyan,
             )),
             time_atom: inverted_for_focus_with_default_search_match(Attrs::from_ansi_fg(
-                AnsiColor::BrightMagenta,
+                AnsiColor::Cyan,
             )),
 
             comment: TokenColorScheme {
