@@ -784,7 +784,7 @@ pub mod tests {
         assert_snapshot!(&output, @r##"
         0..=1  : (Variant
         2..=2  :   1
-        3..=3  :   ERR: Saw unexpected ')' after sexp comment "#;"
+        3..=3  :   ERR: Saw unexpected ')' while sexp comment "#;" pending
         4..=4  : )
         "##);
 

@@ -32,8 +32,15 @@ impl PrettyPrinted {
         }
     }
 
-    pub fn start_list(&mut self) -> Range<usize> {
+    fn maybe_write_sexp_comment(&mut self, write_comment: bool) {
+        if write_comment {
+            self.data.extend(b"#; ");
+        }
+    }
+
+    pub fn start_list(&mut self, commented_out: bool) -> Range<usize> {
         self.maybe_write_whitespace();
+        self.maybe_write_sexp_comment(commented_out);
 
         let start = self.data.len();
         let end = start + 1;
@@ -54,8 +61,9 @@ impl PrettyPrinted {
         start..end
     }
 
-    pub fn write_atom(&mut self, atom: &AtomData) -> Range<usize> {
+    pub fn write_atom(&mut self, atom: &AtomData, commented_out: bool) -> Range<usize> {
         self.maybe_write_whitespace();
+        self.maybe_write_sexp_comment(commented_out);
 
         let start = self.data.len();
 
@@ -68,8 +76,9 @@ impl PrettyPrinted {
         start..end
     }
 
-    pub fn write_malformed_atom(&mut self, bytes: &[u8]) -> Range<usize> {
+    pub fn write_malformed_atom(&mut self, bytes: &[u8], commented_out: bool) -> Range<usize> {
         self.maybe_write_whitespace();
+        self.maybe_write_sexp_comment(commented_out);
 
         let start = self.data.len();
         let end = start + bytes.len();
@@ -103,13 +112,6 @@ impl PrettyPrinted {
         self.space_before_next_node = true;
 
         start..end
-    }
-
-    pub fn write_sexp_comment(&mut self) {
-        self.maybe_write_whitespace();
-
-        self.data.extend(b"#;");
-        self.space_before_next_node = true;
     }
 
     pub fn complete_top_level_node(&mut self) {

@@ -100,7 +100,22 @@ pub struct DocCore {
 
     // Parsing state
     starts_of_unterminated_lists: Vec<NodeIndex>,
-    num_pending_sexp_comments: usize,
+    // Sexp comments can stack (e.g. "#; #; a b" comments out both "a" and "b"), but
+    // also only apply at a certain depth:
+    //
+    //         (  4          5
+    // $ echo "#; #; (1 2 3) #; 4 5 6" | sexp print
+    // 6
+    //
+    //         (     2       4
+    // $ echo "#; (1 #; 2 3) #; 4 5 6" | sexp print
+    // 5
+    // 6
+    //
+    // To handle this correctly, we track the depth (= starts_of_unterminated_lists.len())
+    // we saw each sexp comment at, and then only apply it to nodes at that depth. When we
+    // pop a list, and there are unused comments at that depth, it's an error.
+    depths_of_pending_sexp_comments: Vec<usize>,
     scratch_buffer_for_unescaping_atoms: Vec<u8>,
 }
 
@@ -113,6 +128,8 @@ pub struct DocumentNode {
     /// Only set for atoms and the start of lists. Indicates the index of the node
     /// in the parent (or amongst all top-level nodes) if comments are ignored.
     pub data_index_in_parent: Option<usize>,
+    // For tokens that are sexp-commented out (e.g., "#; atom"), this does _not_
+    // include the range of the preceding "#; ". For that, call `sexp_comment_range`.
     pub data_range: Range<usize>,
     pub token: DocumentToken,
 }
@@ -404,7 +421,7 @@ impl DocCore {
             num_top_level_data_nodes: 0,
             error_indexes: vec![],
             starts_of_unterminated_lists: vec![],
-            num_pending_sexp_comments: 0,
+            depths_of_pending_sexp_comments: vec![],
             scratch_buffer_for_unescaping_atoms: vec![],
         }
     }
@@ -618,7 +635,7 @@ impl DocCore {
                     .write_block_comment(block_comment.bytes());
                 let _ = self.push_new_document_node(DocumentToken::BlockComment, data_range);
             }
-            RawToken::SexpComment => self.add_sexp_comment(),
+            RawToken::SexpComment => self.track_sexp_comment(),
         }
     }
 
@@ -631,11 +648,11 @@ impl DocCore {
     pub fn append_eof(&mut self) {
         // We just have to check for errors here, pending sexp comments and unterminated lists.
 
-        if self.num_pending_sexp_comments > 0 {
-            self.num_pending_sexp_comments = 0;
+        if !self.depths_of_pending_sexp_comments.is_empty() {
+            self.depths_of_pending_sexp_comments.clear();
 
             self.push_new_error_node(ErrorMetadata {
-                message: "Unexpected EOF after sexp comment \"#;\"".to_string(),
+                message: "Unexpected EOF while sexp comment \"#;\" pending".to_string(),
             });
         }
 
@@ -655,16 +672,17 @@ impl DocCore {
     }
 
     fn start_new_list(&mut self) {
+        let commented_out = self.consume_pending_sexp_comment();
         let list_metadata = ListMetadata {
             list_kind: ListKind::Plain,
             last_child_index: OptNodeIndex::NONE,
             list_end_index: OptNodeIndex::NONE,
-            commented_out: self.consume_pending_sexp_comment(),
+            commented_out,
             data_length: 0,
             contains_non_data: false,
         };
 
-        let data_range = self.pretty_printed.start_list();
+        let data_range = self.pretty_printed.start_list(commented_out);
         let new_node_index =
             self.push_new_document_node(DocumentToken::StartOfList(list_metadata), data_range);
 
@@ -672,14 +690,25 @@ impl DocCore {
     }
 
     fn complete_list(&mut self) {
-        if self.num_pending_sexp_comments > 0 {
-            // We didn't see a another list or an atom after a sexp-comment. We'll
-            // clear it back to 0 to prevent further problems.
-            self.num_pending_sexp_comments = 0;
+        let mut num_unused_sexp_comments = 0;
+        let current_depth = self.starts_of_unterminated_lists.len();
+        while let Some(depth) = self.depths_of_pending_sexp_comments.last() {
+            if *depth >= current_depth {
+                self.depths_of_pending_sexp_comments.pop();
+                num_unused_sexp_comments += 1;
+            } else {
+                break;
+            }
+        }
 
-            self.push_new_error_node(ErrorMetadata {
-                message: "Saw unexpected ')' after sexp comment \"#;\"".to_string(),
-            });
+        if num_unused_sexp_comments > 0 {
+            let message = if num_unused_sexp_comments == 1 {
+                format!("Saw unexpected ')' while sexp comment \"#;\" pending")
+            } else {
+                format!("Saw unexpected ')' while {num_unused_sexp_comments} sexp comments \"#;\" pending")
+            };
+
+            self.push_new_error_node(ErrorMetadata { message });
         }
 
         let Some(list_start_index) = self.starts_of_unterminated_lists.pop() else {
@@ -870,6 +899,8 @@ impl DocCore {
     }
 
     fn add_atom(&mut self, serialized_atom: Ref<'_, '_, PlausibleSerializedAtom>) {
+        let commented_out = self.consume_pending_sexp_comment();
+
         let (atom_kind, atom_data) =
             match serialized_atom.unescape(&mut self.scratch_buffer_for_unescaping_atoms) {
                 Ok(atom_data) => {
@@ -892,10 +923,10 @@ impl DocCore {
             };
 
         let data_range = if let Some(atom_data) = atom_data {
-            self.pretty_printed.write_atom(atom_data)
+            self.pretty_printed.write_atom(atom_data, commented_out)
         } else {
             self.pretty_printed
-                .write_malformed_atom(serialized_atom.bytes())
+                .write_malformed_atom(serialized_atom.bytes(), commented_out)
         };
 
         let quoted = matches!(&self.pretty_printed.data()[data_range.start], &b'"');
@@ -903,7 +934,7 @@ impl DocCore {
 
         let atom_metadata = AtomMetadata {
             atom_kind,
-            commented_out: self.consume_pending_sexp_comment(),
+            commented_out,
             quoted,
             valid,
         };
@@ -931,18 +962,24 @@ impl DocCore {
         }
     }
 
-    fn add_sexp_comment(&mut self) {
-        self.num_pending_sexp_comments += 1;
-        self.pretty_printed.write_sexp_comment();
+    fn track_sexp_comment(&mut self) {
+        let current_depth = self.starts_of_unterminated_lists.len();
+        self.depths_of_pending_sexp_comments.push(current_depth);
     }
 
     // Returns true if it did consume a pending sexp comment.
     fn consume_pending_sexp_comment(&mut self) -> bool {
-        if self.num_pending_sexp_comments == 0 {
-            false
-        } else {
-            self.num_pending_sexp_comments -= 1;
-            true
+        let current_depth = self.starts_of_unterminated_lists.len();
+        match self.depths_of_pending_sexp_comments.last() {
+            None => false,
+            Some(depth) => {
+                if *depth == current_depth {
+                    self.depths_of_pending_sexp_comments.pop();
+                    true
+                } else {
+                    false
+                }
+            }
         }
     }
 
@@ -1331,6 +1368,27 @@ mod tests {
     }
 
     #[test]
+    fn test_normalize_sexp_comment_locations() {
+        let doc = dump(br#"#; #; (1 #; 2 3) #; 4 5 6"#);
+        assert_snapshot!(&doc, @r#"
+        Raw document:
+        #; (1 #; 2 3)
+        #; 4
+        #; 5
+        6
+
+        0   3..4     <-- ^--[#;]  5> StartOfList(Plain)       : "("
+        1   4..5     <-- ^ 0[0 ]  2> Atom(Number)             : "1"
+        2   9..10    <1  ^ 0[#;]  3> Atom(Number)             : "2"
+        3   11..12   <2  ^ 0[1 ] --> Atom(Number)             : "3"
+        4   12..13   <-- ^--[--] --> EndOfList                : ")"
+        5   17..18   <0  ^--[#;]  6> Atom(Number)             : "4"
+        6   22..23   <5  ^--[#;]  7> Atom(Number)             : "5"
+        7   24..25   <6  ^--[3 ] --> Atom(Number)             : "6"
+        "#);
+    }
+
+    #[test]
     fn test_basic_atom_classification() {
         let doc = dump(br#"("Atom Kinds:" Constructor record_key 123_456 7.89e10 true false 2021-07-20 22:42:32.000000000)"#);
 
@@ -1500,15 +1558,15 @@ mod tests {
         Raw document:
         ()
         (#| one |#)
-        (#;)
+        ()
 
         0   0..2     <-- ^--[0 ]  1> Unit                     : "()"
         1   3..4     <0  ^--[1 ]  4> StartOfList(Plain)       : "("
         2   4..13    <-- ^ 1[--] --> BlockComment             : "#| one |#"
         3   13..14   <0  ^--[--] --> EndOfList                : ")"
         4   15..16   <1  ^--[2 ] --> StartOfList(Plain)       : "("
-        5   18..18   <-- ^ 4[--] --> Error: Saw unexpected ')' after sexp comment "#;"
-        6   18..19   <1  ^--[--] --> EndOfList                : ")"
+        5   16..16   <-- ^ 4[--] --> Error: Saw unexpected ')' while sexp comment "#;" pending
+        6   16..17   <1  ^--[--] --> EndOfList                : ")"
         "##);
     }
 
@@ -1527,36 +1585,35 @@ mod tests {
         assert_snapshot!(pending_sexp_comment_at_eof, @r##"
         Raw document:
         a
-        #;
 
         0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
-        1   4..4     <0  ^--[--] --> Error: Unexpected EOF after sexp comment "#;"
+        1   1..1     <0  ^--[--] --> Error: Unexpected EOF while sexp comment "#;" pending
         "##);
 
         let pending_sexp_comment_in_list_at_eof = dump(b"a (#;");
         assert_snapshot!(pending_sexp_comment_in_list_at_eof, @r##"
         Raw document:
         a
-        (#;
+        (
 
         0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
         1   2..3     <0  ^--[1 ] --> StartOfList(Plain)       : "("
-        2   5..5     <-- ^ 1[--]  3> Error: Unexpected EOF after sexp comment "#;"
-        3   5..5     <2  ^ 1[--] --> Error: Unexpected EOF while parsing list
-        4   5..5     <0  ^--[--] --> EndOfList                : ""
+        2   3..3     <-- ^ 1[--]  3> Error: Unexpected EOF while sexp comment "#;" pending
+        3   3..3     <2  ^ 1[--] --> Error: Unexpected EOF while parsing list
+        4   3..3     <0  ^--[--] --> EndOfList                : ""
         "##);
 
         let pending_sexp_comment_at_end_of_list = dump(b"a (1 #;)");
         assert_snapshot!(pending_sexp_comment_at_end_of_list, @r##"
         Raw document:
         a
-        (1 #;)
+        (1)
 
         0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
         1   2..3     <0  ^--[1 ] --> StartOfList(Plain)       : "("
         2   3..4     <-- ^ 1[0 ]  3> Atom(Number)             : "1"
-        3   7..7     <2  ^ 1[--] --> Error: Saw unexpected ')' after sexp comment "#;"
-        4   7..8     <0  ^--[--] --> EndOfList                : ")"
+        3   4..4     <2  ^ 1[--] --> Error: Saw unexpected ')' while sexp comment "#;" pending
+        4   4..5     <0  ^--[--] --> EndOfList                : ")"
         "##);
 
         let invalid_atom_escape = dump(br#""\xGG""#);
