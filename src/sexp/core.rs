@@ -148,6 +148,15 @@ impl DocumentNode {
     pub fn next_sibling(&self) -> Option<NodeIndex> {
         self.next_sibling.to_option()
     }
+
+    pub fn sexp_comment_range(&self) -> Option<Range<usize>> {
+        if self.token.is_sexp_commented_out() {
+            let data_start = self.data_range.start;
+            Some((data_start - 3)..data_start)
+        } else {
+            None
+        }
+    }
 }
 
 #[cfg_attr(test, derive(Serialize))]

@@ -147,12 +147,17 @@ impl<'a> Typesetter<'a> {
 
             prev_node_end_index = Some(node.data_range.end);
 
+            if let Some(sexp_comment_range) = node.sexp_comment_range() {
+                let content = Text::SourceRange(sexp_comment_range);
+                self.compositor
+                    .append_content(content, SegmentKind::Parens, Some(node_index));
+            }
+
             let segment_kind;
             let mut content = Text::SourceRange(node.data_range.clone());
 
             match &node.token {
                 DocumentToken::StartOfList(list_metadata) => {
-                    // Check if commented out
                     if let Some(CollapseState::Collapsed) = self.collapsible_nodes.get(&node_index)
                     {
                         collapsed_start_and_end = Some((node_index, list_metadata.end_index()));
@@ -166,13 +171,11 @@ impl<'a> Typesetter<'a> {
                 }
                 DocumentToken::Atom(atom_metadata) => {
                     segment_kind = SegmentKind::for_atom_kind(atom_metadata.atom_kind);
-                    // Check if commented out
                 }
                 DocumentToken::Unit {
-                    sexp_commented_out: _,
+                    sexp_commented_out: _handled_above,
                 } => {
                     segment_kind = SegmentKind::Parens;
-                    // Check if commented out
                 }
                 DocumentToken::LineComment | DocumentToken::BlockComment => {
                     segment_kind = SegmentKind::Comment;
@@ -307,8 +310,8 @@ impl<'a> Typesetter<'a> {
         while let Some(elem_index) = next_elem {
             let node = self.core.node(elem_index);
 
-            // Skip comments and errors.
-            if !node.token.is_data() {
+            // Skip line/block comments, errors and sexp comments.
+            if !node.token.is_data() || node.token.is_sexp_commented_out() {
                 next_elem = node.next_sibling();
                 continue;
             }
