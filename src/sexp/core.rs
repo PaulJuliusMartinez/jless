@@ -154,7 +154,7 @@ pub enum DocumentToken {
     StartOfList(ListMetadata),
     EndOfList(EndOfListMetadata),
     Atom(AtomMetadata),
-    Unit { commented_out: bool },
+    Unit { sexp_commented_out: bool },
     LineComment,
     BlockComment,
     Error(ErrorMetadata),
@@ -168,11 +168,15 @@ impl DocumentToken {
         )
     }
 
-    fn is_commented_out(&self) -> bool {
+    pub fn is_sexp_commented_out(&self) -> bool {
         match self {
-            DocumentToken::StartOfList(ListMetadata { commented_out, .. })
-            | DocumentToken::Atom(AtomMetadata { commented_out, .. })
-            | DocumentToken::Unit { commented_out } => *commented_out,
+            DocumentToken::StartOfList(ListMetadata {
+                sexp_commented_out, ..
+            })
+            | DocumentToken::Atom(AtomMetadata {
+                sexp_commented_out, ..
+            })
+            | DocumentToken::Unit { sexp_commented_out } => *sexp_commented_out,
             _ => false,
         }
     }
@@ -229,7 +233,7 @@ pub struct ListMetadata {
     // first_child_index is just our own index + 1.
     last_child_index: OptNodeIndex,
     list_end_index: OptNodeIndex,
-    commented_out: bool,
+    sexp_commented_out: bool,
     data_length: usize,
     contains_non_data: bool,
 }
@@ -254,7 +258,7 @@ impl ListMetadata {
 #[derive(Debug)]
 pub struct AtomMetadata {
     pub atom_kind: AtomKind,
-    commented_out: bool,
+    sexp_commented_out: bool,
     quoted: bool,
     valid: bool,
     // printable_ascii: bool,
@@ -376,10 +380,16 @@ pub mod invariants {
     pub fn record_keys_are_the_first_child_of_record_fields() {}
 
     #[inline(always)]
-    pub fn variants_have_at_least_one_argument() {}
+    pub fn record_fields_do_not_contain_commented_out_sexps() {}
+
+    #[inline(always)]
+    pub fn variants_have_at_least_one_non_sexp_commented_out_argument() {}
 
     #[inline(always)]
     pub fn record_keys_always_match_record_key_regex() {}
+
+    #[inline(always)]
+    pub fn singleton_values_are_not_commented_out_sexps() {}
 }
 
 #[cfg_attr(test, derive(Serialize))]
@@ -509,7 +519,7 @@ impl DocCore {
                 // `complete_top_level_node`.
                 prev_sibling = None;
 
-                data_index_in_parent = if token.is_data() && !token.is_commented_out() {
+                data_index_in_parent = if token.is_data() && !token.is_sexp_commented_out() {
                     let index = self.num_top_level_data_nodes;
                     Some(index)
                 } else {
@@ -527,7 +537,7 @@ impl DocCore {
                 prev_sibling = parent_metadata.last_child_index.to_option();
                 parent_metadata.last_child_index = Some(new_node_index).into();
 
-                data_index_in_parent = if token.is_data() && !token.is_commented_out() {
+                data_index_in_parent = if token.is_data() && !token.is_sexp_commented_out() {
                     let index = parent_metadata.data_length;
                     parent_metadata.data_length += 1;
                     Some(index)
@@ -672,17 +682,17 @@ impl DocCore {
     }
 
     fn start_new_list(&mut self) {
-        let commented_out = self.consume_pending_sexp_comment();
+        let sexp_commented_out = self.consume_pending_sexp_comment();
         let list_metadata = ListMetadata {
             list_kind: ListKind::Plain,
             last_child_index: OptNodeIndex::NONE,
             list_end_index: OptNodeIndex::NONE,
-            commented_out,
+            sexp_commented_out,
             data_length: 0,
             contains_non_data: false,
         };
 
-        let data_range = self.pretty_printed.start_list(commented_out);
+        let data_range = self.pretty_printed.start_list(sexp_commented_out);
         let new_node_index =
             self.push_new_document_node(DocumentToken::StartOfList(list_metadata), data_range);
 
@@ -725,9 +735,9 @@ impl DocCore {
 
         if list_metadata.last_child_index.is_none() {
             // If no data in previous list, replace it with `Unit`, instead of an actual list.
-            let commented_out = list_metadata.commented_out;
+            let sexp_commented_out = list_metadata.sexp_commented_out;
             let curr_node = &mut self.all_nodes[list_start_index.0];
-            curr_node.token = DocumentToken::Unit { commented_out };
+            curr_node.token = DocumentToken::Unit { sexp_commented_out };
 
             let unit_start = self.pretty_printed.len() - 1;
             let _end_list_range = self.pretty_printed.end_list();
@@ -783,7 +793,7 @@ impl DocCore {
 
     fn analyze_list(&self, list_start_index: NodeIndex) -> ListKind {
         let mut first_elem_atom_kind = None;
-        let mut first_elem_list_kind = None;
+        let mut first_elem_is_record_field = false;
         let mut second_elem_atom_kind = None;
         let mut all_elems_after_first_are_record_fields = true;
         let mut all_elems_are_constructors = true;
@@ -820,10 +830,9 @@ impl DocCore {
             // fields we use to identify certain structures, but including them
             // when considering aggregate info.
 
-            if !node.token.is_commented_out() {
+            if !node.token.is_sexp_commented_out() {
                 if list_length_including_commented_out_sexps == 0 {
                     first_elem_atom_kind = atom_kind;
-                    first_elem_list_kind = node.token.list_kind();
                 }
 
                 if list_length_including_commented_out_sexps == 1 {
@@ -839,7 +848,12 @@ impl DocCore {
             all_elems_are_constructors =
                 all_elems_are_constructors && matches!(atom_kind, Some(AtomKind::Constructor));
 
-            if list_length_including_commented_out_sexps > 0 {
+            // To check for record and record variants, we separately track whether the first
+            // element is a record, and whether everything after it is.
+            if list_length_including_commented_out_sexps == 0 {
+                first_elem_is_record_field =
+                    matches!(node.token.list_kind(), Some(ListKind::RecordField));
+            } else {
                 all_elems_after_first_are_record_fields = all_elems_after_first_are_record_fields
                     && matches!(node.token.list_kind(), Some(ListKind::RecordField));
             }
@@ -849,8 +863,6 @@ impl DocCore {
 
         let first_elem_is_constructor = matches!(first_elem_atom_kind, Some(AtomKind::Constructor));
         let first_elem_is_record_key = matches!(first_elem_atom_kind, Some(AtomKind::RecordKey));
-        let first_elem_is_record_field =
-            matches!(first_elem_list_kind, Some(ListKind::RecordField));
 
         let first_two_elems_are_date_time = matches!(
             (first_elem_atom_kind, second_elem_atom_kind),
@@ -865,7 +877,7 @@ impl DocCore {
             && list_length_not_including_commented_out_sexps > 1
         {
             invariants::constructors_are_the_first_child_of_variants();
-            invariants::variants_have_at_least_one_argument();
+            invariants::variants_have_at_least_one_non_sexp_commented_out_argument();
             ListKind::VariantRecord
         } else if !list_contains_non_data_before_first_elem
             && first_elem_is_constructor
@@ -873,10 +885,11 @@ impl DocCore {
             && !all_elems_are_constructors
         {
             invariants::constructors_are_the_first_child_of_variants();
-            invariants::variants_have_at_least_one_argument();
+            invariants::variants_have_at_least_one_non_sexp_commented_out_argument();
             ListKind::VariantTuple
         } else if first_two_elems_are_date_time
             && list_length_including_commented_out_sexps == 2
+            && list_length_not_including_commented_out_sexps == 2
             && !list_contains_non_data
         {
             invariants::date_times_have_no_comments_errors_or_commented_out_sexps();
@@ -887,11 +900,13 @@ impl DocCore {
             && list_length_not_including_commented_out_sexps == 2
         {
             invariants::record_keys_are_the_first_child_of_record_fields();
+            invariants::record_fields_do_not_contain_commented_out_sexps();
             ListKind::RecordField
         } else if list_length_including_commented_out_sexps == 1
             && list_length_not_including_commented_out_sexps == 1
             && !list_contains_non_data
         {
+            invariants::singleton_values_are_not_commented_out_sexps();
             ListKind::Singleton
         } else {
             ListKind::Plain
@@ -899,7 +914,7 @@ impl DocCore {
     }
 
     fn add_atom(&mut self, serialized_atom: Ref<'_, '_, PlausibleSerializedAtom>) {
-        let commented_out = self.consume_pending_sexp_comment();
+        let sexp_commented_out = self.consume_pending_sexp_comment();
 
         let (atom_kind, atom_data) =
             match serialized_atom.unescape(&mut self.scratch_buffer_for_unescaping_atoms) {
@@ -923,10 +938,11 @@ impl DocCore {
             };
 
         let data_range = if let Some(atom_data) = atom_data {
-            self.pretty_printed.write_atom(atom_data, commented_out)
+            self.pretty_printed
+                .write_atom(atom_data, sexp_commented_out)
         } else {
             self.pretty_printed
-                .write_malformed_atom(serialized_atom.bytes(), commented_out)
+                .write_malformed_atom(serialized_atom.bytes(), sexp_commented_out)
         };
 
         let quoted = matches!(&self.pretty_printed.data()[data_range.start], &b'"');
@@ -934,7 +950,7 @@ impl DocCore {
 
         let atom_metadata = AtomMetadata {
             atom_kind,
-            commented_out,
+            sexp_commented_out,
             quoted,
             valid,
         };
@@ -1155,7 +1171,7 @@ mod tests {
         assert_snapshot!(mem::offset_of!(ListMetadata, list_kind), @"24");
         assert_snapshot!(mem::offset_of!(ListMetadata, last_child_index), @"0");
         assert_snapshot!(mem::offset_of!(ListMetadata, list_end_index), @"8");
-        assert_snapshot!(mem::offset_of!(ListMetadata, commented_out), @"25");
+        assert_snapshot!(mem::offset_of!(ListMetadata, sexp_commented_out), @"25");
         assert_snapshot!(mem::offset_of!(ListMetadata, data_length), @"16");
         assert_snapshot!(mem::offset_of!(ListMetadata, contains_non_data), @"26");
     }
@@ -1196,7 +1212,7 @@ mod tests {
                 output,
                 "^{:>2}[{:<2}] ",
                 fmt_i(parent_index.map(|i| i.0)),
-                if token.is_commented_out() {
+                if token.is_sexp_commented_out() {
                     assert!(data_index_in_parent.is_none());
                     "#;".to_string()
                 } else {

@@ -168,7 +168,9 @@ impl<'a> Typesetter<'a> {
                     segment_kind = SegmentKind::for_atom_kind(atom_metadata.atom_kind);
                     // Check if commented out
                 }
-                DocumentToken::Unit { commented_out: _ } => {
+                DocumentToken::Unit {
+                    sexp_commented_out: _,
+                } => {
                     segment_kind = SegmentKind::Parens;
                     // Check if commented out
                 }
@@ -418,8 +420,10 @@ impl<'a> Typesetter<'a> {
                     }
                 }
             }
-            DocumentToken::Unit { commented_out: _ } => {
-                // TODO: Handle commented_out
+            DocumentToken::Unit {
+                sexp_commented_out: _,
+            } => {
+                // TODO: Handle sexp_commented_out
 
                 if !self.compositor.reserve_more_space(1) {
                     return false;

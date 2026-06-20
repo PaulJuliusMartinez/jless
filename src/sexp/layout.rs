@@ -214,10 +214,23 @@ impl<'a> LayoutEngine<'a> {
         use SemanticTokenKind as STK;
 
         while self.next_index <= self.end_index_incl {
-            let next_token_kind = STK::from_document_token(self.next_token());
+            let (next_token_kind, is_sexp_commented_out) = {
+                let next_token = self.next_token();
+                (
+                    STK::from_document_token(next_token),
+                    next_token.is_sexp_commented_out(),
+                )
+            };
 
             match self.layout_state {
                 LayoutState::StartOfLine { leading_parens } => {
+                    let extra_indentation_due_to_sexp_comment =
+                        if is_sexp_commented_out { 3 } else { 0 };
+                    let elem_indentation = self.current_line_indentation
+                        + extra_indentation_due_to_sexp_comment
+                        + leading_parens
+                        + 1;
+
                     match next_token_kind {
                         STK::AtomLike => {
                             self.put_atom_like_on_current_line();
@@ -246,9 +259,7 @@ impl<'a> LayoutEngine<'a> {
                             if leading_parens > 2 {
                                 self.end_line_and_reset_to_default_state();
                             } else {
-                                self.put_opening_paren_on_current_line(
-                                    self.current_line_indentation + leading_parens + 1,
-                                );
+                                self.put_opening_paren_on_current_line(elem_indentation);
                                 self.layout_state = LayoutState::ExpectingRecordFieldKey;
                             }
                         }
@@ -256,9 +267,7 @@ impl<'a> LayoutEngine<'a> {
                             if leading_parens > 2 {
                                 self.end_line_and_reset_to_default_state();
                             } else {
-                                self.put_opening_paren_on_current_line(
-                                    self.current_line_indentation + leading_parens + 1,
-                                );
+                                self.put_opening_paren_on_current_line(elem_indentation);
                                 self.layout_state = LayoutState::ExpectingVariantConstructor;
                             }
                         }
@@ -266,17 +275,19 @@ impl<'a> LayoutEngine<'a> {
                             if leading_parens >= 2 {
                                 self.end_line_and_reset_to_default_state();
                             } else {
-                                self.put_opening_paren_on_current_line(
-                                    self.current_line_indentation + leading_parens + 1,
-                                );
+                                self.put_opening_paren_on_current_line(elem_indentation);
                                 self.layout_state = LayoutState::StartOfLine {
                                     leading_parens: leading_parens + 1,
                                 };
                             }
                         }
                         STK::Singleton => {
+                            let extra_indentation = usize::min(
+                                leading_parens + 1 + extra_indentation_due_to_sexp_comment,
+                                2 + extra_indentation_due_to_sexp_comment,
+                            );
                             self.put_opening_paren_on_current_line(
-                                self.current_line_indentation + usize::min(leading_parens + 1, 2),
+                                self.current_line_indentation + extra_indentation,
                             );
                             self.layout_state = LayoutState::StartOfLine {
                                 leading_parens: leading_parens + 1,
@@ -291,23 +302,31 @@ impl<'a> LayoutEngine<'a> {
                         }
                     }
                 }
-                LayoutState::ExpectingRecordFieldKey => match next_token_kind {
-                    STK::AtomLike => {
-                        self.put_atom_like_on_current_line();
-                        self.layout_state = LayoutState::ExpectingRecordFieldValue;
+                LayoutState::ExpectingRecordFieldKey => {
+                    invariants::record_fields_do_not_contain_commented_out_sexps();
+                    debug_assert!(!is_sexp_commented_out);
+                    match next_token_kind {
+                        STK::AtomLike => {
+                            self.put_atom_like_on_current_line();
+                            self.layout_state = LayoutState::ExpectingRecordFieldValue;
+                        }
+                        STK::RecordField
+                        | STK::Variant
+                        | STK::Singleton
+                        | STK::List
+                        | STK::EndOfList
+                        | STK::Comment
+                        | STK::Error => {
+                            invariants::record_keys_are_the_first_child_of_record_fields();
+                            panic!(
+                                "Unexpected next token while in state ExpectingVariantConstructor"
+                            );
+                        }
                     }
-                    STK::RecordField
-                    | STK::Variant
-                    | STK::Singleton
-                    | STK::List
-                    | STK::EndOfList
-                    | STK::Comment
-                    | STK::Error => {
-                        invariants::record_keys_are_the_first_child_of_record_fields();
-                        panic!("Unexpected next token while in state ExpectingVariantConstructor");
-                    }
-                },
+                }
                 LayoutState::ExpectingRecordFieldValue => {
+                    invariants::record_fields_do_not_contain_commented_out_sexps();
+                    debug_assert!(!is_sexp_commented_out);
                     match next_token_kind {
                         STK::AtomLike => {
                             self.put_atom_like_on_current_line();
@@ -403,6 +422,8 @@ impl<'a> LayoutEngine<'a> {
                     }
                 }
                 LayoutState::ExpectingSingleVariantTupleValue => {
+                    // If it only has value, it won't be commented out.
+                    invariants::variants_have_at_least_one_non_sexp_commented_out_argument();
                     match next_token_kind {
                         STK::AtomLike => {
                             self.put_atom_like_on_current_line();
@@ -481,7 +502,10 @@ pub mod tests {
             end_index,
         } in lines.into_iter()
         {
-            let start_range = &doc.node(start_index).data_range;
+            let mut start_range = doc.node(start_index).data_range.clone();
+            if doc.node(start_index).token.is_sexp_commented_out() {
+                start_range.start -= 3;
+            }
             let end_range = &doc.node(end_index).data_range;
 
             let _ = write!(output, "{:>2}..={:<2} : ", start_index.0, end_index.0);
@@ -865,6 +889,82 @@ pub mod tests {
          8..=11 :      (a 1)
         12..=18 :      (b 2))))
         19..=25 :    (b 2))))
+        ");
+    }
+
+    #[test]
+    fn layouts_with_commented_out_sexps() {
+        let output = layout(b"#; (1 2 3)");
+        assert_snapshot!(&output, @r"
+        0..=1  : #; (1
+        2..=2  :     2
+        3..=4  :     3)
+        ");
+
+        let output = layout(b"(#; (1 2 3))");
+        assert_snapshot!(&output, @r"
+        0..=2  : (#; (1
+        3..=3  :      2
+        4..=6  :      3))
+        ");
+
+        let output = layout(b"((#; (1 2 3)))");
+        assert_snapshot!(&output, @r"
+        0..=1  : ((
+        2..=3  :   #; (1
+        4..=4  :       2
+        5..=8  :       3)))
+        ");
+
+        let output = layout(b"(((#; (1 2 3))))");
+        assert_snapshot!(&output, @r"
+        0..=1  : ((
+        2..=4  :   (#; (1
+        5..=5  :        2
+        6..=10 :        3))))
+        ");
+
+        let output = layout(b"(#; (1 2 3) #; (4 5 6))");
+        assert_snapshot!(&output, @r"
+        0..=2  : (#; (1
+        3..=3  :      2
+        4..=5  :      3)
+        6..=7  :  #; (4
+        8..=8  :      5
+        9..=11 :      6))
+        ");
+
+        let output = layout(b"#; ((a 1) (b 2))");
+        assert_snapshot!(&output, @r"
+        0..=4  : #; ((a 1)
+        5..=9  :     (b 2))
+        ");
+
+        let output = layout(b"(#; (a 1) #; (b 2) (c 3))");
+        assert_snapshot!(&output, @r"
+        0..=4  : (#; (a 1)
+        5..=8  :  #; (b 2)
+        9..=13 :  (c 3))
+        ");
+
+        let output = layout(b"((a (1 2)) #; (b (3 4)) (c 5))");
+        assert_snapshot!(&output, @r"
+         0..=3  : ((a (
+         4..=4  :    1
+         5..=7  :    2))
+         8..=10 :  #; (b (
+        11..=11 :       3
+        12..=14 :       4))
+        15..=19 :  (c 5))
+        ");
+
+        let output = layout(b"((#; 1))");
+        assert_snapshot!(&output, @" 0..=4  : ((#; 1))");
+
+        let output = layout(b"(((#; 1)))");
+        assert_snapshot!(&output, @r"
+        0..=1  : ((
+        2..=6  :   (#; 1)))
         ");
     }
 
