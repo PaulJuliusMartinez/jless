@@ -126,7 +126,9 @@ pub struct DocumentNode {
     prev_sibling: OptNodeIndex,
     next_sibling: OptNodeIndex,
     /// Only set for atoms and the start of lists. Indicates the index of the node
-    /// in the parent (or amongst all top-level nodes) if comments are ignored.
+    /// in the parent (or amongst all top-level nodes) if line/block comments are
+    /// ignored. This will be None for nodes that have been sexp commented out
+    /// (though it will be set in its children).
     pub data_index_in_parent: Option<usize>,
     // For tokens that are sexp-commented out (e.g., "#; atom"), this does _not_
     // include the range of the preceding "#; ". For that, call `sexp_comment_range`.
@@ -375,6 +377,9 @@ pub mod invariants {
 
     #[inline(always)]
     pub fn constructors_are_the_first_child_of_variants() {}
+
+    #[inline(always)]
+    pub fn variant_constructors_are_not_sexp_commented_out() {}
 
     #[inline(always)]
     pub fn record_keys_are_the_first_child_of_record_fields() {}
@@ -832,6 +837,7 @@ impl DocCore {
 
             if !node.token.is_sexp_commented_out() {
                 if list_length_including_commented_out_sexps == 0 {
+                    invariants::variant_constructors_are_not_sexp_commented_out();
                     first_elem_atom_kind = atom_kind;
                 }
 
@@ -877,6 +883,9 @@ impl DocCore {
             && list_length_not_including_commented_out_sexps > 1
         {
             invariants::constructors_are_the_first_child_of_variants();
+            // first_elem_is_atom_kind would be None if the first elem is commented out, and thus
+            // first_elem_is_constructor would be false.
+            invariants::variant_constructors_are_not_sexp_commented_out();
             invariants::variants_have_at_least_one_non_sexp_commented_out_argument();
             ListKind::VariantRecord
         } else if !list_contains_non_data_before_first_elem
@@ -1073,10 +1082,7 @@ impl DocCore {
         );
 
         if should_write_path_from_parent_to_child {
-            let child_index_in_parent = self
-                .node(child_index)
-                .data_index_in_parent
-                .expect("child_index should be a data node");
+            let child_index_in_parent = self.node(child_index).data_index_in_parent;
 
             let list_kind = self
                 .token(parent_index)
@@ -1085,7 +1091,18 @@ impl DocCore {
 
             let try_field_accessor = match list_kind {
                 ListKind::Record => true,
-                ListKind::VariantRecord if child_index_in_parent != 0 => true,
+                ListKind::VariantRecord => {
+                    match child_index_in_parent {
+                        Some(index) => index != 0,
+                        None => {
+                            // If we don't have a child index, we know we're not the constructor,
+                            // so we can try the field accessor.
+                            invariants::constructors_are_the_first_child_of_variants();
+                            invariants::variant_constructors_are_not_sexp_commented_out();
+                            true
+                        }
+                    }
+                }
                 _ => false,
             };
 
@@ -1101,6 +1118,17 @@ impl DocCore {
                     return false;
                 }
             }
+
+            let child_index_in_parent = match child_index_in_parent {
+                Some(index) => index,
+                None => {
+                    if self.token(child_index).is_sexp_commented_out() {
+                        let _ = write!(buf, ".[_]");
+                        return true;
+                    }
+                    panic!("child_index should be a data node");
+                }
+            };
 
             // Try writing ".Var[1]" for variant tuple access
             if matches!(list_kind, ListKind::VariantTuple) && child_index_in_parent > 0 {
@@ -1762,7 +1790,7 @@ mod tests {
     #[test]
     fn test_sexp_get_style_paths_for_non_data_nodes() {
         let doc = DocCore::from_bytes(
-            b"; comment\n((a 1) #| mid-record |# (b (#| mid-record-field |#))) (err",
+            b"; comment\n((a 1) #| mid-record |# (b (#| mid-record-field |#)) #; (c (x #; (y z)))) (err",
             true,
         );
         assert_snapshot!(layout_and_show_logical_lines(&doc), @r"
@@ -1771,10 +1799,13 @@ mod tests {
          6..=6  :  #| mid-record |#
          7..=9  :  (b (
         10..=10 :    #| mid-record-field |#
-        11..=13 : )))
-        14..=15 : (err
-        16..=16 :  ERR: Unexpected EOF while parsing list
-        17..=17 :
+        11..=12 :  ))
+        13..=15 :  #; (c (
+        16..=16 :       x
+        17..=23 :       #; (y z))))
+        24..=25 : (err
+        26..=26 :  ERR: Unexpected EOF while parsing list
+        27..=27 :
         ");
 
         let path = |i| {
@@ -1794,7 +1825,22 @@ mod tests {
         // Comment in record field
         assert_snapshot!(path(10),  @"[0].b");
 
+        // Comment in record field
+        assert_snapshot!(path(10),  @"[0].b");
+
+        // Path to commented out record field
+        assert_snapshot!(path(13),  @"[0].c");
+
+        // Path to value in commented out record field; still use field name
+        assert_snapshot!(path(16),  @"[0].c.[0]");
+
+        // Path to commented out value in commented out record field
+        assert_snapshot!(path(17),  @"[0].c.[_]");
+
+        // Path to value in commented out list in commented out record field
+        assert_snapshot!(path(18),  @"[0].c.[_].[0]");
+
         // Path to error
-        assert_snapshot!(path(16),  @"[1]");
+        assert_snapshot!(path(24),  @"[1]");
     }
 }
