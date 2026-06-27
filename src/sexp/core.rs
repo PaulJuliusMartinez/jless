@@ -364,13 +364,13 @@ lazy_static::lazy_static! {
       ^
       -?        # Optional negative sign, then
       ( # Regular floating point
-        [0-9][0-9_]*              # Leading digits
-        (.[0-9_]*)?               # Optional decimal
+        [0-9][0-9_]*               # Leading digits
+        (\.[0-9_]*)?               # Optional decimal
         ([eE](\+|-)?[0-9][0-9_]*)? # Optional exponent
       | # Hex floating point
-        0[xX]                     # Leading 0x
-        [0-9A-Fa-f][0-9A-Fa-f_]*  # Leading digits
-        (.[0-9A-Fa-f_]*)?         # Optional decimal
+        0[xX]                      # Leading 0x
+        [0-9A-Fa-f][0-9A-Fa-f_]*   # Leading digits
+        (\.[0-9A-Fa-f_]*)?         # Optional decimal
         ([pP](\+|-)?[0-9][0-9_]*)  # Optional exponent (in decimal)
       )
       $
