@@ -1624,6 +1624,109 @@ mod tests {
     }
 
     #[test]
+    fn test_record_keys_only_appear_in_record_fields() {
+        let not_top_level = dump(b"not_key1");
+        // BUG: This should not be a RecordKey
+        assert_snapshot!(&not_top_level, @r#"
+        Raw document:
+        not_key1
+
+        0   0..8     <-- ^--[0 ] --> Atom(RecordKey)          : "not_key1"
+        "#);
+
+        let not_variant_tuple_value = dump(b"(Variant not_key)");
+        // BUG: Node 1 should not be a RecordKey
+        assert_snapshot!(&not_variant_tuple_value, @r#"
+        Raw document:
+        (Variant not_key)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(VariantTuple): "("
+        1   1..8     <-- ^ 0[0 ]  2> Atom(Constructor)        : "Variant"
+        2   9..16    <1  ^ 0[1 ] --> Atom(RecordKey)          : "not_key"
+        3   16..17   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        let not_value_of_record_value = dump(b"((key not_key))");
+        // BUG: Node 3 should not be a RecordKey
+        assert_snapshot!(&not_value_of_record_value , @r#"
+        Raw document:
+        ((key not_key))
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
+        1   1..2     <-- ^ 0[0 ] --> StartOfList(RecordField) : "("
+        2   2..5     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "key"
+        3   6..13    <2  ^ 1[1 ] --> Atom(RecordKey)          : "not_key"
+        4   13..14   <-- ^ 0[--] --> EndOfList                : ")"
+        5   14..15   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        let not_value_in_singleton = dump(b"(not_key)");
+        // BUG: Node 1 should not be a RecordKey
+        assert_snapshot!(&not_value_in_singleton , @r#"
+        Raw document:
+        (not_key)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
+        1   1..8     <-- ^ 0[0 ] --> Atom(RecordKey)          : "not_key"
+        2   8..9     <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        let not_in_list_with_more_than_two_values = dump(b"(not_key 1 2)");
+        // BUG: Node 1 should not be a RecordKey
+        assert_snapshot!(&not_in_list_with_more_than_two_values , @r#"
+        Raw document:
+        (not_key 1 2)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..8     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "not_key"
+        2   9..10    <1  ^ 0[1 ]  3> Atom(Number)             : "1"
+        3   11..12   <2  ^ 0[2 ] --> Atom(Number)             : "2"
+        4   12..13   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+
+        invariants::record_keys_are_the_first_child_of_record_fields();
+        let not_if_comment_before_key = dump(b"((#| comment |# not_key 1)");
+        // BUG: Node 3 should not be a RecordKey
+        assert_snapshot!(&not_if_comment_before_key , @r##"
+        Raw document:
+        ((#| comment |# not_key 1)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..2     <-- ^ 0[0 ]  6> StartOfList(Plain)       : "("
+        2   2..15    <-- ^ 1[--]  3> BlockComment             : "#| comment |#"
+        3   16..23   <2  ^ 1[0 ]  4> Atom(RecordKey)          : "not_key"
+        4   24..25   <3  ^ 1[1 ] --> Atom(Number)             : "1"
+        5   25..26   <-- ^ 0[--] --> EndOfList                : ")"
+        6   26..26   <1  ^ 0[--] --> Error: Unexpected EOF while parsing list
+        7   26..26   <-- ^--[--] --> EndOfList                : ""
+        "##);
+    }
+
+    #[test]
+    fn test_record_field_values_cant_be_record_fields() {
+        let record_field_value_not_record_field = dump(b"((a 1) (b (c d)))");
+        // BUG: Node 7 should be a plain list, and node 8 should be a plain atom.
+        assert_snapshot!(&record_field_value_not_record_field, @r#"
+        Raw document:
+        ((a 1) (b (c d)))
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
+        1   1..2     <-- ^ 0[0 ]  5> StartOfList(RecordField) : "("
+        2   2..3     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "a"
+        3   4..5     <2  ^ 1[1 ] --> Atom(Number)             : "1"
+        4   5..6     <-- ^ 0[--] --> EndOfList                : ")"
+        5   7..8     <1  ^ 0[1 ] --> StartOfList(RecordField) : "("
+        6   8..9     <-- ^ 5[0 ]  7> Atom(RecordKey)          : "b"
+        7   10..11   <6  ^ 5[1 ] --> StartOfList(RecordField) : "("
+        8   11..12   <-- ^ 7[0 ]  9> Atom(RecordKey)          : "c"
+        9   13..14   <8  ^ 7[1 ] --> Atom(RecordKey)          : "d"
+        10  14..15   <6  ^ 5[--] --> EndOfList                : ")"
+        11  15..16   <1  ^ 0[--] --> EndOfList                : ")"
+        12  16..17   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+    }
+
+    #[test]
     fn test_basic_errors() {
         let unmatched_closing_paren = dump(b"one )");
         assert_snapshot!(unmatched_closing_paren, @r#"
