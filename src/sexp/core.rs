@@ -289,7 +289,7 @@ pub struct ErrorMetadata {
 }
 
 #[cfg_attr(test, derive(Serialize))]
-#[derive(Copy, Clone, Debug)]
+#[derive(Eq, PartialEq, Copy, Clone, Debug)]
 pub enum AtomKind {
     /// An upper snake case value
     Constructor,
@@ -973,7 +973,21 @@ impl DocCore {
             valid,
         };
 
-        let _ = self.push_new_document_node(DocumentToken::Atom(atom_metadata), data_range);
+        let atom_index =
+            self.push_new_document_node(DocumentToken::Atom(atom_metadata), data_range);
+
+        // If we classified the node as a `RecordKey`, but it's not the first child
+        // of a list (or it's a top-level node), update it to just be a plain atom.
+        if atom_kind == AtomKind::RecordKey {
+            let node = self.node_mut(atom_index);
+            if node.parent_index.is_none() || !matches!(node.data_index_in_parent, Some(0)) {
+                let DocumentToken::Atom(atom_metadata) = &mut node.token else {
+                    // We know we just pushed an atom node.
+                    unreachable!()
+                };
+                atom_metadata.atom_kind = AtomKind::Plain;
+            }
+        }
     }
 
     fn classify_atom_kind(atom: &AtomData) -> AtomKind {
@@ -1404,7 +1418,7 @@ mod tests {
         atom
         (
 
-        0   0..4     <-- ^--[0 ] --> Atom(RecordKey)          : "atom"
+        0   0..4     <-- ^--[0 ] --> Atom(Plain)              : "atom"
         1   5..6     <-- ^--[1 ] --> StartOfList(Plain)       : "("
         "#);
 
@@ -1415,7 +1429,7 @@ mod tests {
         atom
         ()
 
-        0   0..4     <-- ^--[0 ]  1> Atom(RecordKey)          : "atom"
+        0   0..4     <-- ^--[0 ]  1> Atom(Plain)              : "atom"
         1   5..7     <0  ^--[1 ] --> Unit                     : "()"
         "#);
     }
@@ -1452,7 +1466,7 @@ mod tests {
         0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
         1   1..14    <-- ^ 0[0 ]  2> Atom(Plain)              : "\"Atom Kinds:\""
         2   15..26   <1  ^ 0[1 ]  3> Atom(Constructor)        : "Constructor"
-        3   27..37   <2  ^ 0[2 ]  4> Atom(RecordKey)          : "record_key"
+        3   27..37   <2  ^ 0[2 ]  4> Atom(Plain)              : "record_key"
         4   38..45   <3  ^ 0[3 ]  5> Atom(Number)             : "123_456"
         5   46..53   <4  ^ 0[4 ]  6> Atom(Number)             : "7.89e10"
         6   54..58   <5  ^ 0[5 ]  7> Atom(Bool)               : "true"
@@ -1488,11 +1502,11 @@ mod tests {
         0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
         1   1..2     <-- ^ 0[0 ]  5> StartOfList(RecordField) : "("
         2   2..6     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "key1"
-        3   7..8     <2  ^ 1[1 ] --> Atom(RecordKey)          : "a"
+        3   7..8     <2  ^ 1[1 ] --> Atom(Plain)              : "a"
         4   8..9     <-- ^ 0[--] --> EndOfList                : ")"
         5   10..11   <1  ^ 0[1 ] --> StartOfList(RecordField) : "("
         6   11..15   <-- ^ 5[0 ]  7> Atom(RecordKey)          : "key2"
-        7   16..17   <6  ^ 5[1 ] --> Atom(RecordKey)          : "b"
+        7   16..17   <6  ^ 5[1 ] --> Atom(Plain)              : "b"
         8   17..18   <1  ^ 0[--] --> EndOfList                : ")"
         9   18..19   <-- ^--[--] --> EndOfList                : ")"
         "#);
@@ -1507,7 +1521,7 @@ mod tests {
         1   1..2     <-- ^ 0[0 ] --> StartOfList(Plain)       : "("
         2   2..15    <-- ^ 1[--]  3> BlockComment             : "#| comment |#"
         3   16..20   <2  ^ 1[0 ]  4> Atom(RecordKey)          : "key2"
-        4   21..22   <3  ^ 1[1 ] --> Atom(RecordKey)          : "b"
+        4   21..22   <3  ^ 1[1 ] --> Atom(Plain)              : "b"
         5   22..23   <-- ^ 0[--] --> EndOfList                : ")"
         6   23..24   <-- ^--[--] --> EndOfList                : ")"
         "##);
@@ -1521,11 +1535,11 @@ mod tests {
         1   1..12    <-- ^ 0[0 ]  2> Atom(Constructor)        : "Constructor"
         2   13..14   <1  ^ 0[1 ]  6> StartOfList(RecordField) : "("
         3   14..18   <-- ^ 2[0 ]  4> Atom(RecordKey)          : "key1"
-        4   19..20   <3  ^ 2[1 ] --> Atom(RecordKey)          : "a"
+        4   19..20   <3  ^ 2[1 ] --> Atom(Plain)              : "a"
         5   20..21   <1  ^ 0[--] --> EndOfList                : ")"
         6   22..23   <2  ^ 0[2 ] --> StartOfList(RecordField) : "("
         7   23..27   <-- ^ 6[0 ]  8> Atom(RecordKey)          : "key2"
-        8   28..29   <7  ^ 6[1 ] --> Atom(RecordKey)          : "b"
+        8   28..29   <7  ^ 6[1 ] --> Atom(Plain)              : "b"
         9   29..30   <2  ^ 0[--] --> EndOfList                : ")"
         10  30..31   <-- ^--[--] --> EndOfList                : ")"
         "#);
@@ -1626,28 +1640,25 @@ mod tests {
     #[test]
     fn test_record_keys_only_appear_in_record_fields() {
         let not_top_level = dump(b"not_key1");
-        // BUG: This should not be a RecordKey
         assert_snapshot!(&not_top_level, @r#"
         Raw document:
         not_key1
 
-        0   0..8     <-- ^--[0 ] --> Atom(RecordKey)          : "not_key1"
+        0   0..8     <-- ^--[0 ] --> Atom(Plain)              : "not_key1"
         "#);
 
         let not_variant_tuple_value = dump(b"(Variant not_key)");
-        // BUG: Node 1 should not be a RecordKey
         assert_snapshot!(&not_variant_tuple_value, @r#"
         Raw document:
         (Variant not_key)
 
         0   0..1     <-- ^--[0 ] --> StartOfList(VariantTuple): "("
         1   1..8     <-- ^ 0[0 ]  2> Atom(Constructor)        : "Variant"
-        2   9..16    <1  ^ 0[1 ] --> Atom(RecordKey)          : "not_key"
+        2   9..16    <1  ^ 0[1 ] --> Atom(Plain)              : "not_key"
         3   16..17   <-- ^--[--] --> EndOfList                : ")"
         "#);
 
         let not_value_of_record_value = dump(b"((key not_key))");
-        // BUG: Node 3 should not be a RecordKey
         assert_snapshot!(&not_value_of_record_value , @r#"
         Raw document:
         ((key not_key))
@@ -1655,7 +1666,7 @@ mod tests {
         0   0..1     <-- ^--[0 ] --> StartOfList(Record)      : "("
         1   1..2     <-- ^ 0[0 ] --> StartOfList(RecordField) : "("
         2   2..5     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "key"
-        3   6..13    <2  ^ 1[1 ] --> Atom(RecordKey)          : "not_key"
+        3   6..13    <2  ^ 1[1 ] --> Atom(Plain)              : "not_key"
         4   13..14   <-- ^ 0[--] --> EndOfList                : ")"
         5   14..15   <-- ^--[--] --> EndOfList                : ")"
         "#);
@@ -1719,7 +1730,7 @@ mod tests {
         6   8..9     <-- ^ 5[0 ]  7> Atom(RecordKey)          : "b"
         7   10..11   <6  ^ 5[1 ] --> StartOfList(RecordField) : "("
         8   11..12   <-- ^ 7[0 ]  9> Atom(RecordKey)          : "c"
-        9   13..14   <8  ^ 7[1 ] --> Atom(RecordKey)          : "d"
+        9   13..14   <8  ^ 7[1 ] --> Atom(Plain)              : "d"
         10  14..15   <6  ^ 5[--] --> EndOfList                : ")"
         11  15..16   <1  ^ 0[--] --> EndOfList                : ")"
         12  16..17   <-- ^--[--] --> EndOfList                : ")"
@@ -1733,7 +1744,7 @@ mod tests {
         Raw document:
         one
 
-        0   0..3     <-- ^--[0 ]  1> Atom(RecordKey)          : "one"
+        0   0..3     <-- ^--[0 ]  1> Atom(Plain)              : "one"
         1   3..3     <0  ^--[--] --> Error: Saw unexpected ')' while parsing top-level sexp
         "#);
 
@@ -1742,7 +1753,7 @@ mod tests {
         Raw document:
         a
 
-        0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
+        0   0..1     <-- ^--[0 ]  1> Atom(Plain)              : "a"
         1   1..1     <0  ^--[--] --> Error: Unexpected EOF while sexp comment "#;" pending
         "##);
 
@@ -1752,7 +1763,7 @@ mod tests {
         a
         (
 
-        0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
+        0   0..1     <-- ^--[0 ]  1> Atom(Plain)              : "a"
         1   2..3     <0  ^--[1 ] --> StartOfList(Plain)       : "("
         2   3..3     <-- ^ 1[--]  3> Error: Unexpected EOF while sexp comment "#;" pending
         3   3..3     <2  ^ 1[--] --> Error: Unexpected EOF while parsing list
@@ -1765,7 +1776,7 @@ mod tests {
         a
         (1)
 
-        0   0..1     <-- ^--[0 ]  1> Atom(RecordKey)          : "a"
+        0   0..1     <-- ^--[0 ]  1> Atom(Plain)              : "a"
         1   2..3     <0  ^--[1 ] --> StartOfList(Plain)       : "("
         2   3..4     <-- ^ 1[0 ]  3> Atom(Number)             : "1"
         3   4..4     <2  ^ 1[--] --> Error: Saw unexpected ')' while sexp comment "#;" pending
@@ -1792,7 +1803,7 @@ mod tests {
         1   2..3     <0  ^--[1 ] --> StartOfList(Record)      : "("
         2   3..4     <-- ^ 1[0 ] --> StartOfList(RecordField) : "("
         3   4..5     <-- ^ 2[0 ]  4> Atom(RecordKey)          : "a"
-        4   6..7     <3  ^ 2[1 ]  5> Atom(RecordKey)          : "z"
+        4   6..7     <3  ^ 2[1 ]  5> Atom(Plain)              : "z"
         5   7..7     <4  ^ 2[--] --> Error: Unexpected EOF while parsing list
         6   7..7     <-- ^ 1[--] --> EndOfList                : ""
         7   7..7     <0  ^--[--] --> EndOfList                : ""
@@ -1810,9 +1821,9 @@ mod tests {
         0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
         1   1..2     <-- ^ 0[0 ]  5> StartOfList(RecordField) : "("
         2   2..5     <-- ^ 1[0 ]  3> Atom(RecordKey)          : "one"
-        3   6..9     <2  ^ 1[1 ] --> Atom(RecordKey)          : "two"
+        3   6..9     <2  ^ 1[1 ] --> Atom(Plain)              : "two"
         4   9..10    <-- ^ 0[--] --> EndOfList                : ")"
-        5   14..19   <1  ^ 0[#;]  6> Atom(RecordKey)          : "three"
+        5   14..19   <1  ^ 0[#;]  6> Atom(Plain)              : "three"
         6   20..26   <5  ^ 0[--] --> LineComment              : "; four"
         7   27..28   <-- ^--[--] --> EndOfList                : ")"
         "#);
