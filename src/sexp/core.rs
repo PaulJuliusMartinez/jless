@@ -805,10 +805,11 @@ impl DocCore {
         }
     }
 
-    fn analyze_list(&self, list_start_index: NodeIndex) -> ListKind {
+    fn analyze_list(&mut self, list_start_index: NodeIndex) -> ListKind {
         let mut first_elem_atom_kind = None;
         let mut first_elem_is_record_field = false;
         let mut second_elem_atom_kind = None;
+        let mut second_elem_node_index = None;
         let mut all_elems_after_first_are_record_fields = true;
         let mut all_elems_are_constructors = true;
         let mut list_contains_non_data_before_first_elem = false;
@@ -832,6 +833,8 @@ impl DocCore {
 
             let atom_kind = node.token.atom_kind();
 
+            list_length_including_commented_out_sexps += 1;
+
             // Commented-out sexps are tricky. We'll assume that users normally
             // only comment out parts of valid data structures, so they should be
             // be used to e.g. disqualify something from being a record field
@@ -845,16 +848,16 @@ impl DocCore {
             // when considering aggregate info.
 
             if !node.token.is_sexp_commented_out() {
-                if list_length_including_commented_out_sexps == 0 {
+                list_length_not_including_commented_out_sexps += 1;
+
+                if list_length_including_commented_out_sexps == 1 {
                     invariants::variant_constructors_are_not_sexp_commented_out();
                     first_elem_atom_kind = atom_kind;
                 }
 
-                if list_length_including_commented_out_sexps == 1 {
+                if list_length_including_commented_out_sexps == 2 {
                     second_elem_atom_kind = atom_kind;
                 }
-
-                list_length_not_including_commented_out_sexps += 1;
             }
 
             // This is a heuristic so that we don't consider a list of enums,
@@ -865,7 +868,7 @@ impl DocCore {
 
             // To check for record and record variants, we separately track whether the first
             // element is a record, and whether everything after it is.
-            if list_length_including_commented_out_sexps == 0 {
+            if list_length_including_commented_out_sexps == 1 {
                 first_elem_is_record_field =
                     matches!(node.token.list_kind(), Some(ListKind::RecordField));
             } else {
@@ -873,7 +876,9 @@ impl DocCore {
                     && matches!(node.token.list_kind(), Some(ListKind::RecordField));
             }
 
-            list_length_including_commented_out_sexps += 1;
+            if list_length_including_commented_out_sexps == 2 {
+                second_elem_node_index = Some(node_index);
+            }
         }
 
         let first_elem_is_constructor = matches!(first_elem_atom_kind, Some(AtomKind::Constructor));
@@ -919,15 +924,58 @@ impl DocCore {
         {
             invariants::record_keys_are_the_first_child_of_record_fields();
             invariants::record_fields_do_not_contain_commented_out_sexps();
+
+            let Some(value_index) = second_elem_node_index else {
+                panic!("Making a RecordField but have no `second_elem_node_index`.");
+            };
+
+            // If the value is a RecordField, unmark it as such, and mark
+            // its key as a plain atom.
+            let token = self.token_mut(value_index);
+            if let Some(ListKind::RecordField) = token.list_kind() {
+                let DocumentToken::StartOfList(list_metadata) = token else {
+                    unreachable!();
+                };
+                list_metadata.list_kind = ListKind::Plain;
+                self.set_atom_kind_of_first_list_elem_to_plain(value_index);
+            }
+
             ListKind::RecordField
         } else if list_length_including_commented_out_sexps == 1
             && list_length_not_including_commented_out_sexps == 1
             && !list_contains_non_data
         {
             invariants::singleton_values_are_not_commented_out_sexps();
+
+            if first_elem_is_record_key {
+                // We're not making this a RecordField, so update it to a plain atom.
+                self.set_atom_kind_of_first_list_elem_to_plain(list_start_index);
+            }
+
             ListKind::Singleton
         } else {
+            if first_elem_is_record_key {
+                // We're not making this a RecordField, so update it to a plain atom.
+                self.set_atom_kind_of_first_list_elem_to_plain(list_start_index);
+            }
+
             ListKind::Plain
+        }
+    }
+
+    fn set_atom_kind_of_first_list_elem_to_plain(&mut self, list_start_index: NodeIndex) {
+        let mut next_child_index = Some(list_start_index + 1);
+        while let Some(index) = next_child_index {
+            let node = self.node_mut(index);
+            if matches!(node.data_index_in_parent, Some(0)) {
+                let DocumentToken::Atom(atom_metadata) = &mut node.token else {
+                    panic!("First data child of list elem was not an atom");
+                };
+                debug_assert_eq!(atom_metadata.atom_kind, AtomKind::RecordKey);
+                atom_metadata.atom_kind = AtomKind::Plain;
+                return;
+            }
+            next_child_index = self.node(index).next_sibling();
         }
     }
 
@@ -1376,7 +1424,7 @@ mod tests {
         (atom)
 
         0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
-        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        1   1..5     <-- ^ 0[0 ] --> Atom(Plain)              : "atom"
         2   5..6     <-- ^--[--] --> EndOfList                : ")"
         "#);
 
@@ -1388,7 +1436,7 @@ mod tests {
         (
 
         0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
-        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        1   1..5     <-- ^ 0[0 ] --> Atom(Plain)              : "atom"
         2   5..6     <-- ^--[--] --> EndOfList                : ")"
         3   7..8     <-- ^--[1 ] --> StartOfList(Plain)       : "("
         "#);
@@ -1401,7 +1449,7 @@ mod tests {
         ()
 
         0   0..1     <-- ^--[0 ]  3> StartOfList(Singleton)   : "("
-        1   1..5     <-- ^ 0[0 ] --> Atom(RecordKey)          : "atom"
+        1   1..5     <-- ^ 0[0 ] --> Atom(Plain)              : "atom"
         2   5..6     <-- ^--[--] --> EndOfList                : ")"
         3   7..9     <0  ^--[1 ] --> Unit                     : "()"
         "#);
@@ -1520,7 +1568,7 @@ mod tests {
         0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
         1   1..2     <-- ^ 0[0 ] --> StartOfList(Plain)       : "("
         2   2..15    <-- ^ 1[--]  3> BlockComment             : "#| comment |#"
-        3   16..20   <2  ^ 1[0 ]  4> Atom(RecordKey)          : "key2"
+        3   16..20   <2  ^ 1[0 ]  4> Atom(Plain)              : "key2"
         4   21..22   <3  ^ 1[1 ] --> Atom(Plain)              : "b"
         5   22..23   <-- ^ 0[--] --> EndOfList                : ")"
         6   23..24   <-- ^--[--] --> EndOfList                : ")"
@@ -1672,24 +1720,22 @@ mod tests {
         "#);
 
         let not_value_in_singleton = dump(b"(not_key)");
-        // BUG: Node 1 should not be a RecordKey
         assert_snapshot!(&not_value_in_singleton , @r#"
         Raw document:
         (not_key)
 
         0   0..1     <-- ^--[0 ] --> StartOfList(Singleton)   : "("
-        1   1..8     <-- ^ 0[0 ] --> Atom(RecordKey)          : "not_key"
+        1   1..8     <-- ^ 0[0 ] --> Atom(Plain)              : "not_key"
         2   8..9     <-- ^--[--] --> EndOfList                : ")"
         "#);
 
         let not_in_list_with_more_than_two_values = dump(b"(not_key 1 2)");
-        // BUG: Node 1 should not be a RecordKey
         assert_snapshot!(&not_in_list_with_more_than_two_values , @r#"
         Raw document:
         (not_key 1 2)
 
         0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
-        1   1..8     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "not_key"
+        1   1..8     <-- ^ 0[0 ]  2> Atom(Plain)              : "not_key"
         2   9..10    <1  ^ 0[1 ]  3> Atom(Number)             : "1"
         3   11..12   <2  ^ 0[2 ] --> Atom(Number)             : "2"
         4   12..13   <-- ^--[--] --> EndOfList                : ")"
@@ -1697,7 +1743,6 @@ mod tests {
 
         invariants::record_keys_are_the_first_child_of_record_fields();
         let not_if_comment_before_key = dump(b"((#| comment |# not_key 1)");
-        // BUG: Node 3 should not be a RecordKey
         assert_snapshot!(&not_if_comment_before_key , @r##"
         Raw document:
         ((#| comment |# not_key 1)
@@ -1705,7 +1750,7 @@ mod tests {
         0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
         1   1..2     <-- ^ 0[0 ]  6> StartOfList(Plain)       : "("
         2   2..15    <-- ^ 1[--]  3> BlockComment             : "#| comment |#"
-        3   16..23   <2  ^ 1[0 ]  4> Atom(RecordKey)          : "not_key"
+        3   16..23   <2  ^ 1[0 ]  4> Atom(Plain)              : "not_key"
         4   24..25   <3  ^ 1[1 ] --> Atom(Number)             : "1"
         5   25..26   <-- ^ 0[--] --> EndOfList                : ")"
         6   26..26   <1  ^ 0[--] --> Error: Unexpected EOF while parsing list
@@ -1716,7 +1761,6 @@ mod tests {
     #[test]
     fn test_record_field_values_cant_be_record_fields() {
         let record_field_value_not_record_field = dump(b"((a 1) (b (c d)))");
-        // BUG: Node 7 should be a plain list, and node 8 should be a plain atom.
         assert_snapshot!(&record_field_value_not_record_field, @r#"
         Raw document:
         ((a 1) (b (c d)))
@@ -1728,8 +1772,8 @@ mod tests {
         4   5..6     <-- ^ 0[--] --> EndOfList                : ")"
         5   7..8     <1  ^ 0[1 ] --> StartOfList(RecordField) : "("
         6   8..9     <-- ^ 5[0 ]  7> Atom(RecordKey)          : "b"
-        7   10..11   <6  ^ 5[1 ] --> StartOfList(RecordField) : "("
-        8   11..12   <-- ^ 7[0 ]  9> Atom(RecordKey)          : "c"
+        7   10..11   <6  ^ 5[1 ] --> StartOfList(Plain)       : "("
+        8   11..12   <-- ^ 7[0 ]  9> Atom(Plain)              : "c"
         9   13..14   <8  ^ 7[1 ] --> Atom(Plain)              : "d"
         10  14..15   <6  ^ 5[--] --> EndOfList                : ")"
         11  15..16   <1  ^ 0[--] --> EndOfList                : ")"
@@ -1843,7 +1887,7 @@ mod tests {
         (a
 
         0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
-        1   1..2     <-- ^ 0[0 ]  2> Atom(RecordKey)          : "a"
+        1   1..2     <-- ^ 0[0 ]  2> Atom(Plain)              : "a"
         2   2..2     <1  ^ 0[--] --> Error: Unexpected EOF while parsing list
         3   2..2     <-- ^--[--] --> EndOfList                : ""
         "#);
