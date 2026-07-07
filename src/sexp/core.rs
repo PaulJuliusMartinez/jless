@@ -1484,6 +1484,36 @@ mod tests {
     }
 
     #[test]
+    fn test_data_index_in_parent_ignores_sexp_comments() {
+        // In top-level nodes
+        let doc = dump(br#"im_0 #; ignore_me im_1"#);
+        // BUG: NodeIndex(2) should be at index [1].
+        assert_snapshot!(&doc, @r#"
+        Raw document:
+        im_0
+        #; ignore_me
+        im_1
+
+        0   0..4     <-- ^--[0 ]  1> Atom(Plain)              : "im_0"
+        1   8..17    <0  ^--[#;]  2> Atom(Plain)              : "ignore_me"
+        2   18..22   <1  ^--[2 ] --> Atom(Plain)              : "im_1"
+        "#);
+
+        // Inside lists
+        let doc = dump(br#"(im_0 #; ignore_me im_1)"#);
+        assert_snapshot!(&doc, @r#"
+        Raw document:
+        (im_0 #; ignore_me im_1)
+
+        0   0..1     <-- ^--[0 ] --> StartOfList(Plain)       : "("
+        1   1..5     <-- ^ 0[0 ]  2> Atom(Plain)              : "im_0"
+        2   9..18    <1  ^ 0[#;]  3> Atom(Plain)              : "ignore_me"
+        3   19..23   <2  ^ 0[1 ] --> Atom(Plain)              : "im_1"
+        4   23..24   <-- ^--[--] --> EndOfList                : ")"
+        "#);
+    }
+
+    #[test]
     fn test_normalize_sexp_comment_locations() {
         let doc = dump(br#"#; #; (1 #; 2 3) #; 4 5 6"#);
         assert_snapshot!(&doc, @r#"
