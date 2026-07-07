@@ -2010,4 +2010,43 @@ mod tests {
         // Path to error
         assert_snapshot!(path(24),  @"[1]");
     }
+
+    #[test]
+    fn test_sexp_get_style_paths_to_top_level_non_data_nodes() {
+        fn path_to_single_top_level_node(input: &'static [u8]) -> String {
+            let doc = DocCore::from_bytes(input, true);
+            doc.sexp_get_style_path_to_node(NodeIndex(0))
+                .unwrap_or("<none>".to_string())
+        }
+
+        // No path for top-level comments
+        assert_snapshot!(path_to_single_top_level_node(b"; line comment\n"),  @"<none>");
+        assert_snapshot!(path_to_single_top_level_node(b"#| block comment |#"),  @"<none>");
+        assert_snapshot!(path_to_single_top_level_node(b"#; sexp_comment"),  @".");
+        assert_snapshot!(path_to_single_top_level_node(b")"),  @"<none>");
+
+        let doc = DocCore::from_bytes(
+            b"; line comment\n#| block comment |# #; sexp_comment ) x",
+            true,
+        );
+        assert_snapshot!(layout_and_show_logical_lines(&doc), @r"
+        0..=0  : ; line comment
+        1..=1  : #| block comment |#
+        2..=2  : #; sexp_comment
+        3..=3  : ERR: Saw unexpected ')' while parsing top-level sexp
+        4..=4  : x
+        ");
+
+        let path = |i| {
+            doc.sexp_get_style_path_to_node(NodeIndex(i))
+                .unwrap_or("<none>".to_string())
+        };
+
+        assert_snapshot!(path(0),  @"<none>");
+        assert_snapshot!(path(1),  @"<none>");
+        // BUG: This panics
+        assert_snapshot!(path(2),  @".");
+        assert_snapshot!(path(3),  @"<none>");
+        assert_snapshot!(path(4),  @"[0]");
+    }
 }
