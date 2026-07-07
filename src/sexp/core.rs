@@ -96,6 +96,7 @@ pub struct DocCore {
     all_nodes: Vec<DocumentNode>,
     last_top_level_node_index: Option<NodeIndex>,
     num_top_level_data_nodes: usize,
+    num_sexp_commented_out_top_level_data_nodes: usize,
     error_indexes: Vec<NodeIndex>,
 
     // Parsing state
@@ -443,6 +444,7 @@ impl DocCore {
             all_nodes: vec![],
             last_top_level_node_index: None,
             num_top_level_data_nodes: 0,
+            num_sexp_commented_out_top_level_data_nodes: 0,
             error_indexes: vec![],
             starts_of_unterminated_lists: vec![],
             depths_of_pending_sexp_comments: vec![],
@@ -534,7 +536,8 @@ impl DocCore {
                 prev_sibling = None;
 
                 data_index_in_parent = if token.is_data() && !token.is_sexp_commented_out() {
-                    let index = self.num_top_level_data_nodes;
+                    let index = self.num_top_level_data_nodes
+                        - self.num_sexp_commented_out_top_level_data_nodes;
                     Some(index)
                 } else {
                     None
@@ -599,29 +602,30 @@ impl DocCore {
         // This means we've tried completing this node twice.
         assert!(self.last_node_index_of_part_of_completed_sexp != self.last_top_level_node_index);
 
-        let new_completed_top_level_node = self
+        let new_completed_top_level_node_index = self
             .last_top_level_node_index
             .expect("must have created a top-level node before calling `complete_top_level_node`");
 
         self.pretty_printed.complete_top_level_node();
         self.data_len_of_completed_sexps = self.pretty_printed.len();
 
-        if self.all_nodes[new_completed_top_level_node.0]
-            .token
-            .is_data()
-        {
+        let new_completed_top_level_node = &self.all_nodes[new_completed_top_level_node_index.0];
+        if new_completed_top_level_node.token.is_data() {
             self.num_top_level_data_nodes += 1;
+            if new_completed_top_level_node.token.is_sexp_commented_out() {
+                self.num_sexp_commented_out_top_level_data_nodes += 1;
+            }
         }
 
         // Wire up sibling connection between the new top-level node and the previous one.
         if let Some(prev_top_level_node_index) = self.node_index_of_last_completed_top_level_sexp {
             self.all_nodes[prev_top_level_node_index.0].next_sibling =
-                Some(new_completed_top_level_node).into();
-            self.all_nodes[new_completed_top_level_node.0].prev_sibling =
+                Some(new_completed_top_level_node_index).into();
+            self.all_nodes[new_completed_top_level_node_index.0].prev_sibling =
                 Some(prev_top_level_node_index).into();
 
             // If the new top level node is a list, also set prev_sibling on the end of the list.
-            if let Some(list_end_index) = self.all_nodes[new_completed_top_level_node.0]
+            if let Some(list_end_index) = self.all_nodes[new_completed_top_level_node_index.0]
                 .token
                 .list_end_index()
             {
@@ -630,7 +634,7 @@ impl DocCore {
             }
         }
 
-        self.node_index_of_last_completed_top_level_sexp = Some(new_completed_top_level_node);
+        self.node_index_of_last_completed_top_level_sexp = Some(new_completed_top_level_node_index);
         self.last_node_index_of_part_of_completed_sexp = Some(NodeIndex(self.all_nodes.len() - 1));
     }
 
@@ -1487,7 +1491,6 @@ mod tests {
     fn test_data_index_in_parent_ignores_sexp_comments() {
         // In top-level nodes
         let doc = dump(br#"im_0 #; ignore_me im_1"#);
-        // BUG: NodeIndex(2) should be at index [1].
         assert_snapshot!(&doc, @r#"
         Raw document:
         im_0
@@ -1496,7 +1499,7 @@ mod tests {
 
         0   0..4     <-- ^--[0 ]  1> Atom(Plain)              : "im_0"
         1   8..17    <0  ^--[#;]  2> Atom(Plain)              : "ignore_me"
-        2   18..22   <1  ^--[2 ] --> Atom(Plain)              : "im_1"
+        2   18..22   <1  ^--[1 ] --> Atom(Plain)              : "im_1"
         "#);
 
         // Inside lists
@@ -1530,7 +1533,7 @@ mod tests {
         4   12..13   <-- ^--[--] --> EndOfList                : ")"
         5   17..18   <0  ^--[#;]  6> Atom(Number)             : "4"
         6   22..23   <5  ^--[#;]  7> Atom(Number)             : "5"
-        7   24..25   <6  ^--[3 ] --> Atom(Number)             : "6"
+        7   24..25   <6  ^--[0 ] --> Atom(Number)             : "6"
         "#);
     }
 
@@ -2057,7 +2060,7 @@ mod tests {
         assert_snapshot!(path_to_single_top_level_node(b")"),  @"<none>");
 
         let doc = DocCore::from_bytes(
-            b"; line comment\n#| block comment |# #; sexp_comment ) x",
+            b"; line comment\n#| block comment |# #; sexp_comment )",
             true,
         );
         assert_snapshot!(layout_and_show_logical_lines(&doc), @r"
@@ -2065,7 +2068,6 @@ mod tests {
         1..=1  : #| block comment |#
         2..=2  : #; sexp_comment
         3..=3  : ERR: Saw unexpected ')' while parsing top-level sexp
-        4..=4  : x
         ");
 
         let path = |i| {
@@ -2075,9 +2077,38 @@ mod tests {
 
         assert_snapshot!(path(0),  @"<none>");
         assert_snapshot!(path(1),  @"<none>");
+        assert_snapshot!(path(2),  @".");
+        assert_snapshot!(path(3),  @"<none>");
+
+        let doc = DocCore::from_bytes(
+            b"; line comment\n#| block comment |# #; sexp_comment ) x",
+            true,
+        );
+
+        let path = |i| {
+            doc.sexp_get_style_path_to_node(NodeIndex(i))
+                .unwrap_or("<none>".to_string())
+        };
+
+        // Same as above, but now with an extra top-level element.
         assert_snapshot!(path(2),  @"[_]");
         assert_snapshot!(path(3),  @"<none>");
-        // BUG: This should be [0], not [1].
-        assert_snapshot!(path(4),  @"[1]");
+        assert_snapshot!(path(4),  @"[0]");
+
+        let doc = DocCore::from_bytes(
+            b"; line comment\n#| block comment |# #; sexp_comment ) x y",
+            true,
+        );
+
+        let path = |i| {
+            doc.sexp_get_style_path_to_node(NodeIndex(i))
+                .unwrap_or("<none>".to_string())
+        };
+
+        // Same as above, but now with two extra top-level elements.
+        assert_snapshot!(path(2),  @"[_]");
+        assert_snapshot!(path(3),  @"<none>");
+        assert_snapshot!(path(4),  @"[0]");
+        assert_snapshot!(path(5),  @"[1]");
     }
 }
