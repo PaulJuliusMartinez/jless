@@ -1136,11 +1136,12 @@ impl DocCore {
     ) -> bool {
         let Some(parent_index) = parent_index else {
             if self.num_top_level_data_nodes > 1 {
-                let index = self
-                    .node(child_index)
-                    .data_index_in_parent
-                    .expect("top level node should have an index");
-                let _ = write!(buf, "[{index}]");
+                // sexp-commented out nodes won't have a `data_index_in_parent`.
+                if let Some(index) = self.node(child_index).data_index_in_parent {
+                    let _ = write!(buf, "[{index}]");
+                } else {
+                    let _ = write!(buf, "[_]");
+                }
             }
 
             return true;
@@ -2044,9 +2045,9 @@ mod tests {
 
         assert_snapshot!(path(0),  @"<none>");
         assert_snapshot!(path(1),  @"<none>");
-        // BUG: This panics
-        assert_snapshot!(path(2),  @".");
+        assert_snapshot!(path(2),  @"[_]");
         assert_snapshot!(path(3),  @"<none>");
-        assert_snapshot!(path(4),  @"[0]");
+        // BUG: This should be [0], not [1].
+        assert_snapshot!(path(4),  @"[1]");
     }
 }
