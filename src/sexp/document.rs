@@ -1532,10 +1532,8 @@ impl Document for SexpDocument {
             }
         }
 
-        // Ok, so we can't move to the prev sibling. We'll just try going backwards until
-        // we fine a line that's with the correct indentation.
-        let starting_logical_line = self.logical_line_of_node_index(*cursor);
-        // When not going to a previous sibling, it should work just like hitting 'k'.
+        // When not going to a previous sibling, it should work just like hitting 'k'
+        // (possibly multiple times).
         let mut candidate_cursor = self.move_cursor_up_one_line(*cursor)?;
 
         loop {
