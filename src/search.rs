@@ -4,6 +4,7 @@ use std::ops::Range;
 use regex::bytes::{Regex as ByteRegex, RegexBuilder as ByteRegexBuilder};
 use regex::{Captures as StrCaptures, Regex as StrRegex};
 
+use crate::rendering::{Attrs, StyledSegment, Text};
 use crate::sorted_ranges::SortedRanges;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
@@ -287,12 +288,17 @@ impl SearchState {
             .map(|lj| self.matches[lj.match_jumped_to].clone())
     }
 
-    pub fn search_match_ranges(&self) -> &[Range<usize>] {
-        &self.matches
-    }
-
     pub fn should_show_matches(&self) -> bool {
         self.should_show_matches
+    }
+
+    pub fn highlighter(&self) -> SearchMatchHighlighter<'_> {
+        let current_match_index = match &self.last_jump {
+            None => None,
+            Some(last_jump) => Some(last_jump.match_jumped_to),
+        };
+
+        SearchMatchHighlighter::new(&self.matches, current_match_index)
     }
 
     pub fn stop_searching(&mut self) {
@@ -522,12 +528,22 @@ impl<'a> SearchMatchHighlighter<'a> {
         }
     }
 
+    pub fn empty() -> Self {
+        SearchMatchHighlighter {
+            all_search_matches: &[],
+            current_match_index: None,
+            subsequent_search_matches: &[],
+            match_index_of_first_subsequent_search_match: 0,
+            reset_subsequent_search_matches_if_next_range_starts_before: usize::MAX,
+        }
+    }
+
     fn advance_subsequent_search_matches(&mut self) {
         self.subsequent_search_matches = &self.subsequent_search_matches[1..];
         self.match_index_of_first_subsequent_search_match += 1;
     }
 
-    pub fn highlight<'mh>(
+    fn highlighted_ranges<'mh>(
         &'mh mut self,
         range: Range<usize>,
     ) -> impl Iterator<Item = (Range<usize>, HighlightKind)> + use<'mh, 'a> {
@@ -579,6 +595,28 @@ impl<'a> SearchMatchHighlighter<'a> {
             match_highlighter: self,
             remaining_range: range,
         }
+    }
+
+    pub fn highlight<'mh>(
+        &'mh mut self,
+        source_range: Range<usize>,
+        current_match_attrs: Attrs,
+        other_match_attrs: Attrs,
+        not_a_match_attrs: Attrs,
+    ) -> impl Iterator<Item = StyledSegment> + use<'mh, 'a> {
+        self.highlighted_ranges(source_range)
+            .map(move |(highlight_range, highlight_kind)| {
+                let attrs = match highlight_kind {
+                    HighlightKind::CurrentMatch => current_match_attrs,
+                    HighlightKind::OtherMatch => other_match_attrs,
+                    HighlightKind::NotAMatch => not_a_match_attrs,
+                };
+
+                StyledSegment {
+                    content: Text::SourceRange(highlight_range),
+                    attrs,
+                }
+            })
     }
 }
 
@@ -905,7 +943,7 @@ mod tests {
 
         fn f(highlighter: &mut SearchMatchHighlighter<'_>, range: Range<usize>) -> String {
             highlighter
-                .highlight(range)
+                .highlighted_ranges(range)
                 .map(|(r, b)| {
                     let prefix = match b {
                         HighlightKind::CurrentMatch => "current match",

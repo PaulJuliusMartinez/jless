@@ -650,20 +650,12 @@ pub fn style_typeset_line<'l, 's, 'h>(
                 });
             }
             Text::SourceRange(range) => {
-                for (highlight_range, highlight_kind) in match_highlighter.highlight(range.clone())
-                {
-                    let attrs = match highlight_kind {
-                        HighlightKind::NotAMatch => attrs,
-                        HighlightKind::CurrentMatch | HighlightKind::OtherMatch => {
-                            search_match_attrs
-                        }
-                    };
-
-                    styled_segments.push(StyledSegment {
-                        content: Text::SourceRange(highlight_range),
-                        attrs,
-                    });
-                }
+                styled_segments.extend(match_highlighter.highlight(
+                    range.clone(),
+                    search_match_attrs,
+                    search_match_attrs,
+                    attrs,
+                ));
             }
         }
     }

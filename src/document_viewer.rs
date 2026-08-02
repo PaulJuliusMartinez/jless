@@ -1647,18 +1647,10 @@ impl<D: Document> DocumentViewer<D> {
             ..default
         };
 
-        let search_match_ranges = match &self.search_state {
-            None => &[],
-            Some(search_state) => {
-                if search_state.should_show_matches() {
-                    search_state.search_match_ranges()
-                } else {
-                    &[]
-                }
-            }
+        let mut search_match_highlighter = match &self.search_state {
+            None => SearchMatchHighlighter::empty(),
+            Some(search_state) => search_state.highlighter(),
         };
-
-        let mut search_match_highlighter = SearchMatchHighlighter::new(search_match_ranges, None);
 
         let mut curr_line_number = 0;
         let mut rendered_curr_line_number = false;
