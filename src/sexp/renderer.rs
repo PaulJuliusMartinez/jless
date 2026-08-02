@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
-use std::ops::Range;
 use std::rc::Rc;
 
-use crate::rendering::{Attrs, Compositor, HighlightType, MatchHighlighter, StyledSegment, Text};
+use crate::rendering::{
+    Attrs, Compositor, HighlightKind, SearchMatchHighlighter, StyledSegment, Text,
+};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
@@ -583,13 +584,15 @@ impl<'a> RenderContext<'a> {
     }
 }
 
-// 'l for lifetime of the line renderer, 's for the lifetime of rendering the whole screen
-pub fn style_typeset_line<'l, 's>(
+// 'l for lifetime of the line renderer
+// 's for the lifetime of rendering the whole screen
+// 'h for the lifetime of the highlighter's search match ranges
+pub fn style_typeset_line<'l, 's, 'h>(
     core: &'l DocCore,
     context: &'l RenderContext<'s>,
     logical_line: &'l LogicalLine,
     fragments: &'l TypesetLine,
-    search_matches: &[Range<usize>],
+    match_highlighter: &'l mut SearchMatchHighlighter<'h>,
 ) -> Vec<StyledSegment> {
     let mut styled_segments = vec![];
 
@@ -648,12 +651,13 @@ pub fn style_typeset_line<'l, 's>(
                 });
             }
             Text::SourceRange(range) => {
-                for (highlight_range, highlight_type) in
-                    MatchHighlighter::new(range.clone(), search_matches)
+                for (highlight_range, highlight_kind) in match_highlighter.highlight(range.clone())
                 {
-                    let attrs = match highlight_type {
-                        HighlightType::NotAMatch => attrs,
-                        HighlightType::Match => search_match_attrs,
+                    let attrs = match highlight_kind {
+                        HighlightKind::NotAMatch => attrs,
+                        HighlightKind::CurrentMatch | HighlightKind::OtherMatch => {
+                            search_match_attrs
+                        }
                     };
 
                     styled_segments.push(StyledSegment {
@@ -738,6 +742,7 @@ mod tests {
         let typeset_lines = doc.typeset_logical_line(&logical_lines[line]);
 
         let mut s = String::new();
+        let mut highlighter = SearchMatchHighlighter::new(&[], None);
         for (i, typeset_line) in typeset_lines.0.iter().enumerate() {
             if i > 0 {
                 s.push_str("\n\n");
@@ -750,7 +755,7 @@ mod tests {
                         &render_context,
                         &logical_lines[line],
                         &typeset_line,
-                        &[],
+                        &mut highlighter,
                     ),
                     doc.raw_bytes_for_searching(),
                     &style_map(),

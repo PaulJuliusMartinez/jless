@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use crate::dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::StyledSegment;
+use crate::rendering::{SearchMatchHighlighter, StyledSegment};
 
 // Precalculated break points when displaying a long line. Each values represents
 // the starting byte offset of one line.
@@ -614,7 +614,7 @@ impl Document for TextDocument {
         &self,
         _screen_line: &Self::ScreenLine,
         _cursor: &Self::Cursor,
-        _search_matches: &[Range<usize>],
+        _match_highlighter: &mut SearchMatchHighlighter<'_>,
     ) -> Option<Vec<StyledSegment>> {
         // Someday: implement this
         None

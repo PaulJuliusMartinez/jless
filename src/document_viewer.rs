@@ -5,7 +5,7 @@ use std::rc::Rc;
 use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{AnsiColor, Attrs, StyledSegment, Text};
+use crate::rendering::{AnsiColor, Attrs, SearchMatchHighlighter, StyledSegment, Text};
 use crate::search::{JumpDirection, SearchDirection, SearchState};
 
 /// The `DocumentViewer` manages what part of a document is displayed on screen
@@ -1658,6 +1658,8 @@ impl<D: Document> DocumentViewer<D> {
             }
         };
 
+        let mut search_match_highlighter = SearchMatchHighlighter::new(search_match_ranges, None);
+
         let mut curr_line_number = 0;
         let mut rendered_curr_line_number = false;
         let focused_line_number_attrs = Attrs::from_ansi_fg(AnsiColor::Yellow);
@@ -1713,7 +1715,7 @@ impl<D: Document> DocumentViewer<D> {
                     match self.doc.render_screen_line(
                         &screen_line,
                         &self.current_focus,
-                        search_match_ranges,
+                        &mut search_match_highlighter,
                     ) {
                         Some(segments) => {
                             rendered_line.extend(segments);

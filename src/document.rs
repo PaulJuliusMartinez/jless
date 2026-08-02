@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use crate::rendering::StyledSegment;
+use crate::rendering::{SearchMatchHighlighter, StyledSegment};
 use crate::search::InvertedPairedDelimeters;
 
 // Misc. notes:
@@ -241,7 +241,7 @@ pub trait Document {
         &self,
         screen_line: &Self::ScreenLine,
         cursor: &Self::Cursor,
-        search_matches: &[Range<usize>],
+        match_highlighter: &mut SearchMatchHighlighter<'_>,
     ) -> Option<Vec<StyledSegment>>;
 }
 

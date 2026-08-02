@@ -475,45 +475,120 @@ pub struct StyledSegment {
     pub content: Text,
 }
 
-pub struct MatchHighlighter<'a> {
-    remaining_range: Range<usize>,
-    // Guaranteed that the first match here always ends after the start of
-    // `remaining_range` (or the first match is an empty range starting and
-    // ending at the start of `remaining_range`.)
-    subsequent_search_matches: &'a [Range<usize>],
-}
-
-pub enum HighlightType {
-    Match,
+pub enum HighlightKind {
+    CurrentMatch,
+    OtherMatch,
     NotAMatch,
 }
 
-impl<'a> MatchHighlighter<'a> {
-    pub fn new(range: Range<usize>, search_matches: &'a [Range<usize>]) -> Self {
-        let subsequent_search_matches = match search_matches.index_of_first_elem_overlapping(&range)
-        {
-            None => &[],
-            Some(index) => &search_matches[index..],
-        };
+pub struct SearchMatchHighlighter<'a> {
+    all_search_matches: &'a [Range<usize>],
+    current_match_index: Option<usize>,
+    // When we create a `SingleRangeHighlighter` and iterate through it, we guarantee that the first
+    // match here always ends after the start of `remaining_range` (or the first match is an empty
+    // range starting and ending at the start of `remaining_range`.)
+    subsequent_search_matches: &'a [Range<usize>],
+    match_index_of_first_subsequent_search_match: usize,
+    // We assume that most of the time we'll call `highlight` on sorted ranges (e.g. on [10, 20),
+    // then [20, 30), then [35, 40), etc.), and leverage this to avoid repeatedly searching
+    // through `all_search_matches` to find the next range.
+    //
+    // But if we do backtrack and highlight something we've already passed over, we'll need
+    // to reset `subsequent_search_matches` back to `all_search_matches`.
+    reset_subsequent_search_matches_if_next_range_starts_before: usize,
+}
 
-        MatchHighlighter {
-            remaining_range: range,
-            subsequent_search_matches,
+struct SingleRangeHighlighter<'mh, 'a> {
+    match_highlighter: &'mh mut SearchMatchHighlighter<'a>,
+    remaining_range: Range<usize>,
+}
+
+impl<'a> SearchMatchHighlighter<'a> {
+    pub fn new(search_matches: &'a [Range<usize>], current_match_index: Option<usize>) -> Self {
+        SearchMatchHighlighter {
+            all_search_matches: search_matches,
+            current_match_index,
+            subsequent_search_matches: search_matches,
+            match_index_of_first_subsequent_search_match: 0,
+            reset_subsequent_search_matches_if_next_range_starts_before: 0,
         }
     }
 
-    fn next_range(&mut self) -> Option<(Range<usize>, HighlightType)> {
+    fn advance_subsequent_search_matches(&mut self) {
+        self.subsequent_search_matches = &self.subsequent_search_matches[1..];
+        self.match_index_of_first_subsequent_search_match += 1;
+    }
+
+    pub fn highlight<'mh>(
+        &'mh mut self,
+        range: Range<usize>,
+    ) -> impl Iterator<Item = (Range<usize>, HighlightKind)> + use<'mh, 'a> {
+        if range.start < self.reset_subsequent_search_matches_if_next_range_starts_before {
+            self.subsequent_search_matches = self.all_search_matches;
+            self.match_index_of_first_subsequent_search_match = 0;
+            self.reset_subsequent_search_matches_if_next_range_starts_before = 0;
+        }
+
+        self.reset_subsequent_search_matches_if_next_range_starts_before = range.end;
+
+        if !self.subsequent_search_matches.is_empty() {
+            let subsequent_search_match = &self.subsequent_search_matches[0];
+            if subsequent_search_match.end <= range.start {
+                self.advance_subsequent_search_matches();
+
+                // We finished processing one search match. We assume that in most cases the search
+                // matches are few and far between, while the ranges we're highlighting are in close
+                // proximity. So we expect the next search match (if there is one) to be ahead of
+                // the highlight range, but if it's not, that possibly means we jumped past a big
+                // collapsed portion with many search matches, so we'll binary search again for the
+                // relevant ones.
+                match self.subsequent_search_matches.get(0) {
+                    None => (), // No more matches, nothing to do.
+                    Some(next_match_range) => {
+                        if next_match_range.end <= range.start {
+                            match self
+                                .all_search_matches
+                                .index_of_first_elem_starting_at_or_after(range.start)
+                            {
+                                None => {
+                                    self.subsequent_search_matches = &[];
+                                    self.match_index_of_first_subsequent_search_match =
+                                        self.all_search_matches.len();
+                                }
+                                Some(index) => {
+                                    self.subsequent_search_matches =
+                                        &self.all_search_matches[index..];
+                                    self.match_index_of_first_subsequent_search_match = index;
+                                }
+                            };
+                        }
+                    }
+                }
+            }
+        }
+
+        SingleRangeHighlighter {
+            match_highlighter: self,
+            remaining_range: range,
+        }
+    }
+}
+
+impl<'mh, 'a> Iterator for SingleRangeHighlighter<'mh, 'a> {
+    type Item = (Range<usize>, HighlightKind);
+
+    fn next(&mut self) -> Option<Self::Item> {
         if self.remaining_range.is_empty() {
             return None;
         }
 
-        if self.subsequent_search_matches.is_empty() {
+        if self.match_highlighter.subsequent_search_matches.is_empty() {
             let unmatched_range = self.remaining_range.clone();
             self.remaining_range = unmatched_range.end..unmatched_range.end;
-            return Some((unmatched_range, HighlightType::NotAMatch));
+            return Some((unmatched_range, HighlightKind::NotAMatch));
         }
 
-        let search_match_range = &self.subsequent_search_matches[0];
+        let search_match_range = &self.match_highlighter.subsequent_search_matches[0];
 
         if self.remaining_range.start < search_match_range.start {
             // Next match hasn't started yet; return up to the start of
@@ -521,28 +596,38 @@ impl<'a> MatchHighlighter<'a> {
             let unmatched_end = usize::min(self.remaining_range.end, search_match_range.start);
             let unmatched_range = self.remaining_range.start..unmatched_end;
             self.remaining_range = unmatched_range.end..self.remaining_range.end;
-            return Some((unmatched_range, HighlightType::NotAMatch));
+            return Some((unmatched_range, HighlightKind::NotAMatch));
         }
 
         let match_end = usize::min(self.remaining_range.end, search_match_range.end);
         let match_range = self.remaining_range.start..match_end;
         self.remaining_range = match_end..self.remaining_range.end;
-        self.subsequent_search_matches = &self.subsequent_search_matches[1..];
+
+        let highlight_kind = match self.match_highlighter.current_match_index {
+            None => HighlightKind::OtherMatch,
+            Some(index) => {
+                if self
+                    .match_highlighter
+                    .match_index_of_first_subsequent_search_match
+                    == index
+                {
+                    HighlightKind::CurrentMatch
+                } else {
+                    HighlightKind::OtherMatch
+                }
+            }
+        };
+
+        if match_end == search_match_range.end {
+            self.match_highlighter.advance_subsequent_search_matches();
+        }
 
         if match_range.is_empty() {
             // Don't return empty ranges; just recurse.
-            self.next_range()
+            self.next()
         } else {
-            Some((match_range, HighlightType::Match))
+            Some((match_range, highlight_kind))
         }
-    }
-}
-
-impl<'a> Iterator for MatchHighlighter<'a> {
-    type Item = (Range<usize>, HighlightType);
-
-    fn next(&mut self) -> Option<Self::Item> {
-        self.next_range()
     }
 }
 
@@ -950,12 +1035,17 @@ mod tests {
 
     #[test]
     fn test_match_highlighter() {
-        fn f(r: Range<usize>, matches: &[Range<usize>]) -> String {
-            MatchHighlighter::new(r, matches)
+        let search_matches = vec![10..20, 30..40, 40..40, 40..40, 50..50, 50..60, 70..70];
+        let mut highlighter = SearchMatchHighlighter::new(&search_matches, Some(1));
+
+        fn f(highlighter: &mut SearchMatchHighlighter<'_>, range: Range<usize>) -> String {
+            highlighter
+                .highlight(range)
                 .map(|(r, b)| {
                     let prefix = match b {
-                        HighlightType::NotAMatch => "not matching",
-                        HighlightType::Match => "       match",
+                        HighlightKind::CurrentMatch => "current match",
+                        HighlightKind::OtherMatch => "  other match",
+                        HighlightKind::NotAMatch => " not matching",
                     };
                     format!("{prefix}: {r:?}")
                 })
@@ -963,44 +1053,86 @@ mod tests {
                 .join("\n")
         }
 
-        let search_matches = vec![10..20, 30..40, 40..40, 40..40, 50..50, 50..60, 70..70];
-
-        assert_snapshot!(f(0..35, &search_matches), @r"
-        not matching: 0..10
-               match: 10..20
-        not matching: 20..30
-               match: 30..35
+        assert_snapshot!(f(&mut highlighter, 0..31), @r"
+         not matching: 0..10
+          other match: 10..20
+         not matching: 20..30
+        current match: 30..31
         ");
 
-        assert_snapshot!(f(30..40, &search_matches), @"       match: 30..40");
+        // Backtrack
+        assert_snapshot!(f(&mut highlighter, 32..33), @"current match: 32..33");
+        assert_snapshot!(f(&mut highlighter, 33..36), @"current match: 33..36");
+        assert_snapshot!(f(&mut highlighter, 37..40), @"current match: 37..40");
 
-        assert_snapshot!(f(30..45, &search_matches), @r"
-               match: 30..40
-        not matching: 40..45
+        // Backtrack
+        assert_snapshot!(f(&mut highlighter, 30..40), @"current match: 30..40");
+        assert_snapshot!(f(&mut highlighter, 40..45), @" not matching: 40..45");
+
+        assert_snapshot!(f(&mut highlighter, 30..45), @r"
+        current match: 30..40
+         not matching: 40..45
         ");
 
-        assert_snapshot!(f(35..45, &search_matches), @r"
-               match: 35..40
-        not matching: 40..45
+        assert_snapshot!(f(&mut highlighter, 35..45), @r"
+        current match: 35..40
+         not matching: 40..45
         ");
 
-        assert_snapshot!(f(40..45, &search_matches), @"not matching: 40..45");
+        assert_snapshot!(f(&mut highlighter, 40..45), @" not matching: 40..45");
 
-        assert_snapshot!(f(40..55, &search_matches), @r"
+        assert_snapshot!(f(&mut highlighter, 40..55), @r"
         not matching: 40..50
-               match: 50..55
+         other match: 50..55
         ");
 
-        assert_snapshot!(f(50..65, &search_matches), @r"
-               match: 50..60
+        assert_snapshot!(f(&mut highlighter, 50..65), @r"
+         other match: 50..60
         not matching: 60..65
         ");
 
-        assert_snapshot!(f(65..75, &search_matches), @r"
+        assert_snapshot!(f(&mut highlighter, 65..75), @r"
         not matching: 65..70
         not matching: 70..75
         ");
 
-        assert_snapshot!(f(70..70, &search_matches), @"");
+        assert_snapshot!(f(&mut highlighter, 70..70), @"");
+
+        // One more backtrack for good measure
+        assert_snapshot!(f(&mut highlighter, 0..75), @r"
+         not matching: 0..10
+          other match: 10..20
+         not matching: 20..30
+        current match: 30..40
+         not matching: 40..50
+          other match: 50..60
+         not matching: 60..70
+         not matching: 70..75
+        ");
+
+        let search_matches = vec![10..15, 20..25, 30..35, 40..45, 50..55, 60..65];
+        let mut highlighter = SearchMatchHighlighter::new(&search_matches, None);
+
+        assert_snapshot!(f(&mut highlighter, 0..18), @r"
+        not matching: 0..10
+         other match: 10..15
+        not matching: 15..18
+        ");
+
+        // Jump ahead one match
+        assert_snapshot!(f(&mut highlighter, 26..28), @" not matching: 26..28");
+        assert_snapshot!(f(&mut highlighter, 29..38), @r"
+        not matching: 29..30
+         other match: 30..35
+        not matching: 35..38
+        ");
+
+        // Jump ahead multiple matches
+        assert_snapshot!(f(&mut highlighter, 26..28), @" not matching: 26..28");
+        assert_snapshot!(f(&mut highlighter, 58..68), @r"
+        not matching: 58..60
+         other match: 60..65
+        not matching: 65..68
+        ");
     }
 }
