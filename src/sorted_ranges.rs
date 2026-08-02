@@ -124,27 +124,35 @@ pub trait SortedRanges {
     ///
     /// So we can see that `1..1` and `2..2` overlap with `1..4`, but `4..4` does not.
     fn index_of_first_elem_overlapping(&self, range: &Range<usize>) -> Option<usize> {
-        // If an elem ends at or before `range.start`, it definitely doesn't intersect, so
-        // we find the first one that ends after `range.start`. If it intersects range, it will
-        // be the first intersection.
-        //
-        // If that elem starts after
-        // the range, and the elems just skipped over the range, and there's no intersection.
-        // but if the elem starts before the end, then max(elem.start, range.start) is
-        // guaranteed to be in both ranges, so we've found an intersection.
-        // We found what we're looking for. Otherwise, its start
-        match self.index_of_first_elem_ending_after(range.start) {
-            None => None,
-            Some(elem_index) => {
-                let elem = self.elem(elem_index);
-                let elem_range = Self::elem_start(elem)..Self::elem_end(elem);
-                if overlap(range, &elem_range) {
-                    Some(elem_index)
-                } else {
-                    None
+        // If an elem ends at or before `range.start`, it definitely doesn't intersect,
+        // unless that elem has an empty range, so we find the last one that ends at or
+        // before `range.start`. If it is an empty range that starts and ends at `range.start`,
+        // we return that, but otherwise we check the first range after that (if it exists).
+        // If it intersects `range`, it will be the first intersection. If not, there's
+        // no overlapping elem.
+        let index_of_first_elem_starting_at_or_after_start =
+            match self.index_of_last_elem_ending_at_or_before(range.start) {
+                None => 0,
+                Some(elem_index) => {
+                    let elem = self.elem(elem_index);
+                    // We already know `elem.end <= range.start`, so if `elem.start == range.start`,
+                    // we know it's an empty range starting and ending at `range.start`.
+                    if Self::elem_start(elem) == range.start {
+                        return Some(elem_index);
+                    }
+                    elem_index + 1
                 }
+            };
+
+        if index_of_first_elem_starting_at_or_after_start < self.elems().len() {
+            let elem = self.elem(index_of_first_elem_starting_at_or_after_start);
+            let elem_range = Self::elem_start(elem)..Self::elem_end(elem);
+            if overlap(range, &elem_range) {
+                return Some(index_of_first_elem_starting_at_or_after_start);
             }
         }
+
+        None
     }
 
     /// Returns the index of the first elem where `index <= elem.start`, or `None` if no such
@@ -226,6 +234,7 @@ mod tests {
         assert_eq!(ranges.index_of_elem_containing(40), None);
     }
 
+    #[test]
     fn test_find_overlapping() {
         let ranges = vec![5..10, 12..15, 15..15, 15..18, 20..20, 20..25];
 
