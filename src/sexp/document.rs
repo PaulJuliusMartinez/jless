@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{Fragment, PreHighlightingStyledSegment, Text};
+use crate::rendering::{Fragment, StyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
@@ -1780,7 +1780,8 @@ impl Document for SexpDocument {
         &self,
         screen_line: &ScreenLine,
         cursor: &Self::Cursor,
-    ) -> Option<Vec<PreHighlightingStyledSegment>> {
+        search_matches: &[Range<usize>],
+    ) -> Option<Vec<StyledSegment>> {
         let color_scheme = ColorScheme::default();
         let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
         Some(style_typeset_line(
@@ -1788,6 +1789,7 @@ impl Document for SexpDocument {
             &render_context,
             &screen_line.logical_line,
             screen_line.typeset_line(),
+            search_matches,
         ))
     }
 

@@ -1,7 +1,7 @@
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use crate::rendering::PreHighlightingStyledSegment;
+use crate::rendering::StyledSegment;
 use crate::search::InvertedPairedDelimeters;
 
 // Misc. notes:
@@ -241,7 +241,8 @@ pub trait Document {
         &self,
         screen_line: &Self::ScreenLine,
         cursor: &Self::Cursor,
-    ) -> Option<Vec<PreHighlightingStyledSegment>>;
+        search_matches: &[Range<usize>],
+    ) -> Option<Vec<StyledSegment>>;
 }
 
 pub struct ContentRange<SL> {

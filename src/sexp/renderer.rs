@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
+use std::ops::Range;
 use std::rc::Rc;
 
-use crate::rendering::{Attrs, Compositor, PreHighlightingStyledSegment, Text};
+use crate::rendering::{Attrs, Compositor, HighlightType, MatchHighlighter, StyledSegment, Text};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
@@ -588,65 +589,83 @@ pub fn style_typeset_line<'l, 's>(
     context: &'l RenderContext<'s>,
     logical_line: &'l LogicalLine,
     fragments: &'l TypesetLine,
-) -> Vec<PreHighlightingStyledSegment> {
-    let cursor_attrs = Attrs::default();
+    search_matches: &[Range<usize>],
+) -> Vec<StyledSegment> {
+    let mut styled_segments = vec![];
 
-    fragments
-        .0
-        .iter()
-        .map(|fragment| {
-            let (focused, token_color_scheme) = match fragment.source {
-                FragmentSource::Cursor => {
-                    let cursor = context.cursor_content(logical_line);
+    for fragment in &fragments.0 {
+        let (focused, token_color_scheme) = match fragment.source {
+            FragmentSource::Cursor => {
+                let cursor = context.cursor_content(logical_line);
 
-                    return PreHighlightingStyledSegment {
-                        attrs: cursor_attrs,
-                        search_match_attrs: cursor_attrs,
-                        content: Text::Static(cursor),
-                    };
-                }
-                FragmentSource::Whitespace => (false, context.color_scheme.whitespace),
-                FragmentSource::ElidedPreviewNodes | FragmentSource::NodePreview(_) => {
-                    (false, context.color_scheme.comment)
-                }
-                FragmentSource::SexpComment(node_index) => {
-                    let focused = context.focused_node_indexes.contains(&node_index);
-                    (focused, context.color_scheme.comment)
-                }
-                FragmentSource::Node(node_index) => {
-                    let focused = context.focused_node_indexes.contains(&node_index);
-                    let token_color_scheme = match core.token(node_index) {
-                        DocumentToken::StartOfList(_)
-                        | DocumentToken::EndOfList(_)
-                        | DocumentToken::Unit { .. } => context.color_scheme.parens,
-                        DocumentToken::LineComment | DocumentToken::BlockComment => {
-                            context.color_scheme.comment
-                        }
-                        DocumentToken::Error(_) => context.color_scheme.error,
-                        DocumentToken::Atom(atom_metadata) => {
-                            context.color_scheme.for_atom_kind(atom_metadata.atom_kind)
-                        }
-                    };
-                    (focused, token_color_scheme)
-                }
-            };
+                styled_segments.push(StyledSegment {
+                    attrs: Attrs::default(),
+                    content: Text::Static(cursor),
+                });
 
-            let (attrs, search_match_attrs) = if focused {
-                (
-                    token_color_scheme.focused,
-                    token_color_scheme.focused_search_match,
-                )
-            } else {
-                (token_color_scheme.normal, token_color_scheme.search_match)
-            };
-
-            PreHighlightingStyledSegment {
-                attrs,
-                search_match_attrs,
-                content: fragment.text.clone(),
+                continue;
             }
-        })
-        .collect::<Vec<_>>()
+            FragmentSource::Whitespace => (false, context.color_scheme.whitespace),
+            FragmentSource::ElidedPreviewNodes | FragmentSource::NodePreview(_) => {
+                (false, context.color_scheme.comment)
+            }
+            FragmentSource::SexpComment(node_index) => {
+                let focused = context.focused_node_indexes.contains(&node_index);
+                (focused, context.color_scheme.comment)
+            }
+            FragmentSource::Node(node_index) => {
+                let focused = context.focused_node_indexes.contains(&node_index);
+                let token_color_scheme = match core.token(node_index) {
+                    DocumentToken::StartOfList(_)
+                    | DocumentToken::EndOfList(_)
+                    | DocumentToken::Unit { .. } => context.color_scheme.parens,
+                    DocumentToken::LineComment | DocumentToken::BlockComment => {
+                        context.color_scheme.comment
+                    }
+                    DocumentToken::Error(_) => context.color_scheme.error,
+                    DocumentToken::Atom(atom_metadata) => {
+                        context.color_scheme.for_atom_kind(atom_metadata.atom_kind)
+                    }
+                };
+                (focused, token_color_scheme)
+            }
+        };
+
+        let (attrs, search_match_attrs) = if focused {
+            (
+                token_color_scheme.focused,
+                token_color_scheme.focused_search_match,
+            )
+        } else {
+            (token_color_scheme.normal, token_color_scheme.search_match)
+        };
+
+        match &fragment.text {
+            Text::String(_) | Text::Static(_) => {
+                styled_segments.push(StyledSegment {
+                    content: fragment.text.clone(),
+                    attrs,
+                });
+            }
+            Text::SourceRange(range) => {
+                for (highlight_range, highlight_type) in
+                    MatchHighlighter::new(range.clone(), search_matches)
+                {
+                    let attrs = match highlight_type {
+                        HighlightType::NotAMatch => attrs,
+                        HighlightType::Match => search_match_attrs,
+                    };
+
+                    styled_segments.push(StyledSegment {
+                        content: Text::SourceRange(highlight_range),
+                        attrs,
+                    });
+                }
+            }
+        }
+    }
+
+    styled_segments
 }
 
 #[cfg(test)]
@@ -731,6 +750,7 @@ mod tests {
                         &render_context,
                         &logical_lines[line],
                         &typeset_line,
+                        &[],
                     ),
                     doc.raw_bytes_for_searching(),
                     &style_map(),

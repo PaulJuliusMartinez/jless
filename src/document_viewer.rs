@@ -1710,19 +1710,13 @@ impl<D: Document> DocumentViewer<D> {
                         attrs: dimmed,
                     });
 
-                    match self
-                        .doc
-                        .render_screen_line(&screen_line, &self.current_focus)
-                    {
-                        Some(unhighlighted_segments) => {
-                            let highlighted_segments: Vec<StyledSegment> = unhighlighted_segments
-                                .into_iter()
-                                .flat_map(|segment| {
-                                    segment.highlight_search_matches(search_match_ranges)
-                                })
-                                .collect();
-
-                            rendered_line.extend(highlighted_segments);
+                    match self.doc.render_screen_line(
+                        &screen_line,
+                        &self.current_focus,
+                        search_match_ranges,
+                    ) {
+                        Some(segments) => {
+                            rendered_line.extend(segments);
                         }
                         None => {
                             // Fallback to `debug_text_content`

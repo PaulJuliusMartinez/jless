@@ -468,20 +468,6 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
     }
 }
 
-// Someday: Rather than having this intermediate PreHighlightingStyledSegment, could
-// we just process both highlighting and which nodes are focused in a single pass?
-
-/// A segment of styled text, with two separate styles depending on whether any
-/// search matches are contained within the text. Highlighting search matches is
-/// done as a post-processing step so that individual data formats don't need to
-/// worry about it.
-#[derive(Debug)]
-pub struct PreHighlightingStyledSegment {
-    pub attrs: Attrs,
-    pub search_match_attrs: Attrs,
-    pub content: Text,
-}
-
 /// A segment of styled text.
 #[derive(Debug)]
 pub struct StyledSegment {
@@ -503,7 +489,7 @@ pub enum HighlightType {
 }
 
 impl<'a> MatchHighlighter<'a> {
-    fn new(range: Range<usize>, search_matches: &'a [Range<usize>]) -> Self {
+    pub fn new(range: Range<usize>, search_matches: &'a [Range<usize>]) -> Self {
         let subsequent_search_matches = match search_matches.index_of_first_elem_overlapping(&range)
         {
             None => &[],
@@ -557,34 +543,6 @@ impl<'a> Iterator for MatchHighlighter<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         self.next_range()
-    }
-}
-
-impl PreHighlightingStyledSegment {
-    pub fn highlight_search_matches(self, search_matches: &[Range<usize>]) -> Vec<StyledSegment> {
-        let PreHighlightingStyledSegment {
-            attrs,
-            search_match_attrs,
-            content,
-        } = self;
-
-        match &content {
-            Text::String(_) | Text::Static(_) => {
-                vec![StyledSegment { attrs, content }]
-            }
-            Text::SourceRange(range) => MatchHighlighter::new(range.clone(), search_matches)
-                .map(|(range, highlight_type)| {
-                    let attrs = match highlight_type {
-                        HighlightType::Match => search_match_attrs,
-                        HighlightType::NotAMatch => attrs,
-                    };
-                    StyledSegment {
-                        attrs,
-                        content: Text::SourceRange(range),
-                    }
-                })
-                .collect(),
-        }
     }
 }
 
@@ -731,7 +689,7 @@ pub mod test_helpers {
     }
 
     pub fn dump_segments(
-        segments: Vec<PreHighlightingStyledSegment>,
+        segments: Vec<StyledSegment>,
         content: &[u8],
         style_map: &HashMap<Attrs, String>,
     ) -> String {
@@ -815,29 +773,24 @@ pub mod test_helpers {
 
             let dumped = dump_segments(
                 vec![
-                    PreHighlightingStyledSegment {
+                    StyledSegment {
                         attrs: normal_token.normal,
-                        search_match_attrs: default,
                         content: Text::SourceRange(0..6),
                     },
-                    PreHighlightingStyledSegment {
+                    StyledSegment {
                         attrs: normal_token.focused,
-                        search_match_attrs: default,
                         content: Text::spaces(5),
                     },
-                    PreHighlightingStyledSegment {
+                    StyledSegment {
                         attrs: color_token.normal,
-                        search_match_attrs: default,
                         content: Text::SourceRange(6..11),
                     },
-                    PreHighlightingStyledSegment {
+                    StyledSegment {
                         attrs: normal_token.focused,
-                        search_match_attrs: default,
                         content: Text::spaces(1),
                     },
-                    PreHighlightingStyledSegment {
+                    StyledSegment {
                         attrs: color_token.focused,
-                        search_match_attrs: default,
                         content: Text::String((std::rc::Rc::new("🦀".to_string()), 0.."🦀".len())),
                     },
                 ],
