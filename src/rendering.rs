@@ -489,50 +489,75 @@ pub struct StyledSegment {
     pub content: Text,
 }
 
-fn separate_highlighted_and_unhighlighted_ranges(
-    range: &Range<usize>,
-    mut search_matches: &[Range<usize>],
-) -> Vec<(Range<usize>, bool)> {
-    let mut remaining_range = range.clone();
-    let mut parts = vec![];
+pub struct MatchHighlighter<'a> {
+    remaining_range: Range<usize>,
+    // Guaranteed that the first match here always ends after the start of
+    // `remaining_range` (or the first match is an empty range starting and
+    // ending at the start of `remaining_range`.)
+    subsequent_search_matches: &'a [Range<usize>],
+}
 
-    while remaining_range.len() > 0 {
-        let search_match_range =
-            match search_matches.index_of_first_elem_overlapping(&remaining_range) {
-                None => {
-                    // The whole range is not highlighted.
-                    parts.push((remaining_range, false));
-                    break;
-                }
-                Some(index) => {
-                    let range = search_matches[index].clone();
-                    // Make sure we update search_matches so that if we have a 0 length
-                    // match we skip past it.
-                    search_matches = &search_matches[(index + 1)..];
-                    range
-                }
-            };
+pub enum HighlightType {
+    Match,
+    NotAMatch,
+}
 
-        // Push an unhighlighted segment at the start.
-        if remaining_range.start < search_match_range.start {
-            let unhighlighted_range = remaining_range.start..search_match_range.start;
-            parts.push((unhighlighted_range, false));
+impl<'a> MatchHighlighter<'a> {
+    fn new(range: Range<usize>, search_matches: &'a [Range<usize>]) -> Self {
+        let subsequent_search_matches = match search_matches.index_of_first_elem_overlapping(&range)
+        {
+            None => &[],
+            Some(index) => &search_matches[index..],
+        };
 
-            remaining_range = search_match_range.start..remaining_range.end;
+        MatchHighlighter {
+            remaining_range: range,
+            subsequent_search_matches,
         }
-
-        let highlighted_range_start = usize::max(remaining_range.start, search_match_range.start);
-        let highlighted_range_end = usize::min(remaining_range.end, search_match_range.end);
-        let highlighted_range = highlighted_range_start..highlighted_range_end;
-
-        if highlighted_range.len() > 0 {
-            parts.push((highlighted_range, true));
-        }
-
-        remaining_range = highlighted_range_end..remaining_range.end;
     }
 
-    parts
+    fn next_range(&mut self) -> Option<(Range<usize>, HighlightType)> {
+        if self.remaining_range.is_empty() {
+            return None;
+        }
+
+        if self.subsequent_search_matches.is_empty() {
+            let unmatched_range = self.remaining_range.clone();
+            self.remaining_range = unmatched_range.end..unmatched_range.end;
+            return Some((unmatched_range, HighlightType::NotAMatch));
+        }
+
+        let search_match_range = &self.subsequent_search_matches[0];
+
+        if self.remaining_range.start < search_match_range.start {
+            // Next match hasn't started yet; return up to the start of
+            // the next match.
+            let unmatched_end = usize::min(self.remaining_range.end, search_match_range.start);
+            let unmatched_range = self.remaining_range.start..unmatched_end;
+            self.remaining_range = unmatched_range.end..self.remaining_range.end;
+            return Some((unmatched_range, HighlightType::NotAMatch));
+        }
+
+        let match_end = usize::min(self.remaining_range.end, search_match_range.end);
+        let match_range = self.remaining_range.start..match_end;
+        self.remaining_range = match_end..self.remaining_range.end;
+        self.subsequent_search_matches = &self.subsequent_search_matches[1..];
+
+        if match_range.is_empty() {
+            // Don't return empty ranges; just recurse.
+            self.next_range()
+        } else {
+            Some((match_range, HighlightType::Match))
+        }
+    }
+}
+
+impl<'a> Iterator for MatchHighlighter<'a> {
+    type Item = (Range<usize>, HighlightType);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.next_range()
+    }
 }
 
 impl PreHighlightingStyledSegment {
@@ -547,22 +572,18 @@ impl PreHighlightingStyledSegment {
             Text::String(_) | Text::Static(_) => {
                 vec![StyledSegment { attrs, content }]
             }
-            Text::SourceRange(range) => {
-                separate_highlighted_and_unhighlighted_ranges(range, search_matches)
-                    .into_iter()
-                    .map(|(range, highlighted)| {
-                        let attrs = if highlighted {
-                            search_match_attrs
-                        } else {
-                            attrs
-                        };
-                        StyledSegment {
-                            attrs,
-                            content: Text::SourceRange(range),
-                        }
-                    })
-                    .collect()
-            }
+            Text::SourceRange(range) => MatchHighlighter::new(range.clone(), search_matches)
+                .map(|(range, highlight_type)| {
+                    let attrs = match highlight_type {
+                        HighlightType::Match => search_match_attrs,
+                        HighlightType::NotAMatch => attrs,
+                    };
+                    StyledSegment {
+                        attrs,
+                        content: Text::SourceRange(range),
+                    }
+                })
+                .collect(),
         }
     }
 }
@@ -975,16 +996,15 @@ mod tests {
     }
 
     #[test]
-    fn test_separate_highlighted_and_unhighlighted_ranges() {
-        fn f(r: &Range<usize>, matches: &[Range<usize>]) -> String {
-            separate_highlighted_and_unhighlighted_ranges(r, matches)
-                .into_iter()
+    fn test_match_highlighter() {
+        fn f(r: Range<usize>, matches: &[Range<usize>]) -> String {
+            MatchHighlighter::new(r, matches)
                 .map(|(r, b)| {
-                    format!(
-                        "{}: {:?}",
-                        if b { "  highlighted" } else { "unhighlighted" },
-                        r,
-                    )
+                    let prefix = match b {
+                        HighlightType::NotAMatch => "not matching",
+                        HighlightType::Match => "       match",
+                    };
+                    format!("{prefix}: {r:?}")
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -992,42 +1012,42 @@ mod tests {
 
         let search_matches = vec![10..20, 30..40, 40..40, 40..40, 50..50, 50..60, 70..70];
 
-        assert_snapshot!(f(&(0..35), &search_matches), @r"
-        unhighlighted: 0..10
-          highlighted: 10..20
-        unhighlighted: 20..30
-          highlighted: 30..35
+        assert_snapshot!(f(0..35, &search_matches), @r"
+        not matching: 0..10
+               match: 10..20
+        not matching: 20..30
+               match: 30..35
         ");
 
-        assert_snapshot!(f(&(30..40), &search_matches), @"  highlighted: 30..40");
+        assert_snapshot!(f(30..40, &search_matches), @"       match: 30..40");
 
-        assert_snapshot!(f(&(30..45), &search_matches), @r"
-          highlighted: 30..40
-        unhighlighted: 40..45
+        assert_snapshot!(f(30..45, &search_matches), @r"
+               match: 30..40
+        not matching: 40..45
         ");
 
-        assert_snapshot!(f(&(35..45), &search_matches), @r"
-          highlighted: 35..40
-        unhighlighted: 40..45
+        assert_snapshot!(f(35..45, &search_matches), @r"
+               match: 35..40
+        not matching: 40..45
         ");
 
-        assert_snapshot!(f(&(40..45), &search_matches), @"unhighlighted: 40..45");
+        assert_snapshot!(f(40..45, &search_matches), @"not matching: 40..45");
 
-        assert_snapshot!(f(&(40..55), &search_matches), @r"
-        unhighlighted: 40..50
-          highlighted: 50..55
+        assert_snapshot!(f(40..55, &search_matches), @r"
+        not matching: 40..50
+               match: 50..55
         ");
 
-        assert_snapshot!(f(&(50..65), &search_matches), @r"
-          highlighted: 50..60
-        unhighlighted: 60..65
+        assert_snapshot!(f(50..65, &search_matches), @r"
+               match: 50..60
+        not matching: 60..65
         ");
 
-        assert_snapshot!(f(&(65..75), &search_matches), @r"
-        unhighlighted: 65..70
-        unhighlighted: 70..75
+        assert_snapshot!(f(65..75, &search_matches), @r"
+        not matching: 65..70
+        not matching: 70..75
         ");
 
-        assert_snapshot!(f(&(70..70), &search_matches), @"");
+        assert_snapshot!(f(70..70, &search_matches), @"");
     }
 }
