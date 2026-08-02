@@ -5,7 +5,8 @@ use std::rc::Rc;
 
 use crate::dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{SearchMatchHighlighter, StyledSegment};
+use crate::rendering::StyledSegment;
+use crate::search::SearchMatchHighlighter;
 
 // Precalculated break points when displaying a long line. Each values represents
 // the starting byte offset of one line.

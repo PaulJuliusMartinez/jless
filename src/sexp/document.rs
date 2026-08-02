@@ -7,8 +7,8 @@ use std::rc::Rc;
 
 use crate::dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{Fragment, SearchMatchHighlighter, StyledSegment, Text};
-use crate::search::{self, InvertedPairedDelimeters};
+use crate::rendering::{Fragment, StyledSegment, Text};
+use crate::search::{self, InvertedPairedDelimeters, SearchMatchHighlighter};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocCore, DocumentToken, EndOfListMetadata, ListKind,

@@ -2,9 +2,8 @@ use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
-use crate::rendering::{
-    Attrs, Compositor, HighlightKind, SearchMatchHighlighter, StyledSegment, Text,
-};
+use crate::rendering::{Attrs, Compositor, StyledSegment, Text};
+use crate::search::{HighlightKind, SearchMatchHighlighter};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,

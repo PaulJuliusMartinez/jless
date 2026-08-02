@@ -5,8 +5,8 @@ use std::rc::Rc;
 use crate::action::{Action, MovementMethod};
 use crate::dimensions::Dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{AnsiColor, Attrs, SearchMatchHighlighter, StyledSegment, Text};
-use crate::search::{JumpDirection, SearchDirection, SearchState};
+use crate::rendering::{AnsiColor, Attrs, StyledSegment, Text};
+use crate::search::{JumpDirection, SearchDirection, SearchMatchHighlighter, SearchState};
 
 /// The `DocumentViewer` manages what part of a document is displayed on screen
 /// as the user takes actions to move the cursor or manipulate the document. Much

@@ -1,8 +1,8 @@
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
-use crate::rendering::{SearchMatchHighlighter, StyledSegment};
-use crate::search::InvertedPairedDelimeters;
+use crate::rendering::StyledSegment;
+use crate::search::{InvertedPairedDelimeters, SearchMatchHighlighter};
 
 // Misc. notes:
 //
