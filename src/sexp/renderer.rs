@@ -2,61 +2,32 @@ use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
-use crate::rendering::{Attrs, Compositor, PreHighlightingStyledSegment, Text, TokenColorScheme};
+use crate::rendering::{Attrs, Compositor, PreHighlightingStyledSegment, Text};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
-    invariants, AtomKind, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
+    invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
 };
 use crate::sexp::document::{CollapseState, TypesetLine, TypesetLines};
 use crate::sexp::layout::LogicalLine;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum SegmentKind {
+#[derive(Copy, Clone, Debug)]
+pub enum FragmentSource {
+    Cursor,
     Whitespace,
-    Parens,
-    PlainAtom,
-    AtomEscapeSequence,
-    AtomInvalidEscapeSequence,
-    RecordKeyAtom,
-    ConstructorAtom,
-    NumberAtom,
-    BoolAtom,
-    DateAtom,
-    TimeAtom,
-    Comment,
-    Error,
-    Preview,
+    Node(NodeIndex),
+    NodePreview(NodeIndex),
+    ElidedPreviewNodes,
+    SexpComment(NodeIndex),
 }
 
-impl SegmentKind {
-    pub fn for_atom_kind(atom_kind: AtomKind) -> Self {
-        match atom_kind {
-            AtomKind::Constructor => SegmentKind::ConstructorAtom,
-            AtomKind::RecordKey => SegmentKind::RecordKeyAtom,
-            AtomKind::Number => SegmentKind::NumberAtom,
-            AtomKind::Bool => SegmentKind::BoolAtom,
-            AtomKind::Date => SegmentKind::DateAtom,
-            AtomKind::Time => SegmentKind::TimeAtom,
-            AtomKind::StringifiedList | AtomKind::Plain => SegmentKind::PlainAtom,
-        }
-    }
-
-    pub fn color_scheme(self, color_scheme: &ColorScheme) -> TokenColorScheme {
+impl FragmentSource {
+    pub fn node_index(&self) -> Option<NodeIndex> {
+        use FragmentSource::*;
         match self {
-            SegmentKind::Whitespace => color_scheme.whitespace,
-            SegmentKind::Parens => color_scheme.parens,
-            SegmentKind::PlainAtom => color_scheme.plain_atom,
-            SegmentKind::AtomEscapeSequence => color_scheme.atom_escape_sequence,
-            SegmentKind::AtomInvalidEscapeSequence => color_scheme.atom_invalid_escape_sequence,
-            SegmentKind::RecordKeyAtom => color_scheme.record_key_atom,
-            SegmentKind::ConstructorAtom => color_scheme.constructor_atom,
-            SegmentKind::NumberAtom => color_scheme.number_atom,
-            SegmentKind::BoolAtom => color_scheme.bool_atom,
-            SegmentKind::DateAtom => color_scheme.date_atom,
-            SegmentKind::TimeAtom => color_scheme.time_atom,
-            SegmentKind::Comment => color_scheme.comment,
-            SegmentKind::Error => color_scheme.error,
-            SegmentKind::Preview => color_scheme.comment,
+            Cursor | Whitespace | ElidedPreviewNodes => None,
+            Node(node_index) | NodePreview(node_index) | SexpComment(node_index) => {
+                Some(*node_index)
+            }
         }
     }
 }
@@ -66,7 +37,7 @@ struct Typesetter<'a> {
     doc_content: &'a [u8],
     core: &'a DocCore,
     collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
-    compositor: Compositor<'a, NodeIndex, SegmentKind>,
+    compositor: Compositor<'a, FragmentSource>,
     include_cursor: bool,
 }
 
@@ -113,19 +84,13 @@ const EXPANDED_CONTAINER: &str = "▽ ";
 impl<'a> Typesetter<'a> {
     fn typeset(&mut self) {
         if self.logical_line.indentation > 0 {
-            self.compositor.append_spaces(
-                self.logical_line.indentation,
-                SegmentKind::Whitespace,
-                None,
-            );
+            self.compositor
+                .append_spaces(self.logical_line.indentation, FragmentSource::Whitespace);
         }
 
         if self.include_cursor {
-            self.compositor.append_content(
-                Text::Static(CURSOR_PLACEHOLDER),
-                SegmentKind::Whitespace,
-                None,
-            );
+            self.compositor
+                .append_text(Text::Static(CURSOR_PLACEHOLDER), FragmentSource::Cursor);
         }
 
         let mut prev_node_end_index = None;
@@ -137,10 +102,9 @@ impl<'a> Typesetter<'a> {
             if let Some(end_index) = prev_node_end_index {
                 let whitespace_range = end_index..(node.data_range.start);
                 if whitespace_range.len() > 0 {
-                    self.compositor.append_content(
+                    self.compositor.append_text(
                         Text::SourceRange(whitespace_range),
-                        SegmentKind::Whitespace,
-                        None,
+                        FragmentSource::Whitespace,
                     );
                 }
             }
@@ -148,13 +112,12 @@ impl<'a> Typesetter<'a> {
             prev_node_end_index = Some(node.data_range.end);
 
             if let Some(sexp_comment_range) = node.sexp_comment_range() {
-                let content = Text::SourceRange(sexp_comment_range);
+                let text = Text::SourceRange(sexp_comment_range);
                 self.compositor
-                    .append_content(content, SegmentKind::Parens, Some(node_index));
+                    .append_text(text, FragmentSource::SexpComment(node_index));
             }
 
-            let segment_kind;
-            let mut content = Text::SourceRange(node.data_range.clone());
+            let mut text = Text::SourceRange(node.data_range.clone());
 
             match &node.token {
                 DocumentToken::StartOfList(list_metadata) => {
@@ -163,34 +126,23 @@ impl<'a> Typesetter<'a> {
                         collapsed_start_and_end = Some((node_index, list_metadata.end_index()));
                         break;
                     }
-
-                    segment_kind = SegmentKind::Parens;
-                }
-                DocumentToken::EndOfList(_end_of_list_metadata) => {
-                    segment_kind = SegmentKind::Parens;
-                }
-                DocumentToken::Atom(atom_metadata) => {
-                    segment_kind = SegmentKind::for_atom_kind(atom_metadata.atom_kind);
-                }
-                DocumentToken::Unit {
-                    sexp_commented_out: _handled_above,
-                } => {
-                    segment_kind = SegmentKind::Parens;
-                }
-                DocumentToken::LineComment | DocumentToken::BlockComment => {
-                    segment_kind = SegmentKind::Comment;
                 }
                 DocumentToken::Error(error_metadata) => {
-                    segment_kind = SegmentKind::Error;
-                    content = Text::String((
+                    text = Text::String((
                         Rc::new(error_metadata.message.clone()),
                         0..error_metadata.message.len(),
                     ));
                 }
+                DocumentToken::EndOfList(_end_of_list_metadata) => (),
+                DocumentToken::Atom(_atom_metadata) => (),
+                DocumentToken::Unit {
+                    sexp_commented_out: _handled_above,
+                } => (),
+                DocumentToken::LineComment | DocumentToken::BlockComment => (),
             }
 
             self.compositor
-                .append_content(content, segment_kind, Some(node_index));
+                .append_text(text, FragmentSource::Node(node_index));
         }
 
         if let Some((start_index, Some(end_index))) = collapsed_start_and_end {
@@ -212,7 +164,7 @@ impl<'a> Typesetter<'a> {
             // the closing parens and get on with it.
 
             self.compositor
-                .append_content(Text::ellipsis(), SegmentKind::Preview, None);
+                .append_text(Text::ellipsis(), FragmentSource::ElidedPreviewNodes);
 
             let mut closing_paren = close_index + 1;
             while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
@@ -220,10 +172,9 @@ impl<'a> Typesetter<'a> {
                     break;
                 }
 
-                self.compositor.append_content(
+                self.compositor.append_text(
                     Text::SourceRange(self.core.node(closing_paren).data_range.clone()),
-                    SegmentKind::Parens,
-                    Some(closing_paren),
+                    FragmentSource::Node(closing_paren),
                 );
 
                 closing_paren = closing_paren + 1;
@@ -233,7 +184,7 @@ impl<'a> Typesetter<'a> {
 
     fn append_reserved_ellipsis(&mut self) {
         self.compositor
-            .append_reserved_content(Text::ellipsis(), SegmentKind::Preview, None);
+            .append_reserved_text(Text::ellipsis(), FragmentSource::ElidedPreviewNodes);
     }
 
     fn count_trailing_paren(&self, mut closing_paren: NodeIndex) -> usize {
@@ -257,10 +208,9 @@ impl<'a> Typesetter<'a> {
                 break;
             }
 
-            self.compositor.append_reserved_content(
+            self.compositor.append_reserved_text(
                 Text::SourceRange(self.core.node(closing_paren).data_range.clone()),
-                SegmentKind::Parens,
-                Some(closing_paren),
+                FragmentSource::Node(closing_paren),
             );
 
             closing_paren = closing_paren + 1;
@@ -353,10 +303,9 @@ impl<'a> Typesetter<'a> {
     }
 
     fn append_reserved_node_as_preview(&mut self, index: NodeIndex) {
-        self.compositor.append_reserved_content(
+        self.compositor.append_reserved_text(
             Text::SourceRange(self.core.node(index).data_range.clone()),
-            SegmentKind::Preview,
-            Some(index),
+            FragmentSource::NodePreview(index),
         )
     }
 
@@ -368,11 +317,10 @@ impl<'a> Typesetter<'a> {
                 let content = Text::SourceRange(node.data_range.clone());
 
                 let delimited = self.doc_content[start] == b'"';
-                self.compositor.try_append_content(
+                self.compositor.try_append_text(
                     content,
                     delimited,
-                    SegmentKind::Preview,
-                    Some(index),
+                    FragmentSource::NodePreview(index),
                     1,
                 )
             }
@@ -476,11 +424,10 @@ impl<'a> Typesetter<'a> {
         // Opening paren
         self.append_reserved_node_as_preview(index);
 
-        let successfully_wrote_first_atom = self.compositor.try_append_content(
+        let successfully_wrote_first_atom = self.compositor.try_append_text(
             atom_content,
             is_delimited,
-            SegmentKind::Preview,
-            Some(index),
+            FragmentSource::NodePreview(index),
             space_needed_for_first_atom,
         );
 
@@ -528,7 +475,7 @@ impl<'a> Typesetter<'a> {
         };
 
         self.compositor
-            .append_reserved_content(space_content, SegmentKind::Preview, None);
+            .append_reserved_text(space_content, FragmentSource::Whitespace);
     }
 }
 
@@ -637,34 +584,52 @@ impl<'a> RenderContext<'a> {
 
 // 'l for lifetime of the line renderer, 's for the lifetime of rendering the whole screen
 pub fn style_typeset_line<'l, 's>(
+    core: &'l DocCore,
     context: &'l RenderContext<'s>,
     logical_line: &'l LogicalLine,
-    segments: &'l TypesetLine,
+    fragments: &'l TypesetLine,
 ) -> Vec<PreHighlightingStyledSegment> {
     let cursor_attrs = Attrs::default();
 
-    segments
+    fragments
         .0
         .iter()
-        .map(|segment| {
-            // Check for the cursor placeholder:
-            if matches!(segment.content, Text::Static(CURSOR_PLACEHOLDER)) {
-                let cursor = context.cursor_content(logical_line);
+        .map(|fragment| {
+            let (focused, token_color_scheme) = match fragment.source {
+                FragmentSource::Cursor => {
+                    let cursor = context.cursor_content(logical_line);
 
-                return PreHighlightingStyledSegment {
-                    attrs: cursor_attrs,
-                    search_match_attrs: cursor_attrs,
-                    content: Text::Static(cursor),
-                };
-            }
-
-            let focused = if let Some(node_index) = segment.doc_ref {
-                context.focused_node_indexes.contains(&node_index)
-            } else {
-                false
+                    return PreHighlightingStyledSegment {
+                        attrs: cursor_attrs,
+                        search_match_attrs: cursor_attrs,
+                        content: Text::Static(cursor),
+                    };
+                }
+                FragmentSource::Whitespace => (false, context.color_scheme.whitespace),
+                FragmentSource::ElidedPreviewNodes | FragmentSource::NodePreview(_) => {
+                    (false, context.color_scheme.comment)
+                }
+                FragmentSource::SexpComment(node_index) => {
+                    let focused = context.focused_node_indexes.contains(&node_index);
+                    (focused, context.color_scheme.comment)
+                }
+                FragmentSource::Node(node_index) => {
+                    let focused = context.focused_node_indexes.contains(&node_index);
+                    let token_color_scheme = match core.token(node_index) {
+                        DocumentToken::StartOfList(_)
+                        | DocumentToken::EndOfList(_)
+                        | DocumentToken::Unit { .. } => context.color_scheme.parens,
+                        DocumentToken::LineComment | DocumentToken::BlockComment => {
+                            context.color_scheme.comment
+                        }
+                        DocumentToken::Error(_) => context.color_scheme.error,
+                        DocumentToken::Atom(atom_metadata) => {
+                            context.color_scheme.for_atom_kind(atom_metadata.atom_kind)
+                        }
+                    };
+                    (focused, token_color_scheme)
+                }
             };
-
-            let token_color_scheme = segment.kind.color_scheme(context.color_scheme);
 
             let (attrs, search_match_attrs) = if focused {
                 (
@@ -678,7 +643,7 @@ pub fn style_typeset_line<'l, 's>(
             PreHighlightingStyledSegment {
                 attrs,
                 search_match_attrs,
-                content: segment.content.clone(),
+                content: fragment.text.clone(),
             }
         })
         .collect::<Vec<_>>()
@@ -695,7 +660,7 @@ mod tests {
     use crate::rendering::{Attrs, Color, TokenColorScheme};
     use crate::sexp::color_scheme::ColorScheme;
     use crate::sexp::document::test_helpers::*;
-    use crate::sexp::document::{CollapseState, SexpDocument};
+    use crate::sexp::document::SexpDocument;
 
     use insta::assert_snapshot;
 
@@ -761,7 +726,12 @@ mod tests {
 
             s.push_str(
                 dump_segments(
-                    style_typeset_line(&render_context, &logical_lines[line], &typeset_line),
+                    style_typeset_line(
+                        &doc.core,
+                        &render_context,
+                        &logical_lines[line],
+                        &typeset_line,
+                    ),
                     doc.raw_bytes_for_searching(),
                     &style_map(),
                 )

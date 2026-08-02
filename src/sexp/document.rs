@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use crate::dimensions;
 use crate::document::{ContentRange, Document};
-use crate::rendering::{PreHighlightingStyledSegment, Segment, Text};
+use crate::rendering::{Fragment, PreHighlightingStyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
@@ -17,7 +17,7 @@ use crate::sexp::core::{
 use crate::sexp::layout;
 use crate::sexp::layout::LogicalLine;
 use crate::sexp::renderer;
-use crate::sexp::renderer::{style_typeset_line, RenderContext, SegmentKind};
+use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
 
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
 use ocaml_sexplib::Ref;
@@ -41,7 +41,7 @@ enum FocusTargetKind {
 pub struct SexpDocument {
     width: NonZeroUsize,
     tokenizer: BasicTapeTokenizer,
-    core: DocCore,
+    pub core: DocCore,
     next_top_level_node_index: NodeIndex,
     starts_of_logical_lines: OSBTreeMap<NodeIndex, (NodeIndex, usize)>,
     collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
@@ -110,7 +110,7 @@ impl InitialNestedCollapseStateForTopLevelNodes {
 }
 
 #[derive(Clone, Debug)]
-pub struct TypesetLine(pub Vec<Segment<NodeIndex, SegmentKind>>);
+pub struct TypesetLine(pub Vec<Fragment<FragmentSource>>);
 
 #[derive(Clone, Debug)]
 pub struct TypesetLines(pub Vec<TypesetLine>);
@@ -122,8 +122,8 @@ impl TypesetLines {
 
     fn index_of_closest_line_to_byte_index(&self, byte_index: usize) -> usize {
         for (i, typeset_line) in self.0.iter().enumerate() {
-            for segment in typeset_line.0.iter() {
-                if let Text::SourceRange(range) = &segment.content {
+            for fragment in typeset_line.0.iter() {
+                if let Text::SourceRange(range) = &fragment.text {
                     if byte_index < range.end {
                         return i;
                     }
@@ -1239,7 +1239,7 @@ impl Document for SexpDocument {
             .typeset_line()
             .0
             .iter()
-            .find_map(|segment| segment.doc_ref)
+            .find_map(|fragment| fragment.source.node_index())
             .unwrap_or(fallback)
     }
 
@@ -1740,13 +1740,15 @@ impl Document for SexpDocument {
 
         let mut highlighted_cursor = false;
 
-        for segment in screen_line.typeset_line().0.iter() {
-            match &segment.content {
+        for fragment in screen_line.typeset_line().0.iter() {
+            match &fragment.text {
                 Text::SourceRange(range) => {
                     let content = std::str::from_utf8(&self.core.pretty_printed[range.clone()])
                         .unwrap_or("INVALID UTF8");
 
-                    if !highlighted_cursor && segment.doc_ref == Some(*cursor) {
+                    let source_node_index = fragment.source.node_index();
+
+                    if !highlighted_cursor && source_node_index == Some(*cursor) {
                         if let Some(after_paren) = content.strip_prefix("(") {
                             output.push('[');
                             output.push_str(after_paren);
@@ -1784,6 +1786,7 @@ impl Document for SexpDocument {
         let color_scheme = ColorScheme::default();
         let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
         Some(style_typeset_line(
+            &self.core,
             &render_context,
             &screen_line.logical_line,
             screen_line.typeset_line(),

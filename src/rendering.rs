@@ -158,27 +158,24 @@ impl Text {
     }
 }
 
-/// A segment of text, along with some other data:
-/// - the kind of segment this is, used for applying appropriate styling later
-/// - how wide the segment is when printed to a termina
-/// - a reference back into the original document
+/// A fragment of text, with a specified length, and a optional reference back to the source that
+/// produced it.
 #[derive(Clone, Debug)]
-pub struct Segment<DocRef, Kind> {
-    pub content: Text,
-    pub kind: Kind,
-    pub terminal_width: usize,
-    pub doc_ref: Option<DocRef>,
+pub struct Fragment<Source> {
+    pub text: Text,
+    pub width: usize,
+    pub source: Source,
 }
 
-pub struct Compositor<'a, DocRef, Kind> {
+pub struct Compositor<'a, Source> {
     doc_content: &'a [u8],
     doc_width: NonZeroUsize,
-    lines: Vec<Vec<Segment<DocRef, Kind>>>,
+    lines: Vec<Vec<Fragment<Source>>>,
     remaining_space_on_current_line: usize,
     reserved_space: Option<usize>,
 }
 
-impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
+impl<'a, Source: Copy> Compositor<'a, Source> {
     pub fn new(doc_content: &'a [u8], doc_width: NonZeroUsize) -> Self {
         Compositor {
             doc_content,
@@ -189,15 +186,15 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         }
     }
 
-    pub fn finish(self) -> Vec<Vec<Segment<DocRef, Kind>>> {
+    pub fn finish(self) -> Vec<Vec<Fragment<Source>>> {
         self.lines
     }
 
-    fn add_entire_segment_to_current_line(&mut self, segment: Segment<DocRef, Kind>) {
-        debug_assert!(self.remaining_space_on_current_line >= segment.terminal_width);
+    fn add_entire_fragment_to_current_line(&mut self, fragment: Fragment<Source>) {
+        debug_assert!(self.remaining_space_on_current_line >= fragment.width);
 
-        self.remaining_space_on_current_line -= segment.terminal_width;
-        self.lines.last_mut().unwrap().push(segment);
+        self.remaining_space_on_current_line -= fragment.width;
+        self.lines.last_mut().unwrap().push(fragment);
     }
 
     fn start_new_line(&mut self) {
@@ -227,22 +224,22 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         (&s[0..used_bytes], used_space)
     }
 
-    pub fn append_spaces(&mut self, n: usize, kind: Kind, doc_ref: Option<DocRef>) {
+    pub fn append_spaces(&mut self, n: usize, source: Source) {
         let spaces = Text::spaces(n);
-        self.append_content(spaces, kind, doc_ref);
+        self.append_text(spaces, source);
     }
 
-    pub fn append_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
+    pub fn append_text(&mut self, text: Text, source: Source) {
         assert!(
             self.reserved_space.is_none(),
             "should not call after reserving space"
         );
 
         let mut processed_bytes = 0;
-        let content_str = content.as_str(self.doc_content);
+        let text_str = text.as_str(self.doc_content);
 
-        while processed_bytes < content.len() {
-            let remaining_s = &content_str[processed_bytes..];
+        while processed_bytes < text.len() {
+            let remaining_s = &text_str[processed_bytes..];
 
             self.maybe_start_new_line();
 
@@ -259,11 +256,10 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
                 } else {
                     // There's no way we'll be able to fit the next character in, so we'll
                     // put an ellipsis in instead.
-                    self.add_entire_segment_to_current_line(Segment {
-                        content: Text::ellipsis(),
-                        kind,
-                        terminal_width: 1,
-                        doc_ref,
+                    self.add_entire_fragment_to_current_line(Fragment {
+                        text: Text::ellipsis(),
+                        width: 1,
+                        source,
                     });
 
                     let next_grapheme_len = remaining_s.graphemes(true).next().unwrap().len();
@@ -275,11 +271,10 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
 
             let portion_range = processed_bytes..(processed_bytes + portion.len());
 
-            self.add_entire_segment_to_current_line(Segment {
-                content: content.sub_range(portion_range),
-                kind,
-                terminal_width: used_width,
-                doc_ref,
+            self.add_entire_fragment_to_current_line(Fragment {
+                text: text.sub_range(portion_range),
+                width: used_width,
+                source,
             });
 
             processed_bytes += portion.len();
@@ -345,18 +340,14 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         displayed_width
     }
 
-    pub fn min_space_needed_to_show_actual_content(
-        &self,
-        content: &Text,
-        delimited: bool,
-    ) -> usize {
+    pub fn min_space_needed_to_show_actual_content(&self, text: &Text, delimited: bool) -> usize {
         if delimited {
-            let content_str = content.as_str(self.doc_content);
-            let inner_range = 1..(content_str.len() - 1);
+            let text_str = text.as_str(self.doc_content);
+            let inner_range = 1..(text_str.len() - 1);
 
-            2 + Self::min_space_needed_to_show_str(&content_str[inner_range])
+            2 + Self::min_space_needed_to_show_str(&text_str[inner_range])
         } else {
-            Self::min_space_needed_to_show_str(content.as_str(self.doc_content))
+            Self::min_space_needed_to_show_str(text.as_str(self.doc_content))
         }
     }
 
@@ -391,76 +382,69 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         (prefix, used_space)
     }
 
-    pub fn try_append_content(
+    pub fn try_append_text(
         &mut self,
-        content: Text,
+        text: Text,
         delimited: bool,
-        kind: Kind,
-        doc_ref: Option<DocRef>,
+        source: Source,
         reserved_space_to_reclaim: usize,
     ) -> bool {
         let reserved_space = self.reserved_space.expect("should have reserved space");
         let remaining_free_space = self.remaining_space_on_current_line - reserved_space;
         let free_space_for_content = remaining_free_space + reserved_space_to_reclaim;
 
-        if self.min_space_needed_to_show_actual_content(&content, delimited)
-            > free_space_for_content
-        {
+        if self.min_space_needed_to_show_actual_content(&text, delimited) > free_space_for_content {
             return false;
         }
 
-        let (open_delimiter, content, close_delimiter, space_taken_by_delimiters) = if delimited {
-            let len = content.len();
-            let open_delimiter = content.sub_range(0..1);
-            let close_delimiter = content.sub_range_from((len - 1)..);
-            let content = content.into_sub_range(1..(len - 1));
-            (Some(open_delimiter), content, Some(close_delimiter), 2)
+        let (open_delimiter, text, close_delimiter, space_taken_by_delimiters) = if delimited {
+            let len = text.len();
+            let open_delimiter = text.sub_range(0..1);
+            let close_delimiter = text.sub_range_from((len - 1)..);
+            let text = text.into_sub_range(1..(len - 1));
+            (Some(open_delimiter), text, Some(close_delimiter), 2)
         } else {
-            (None, content, None, 0)
+            (None, text, None, 0)
         };
 
         if let Some(open_delimiter) = open_delimiter {
-            self.add_entire_segment_to_current_line(Segment {
-                content: open_delimiter,
-                kind,
-                terminal_width: 1,
-                doc_ref,
+            self.add_entire_fragment_to_current_line(Fragment {
+                text: open_delimiter,
+                width: 1,
+                source,
             });
         }
 
-        let content_len = content.len();
+        let text_len = text.len();
 
         let (prefix, used_space) = Self::take_prefix_that_fits_in_available_space_with_ellipsis(
-            content.as_str(self.doc_content),
+            text.as_str(self.doc_content),
             free_space_for_content - space_taken_by_delimiters,
         );
 
         let prefix_len = prefix.len();
-        let prefix_content = content.into_sub_range(0..prefix_len);
+        let prefix = text.into_sub_range(0..prefix_len);
 
-        self.add_entire_segment_to_current_line(Segment {
-            content: prefix_content,
-            kind,
-            terminal_width: used_space,
-            doc_ref,
+        self.add_entire_fragment_to_current_line(Fragment {
+            text: prefix,
+            width: used_space,
+            source,
         });
 
         // We only fit part of the string, so now we have to add the ellipsis too.
-        if prefix_len != content_len {
-            self.add_entire_segment_to_current_line(Segment {
-                content: Text::ellipsis(),
-                kind,
-                terminal_width: 1,
-                doc_ref,
+        if prefix_len != text_len {
+            self.add_entire_fragment_to_current_line(Fragment {
+                text: Text::ellipsis(),
+                width: 1,
+                source,
             });
         }
 
         if let Some(close_delimiter) = close_delimiter {
-            self.add_entire_segment_to_current_line(Segment {
-                content: close_delimiter,
-                kind,
-                terminal_width: 1,
-                doc_ref,
+            self.add_entire_fragment_to_current_line(Fragment {
+                text: close_delimiter,
+                width: 1,
+                source,
             });
         }
 
@@ -469,19 +453,18 @@ impl<'a, DocRef: Copy, Kind: Copy> Compositor<'a, DocRef, Kind> {
         true
     }
 
-    pub fn append_reserved_content(&mut self, content: Text, kind: Kind, doc_ref: Option<DocRef>) {
+    pub fn append_reserved_text(&mut self, text: Text, source: Source) {
         let reserved_space = self.reserved_space.expect("should have reserved space");
 
-        let content_width = UnicodeWidthStr::width(content.as_str(self.doc_content));
+        let width = UnicodeWidthStr::width(text.as_str(self.doc_content));
 
-        self.add_entire_segment_to_current_line(Segment {
-            content,
-            kind,
-            terminal_width: content_width,
-            doc_ref,
+        self.add_entire_fragment_to_current_line(Fragment {
+            text,
+            width,
+            source,
         });
 
-        self.reserved_space = Some(reserved_space - content_width);
+        self.reserved_space = Some(reserved_space - width);
     }
 }
 
@@ -658,16 +641,16 @@ pub mod test_helpers {
     use bstr::ByteSlice;
     use unicode_width::UnicodeWidthStr;
 
-    fn print_composited_line<DR, K>(line: &Vec<Segment<DR, K>>, content: &[u8]) -> String {
+    fn print_composited_line<SR>(line: &Vec<Fragment<SR>>, content: &[u8]) -> String {
         let mut s = String::new();
-        for segment in line.iter() {
-            s.push_str(segment.content.as_str(content));
+        for fragment in line.iter() {
+            s.push_str(fragment.text.as_str(content));
         }
         s
     }
 
-    pub fn print_composited_lines<DR, K>(
-        lines: &Vec<Vec<Segment<DR, K>>>,
+    pub fn print_composited_lines<SR>(
+        lines: &Vec<Vec<Fragment<SR>>>,
         doc_width: usize,
         content: &[u8],
     ) -> String {
@@ -682,7 +665,7 @@ pub mod test_helpers {
         s
     }
 
-    impl<'a, DR, K> Compositor<'a, DR, K> {
+    impl<'a, SR> Compositor<'a, SR> {
         pub fn print_composited_lines(&self) -> String {
             print_composited_lines(&self.lines, self.doc_width.get(), self.doc_content)
         }
@@ -862,7 +845,7 @@ mod tests {
 
     use insta::assert_snapshot;
 
-    fn compositor(doc: &'static [u8], width: usize) -> Compositor<'static, (), ()> {
+    fn compositor(doc: &'static [u8], width: usize) -> Compositor<'static, ()> {
         Compositor::new(doc, NonZeroUsize::new(width).unwrap())
     }
 
@@ -870,10 +853,10 @@ mod tests {
     fn test_basic_compositor() {
         let mut c = compositor(b"abcdefghijklmnopqrstuvwxyz", 5);
 
-        c.append_content(Text::SourceRange(0..3), (), None);
-        c.append_content(Text::Static("111222333"), (), None);
-        c.append_content(Text::SourceRange(23..26), (), None);
-        c.append_content(Text::String((Rc::new(".---.".to_string()), 1..4)), (), None);
+        c.append_text(Text::SourceRange(0..3), ());
+        c.append_text(Text::Static("111222333"), ());
+        c.append_text(Text::SourceRange(23..26), ());
+        c.append_text(Text::String((Rc::new(".---.".to_string()), 1..4)), ());
 
         assert_snapshot!(c.print_composited_lines(), @r"
         |abc11|
@@ -887,9 +870,9 @@ mod tests {
     fn test_compositor_with_wide_chars() {
         let mut c = compositor(b"", 5);
 
-        c.append_content(Text::Static("1🦀45a"), (), None);
-        c.append_content(Text::Static("bcd👀34"), (), None);
-        c.append_content(Text::Static("5\u{200b}abc"), (), None);
+        c.append_text(Text::Static("1🦀45a"), ());
+        c.append_text(Text::Static("bcd👀34"), ());
+        c.append_text(Text::Static("5\u{200b}abc"), ());
 
         // Eyes get pushed to next line because not enough room; ZWSP gets appened
         // to the current line because it has 0 width.
@@ -904,7 +887,7 @@ mod tests {
     #[test]
     fn test_compositor_with_single_col() {
         let mut c = compositor(b"", 1);
-        c.append_content(Text::Static("a🦀b"), (), None);
+        c.append_text(Text::Static("a🦀b"), ());
 
         // Wide characters get replaced with an ellipsis when there's only
         // a single column.
@@ -917,7 +900,7 @@ mod tests {
 
     #[test]
     fn test_compositor_min_size_to_show_strings() {
-        let f = Compositor::<(), ()>::min_space_needed_to_show_str;
+        let f = Compositor::<()>::min_space_needed_to_show_str;
         assert_eq!(f(""), 0);
         assert_eq!(f("a"), 1);
         assert_eq!(f("abc"), 2);
@@ -929,7 +912,7 @@ mod tests {
     #[test]
     fn test_compositor_reservations() {
         let mut c = compositor(b"", 11);
-        c.append_content(Text::Static("1"), (), None);
+        c.append_text(Text::Static("1"), ());
         assert!(!c.start_reserving_space(11));
         assert!(c.start_reserving_space(5));
 
@@ -937,17 +920,17 @@ mod tests {
         assert!(c.reserve_more_space(5));
         c.give_back_reserved_space(1);
 
-        assert!(!c.try_append_content(Text::Static("abc"), false, (), None, 0));
+        assert!(!c.try_append_text(Text::Static("abc"), false, (), 0));
         c.give_back_reserved_space(1);
-        assert!(c.try_append_content(Text::Static("abc"), false, (), None, 0));
+        assert!(c.try_append_text(Text::Static("abc"), false, (), 0));
 
         assert_snapshot!(c.print_composited_lines(), @"|1a…        |");
         assert_snapshot!(c.availability(), @"remaining: 8, reserved: 8");
 
         c.give_back_reserved_space(1);
-        assert!(!c.try_append_content(Text::Static("🦀"), false, (), None, 0));
+        assert!(!c.try_append_text(Text::Static("🦀"), false, (), 0));
         // With the one free space, and the one reclaimed space, now it can print it.
-        assert!(c.try_append_content(Text::Static("🦀"), false, (), None, 1));
+        assert!(c.try_append_text(Text::Static("🦀"), false, (), 1));
 
         assert_snapshot!(c.print_composited_lines(), @"|1a…🦀      |");
         assert_snapshot!(c.availability(), @"remaining: 6, reserved: 6");
@@ -955,12 +938,12 @@ mod tests {
         c.give_back_reserved_space(2);
         assert_snapshot!(c.availability(), @"remaining: 6, reserved: 4");
 
-        assert!(c.try_append_content(Text::Static("ab"), false, (), None, 1));
+        assert!(c.try_append_text(Text::Static("ab"), false, (), 1));
 
         assert_snapshot!(c.print_composited_lines(), @"|1a…🦀ab    |");
         assert_snapshot!(c.availability(), @"remaining: 4, reserved: 3");
 
-        c.append_reserved_content(Text::Static("x"), (), None);
+        c.append_reserved_text(Text::Static("x"), ());
 
         assert_snapshot!(c.print_composited_lines(), @"|1a…🦀abx   |");
         assert_snapshot!(c.availability(), @"remaining: 3, reserved: 2");
@@ -970,22 +953,22 @@ mod tests {
     fn test_compositor_delimited_content() {
         let mut c = compositor(b"", 10);
         assert!(c.start_reserving_space(7));
-        assert!(!c.try_append_content(Text::Static("'123'"), true, (), None, 0));
+        assert!(!c.try_append_text(Text::Static("'123'"), true, (), 0));
 
         c.give_back_reserved_space(1);
-        assert!(c.try_append_content(Text::Static("'123'"), true, (), None, 0));
+        assert!(c.try_append_text(Text::Static("'123'"), true, (), 0));
 
         assert_snapshot!(c.print_composited_lines(), @"|'1…'      |");
         assert_snapshot!(c.availability(), @"remaining: 6, reserved: 6");
 
-        assert!(c.try_append_content(Text::Static("()"), true, (), None, 2));
+        assert!(c.try_append_text(Text::Static("()"), true, (), 2));
 
         assert_snapshot!(c.print_composited_lines(), @"|'1…'()    |");
         assert_snapshot!(c.availability(), @"remaining: 4, reserved: 4");
 
         c.give_back_reserved_space(2);
-        assert!(!c.try_append_content(Text::Static("[🦀]"), true, (), None, 1));
-        assert!(c.try_append_content(Text::Static("[🦀]"), true, (), None, 2));
+        assert!(!c.try_append_text(Text::Static("[🦀]"), true, (), 1));
+        assert!(c.try_append_text(Text::Static("[🦀]"), true, (), 2));
 
         assert_snapshot!(c.print_composited_lines(), @"|'1…'()[🦀]|");
         assert_snapshot!(c.availability(), @"remaining: 0, reserved: 0");
