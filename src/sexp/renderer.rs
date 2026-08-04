@@ -3,7 +3,7 @@ use std::num::NonZeroUsize;
 use std::rc::Rc;
 
 use crate::rendering::{Attrs, Compositor, StyledSegment, Text};
-use crate::search::{HighlightKind, SearchMatchHighlighter};
+use crate::search::SearchMatchHighlighter;
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
@@ -633,29 +633,21 @@ pub fn style_typeset_line<'l, 's, 'h>(
             }
         };
 
-        let (attrs, search_match_attrs) = if focused {
-            (
-                token_color_scheme.focused,
-                token_color_scheme.focused_search_match,
-            )
+        let search_attrs = if focused {
+            token_color_scheme.focused
         } else {
-            (token_color_scheme.normal, token_color_scheme.search_match)
+            token_color_scheme.normal
         };
 
         match &fragment.text {
             Text::String(_) | Text::Static(_) => {
                 styled_segments.push(StyledSegment {
                     content: fragment.text.clone(),
-                    attrs,
+                    attrs: search_attrs.not_a_match,
                 });
             }
             Text::SourceRange(range) => {
-                styled_segments.extend(match_highlighter.highlight(
-                    range.clone(),
-                    search_match_attrs,
-                    search_match_attrs,
-                    attrs,
-                ));
+                styled_segments.extend(match_highlighter.highlight(range.clone(), search_attrs));
             }
         }
     }
@@ -670,40 +662,31 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::document::Document;
-    use crate::rendering::test_helpers::{build_style_map, dump_segments};
-    use crate::rendering::{Attrs, Color, TokenColorScheme};
+    use crate::rendering::test_helpers::{
+        build_style_map, create_distinct_token_color_scheme, dump_segments,
+    };
+    use crate::rendering::Attrs;
     use crate::sexp::color_scheme::ColorScheme;
     use crate::sexp::document::test_helpers::*;
     use crate::sexp::document::SexpDocument;
 
     use insta::assert_snapshot;
 
-    const fn style(n: u8) -> TokenColorScheme {
-        let normal = Attrs::from_fg(Color::Rgb256(2 * n));
-        let focused = Attrs::from_fg(Color::Rgb256(2 * n + 1));
-
-        TokenColorScheme {
-            normal,
-            focused,
-            search_match: Attrs::const_default(),
-            focused_search_match: Attrs::const_default(),
-        }
-    }
-
     const COLOR_SCHEME: ColorScheme = ColorScheme {
-        whitespace: style(0),
-        parens: style(1),
-        plain_atom: style(2),
-        atom_escape_sequence: style(3),
-        atom_invalid_escape_sequence: style(4),
-        record_key_atom: style(5),
-        constructor_atom: style(6),
-        number_atom: style(7),
-        bool_atom: style(8),
-        date_atom: style(9),
-        time_atom: style(10),
-        comment: style(11),
-        error: style(12),
+        default: Attrs::const_default(),
+        whitespace: create_distinct_token_color_scheme(1),
+        parens: create_distinct_token_color_scheme(2),
+        plain_atom: create_distinct_token_color_scheme(3),
+        atom_escape_sequence: create_distinct_token_color_scheme(4),
+        atom_invalid_escape_sequence: create_distinct_token_color_scheme(5),
+        record_key_atom: create_distinct_token_color_scheme(6),
+        constructor_atom: create_distinct_token_color_scheme(7),
+        number_atom: create_distinct_token_color_scheme(8),
+        bool_atom: create_distinct_token_color_scheme(9),
+        date_atom: create_distinct_token_color_scheme(10),
+        time_atom: create_distinct_token_color_scheme(11),
+        comment: create_distinct_token_color_scheme(12),
+        error: create_distinct_token_color_scheme(13),
     };
 
     fn style_map() -> HashMap<Attrs, String> {
@@ -733,7 +716,7 @@ mod tests {
         let typeset_lines = doc.typeset_logical_line(&logical_lines[line]);
 
         let mut s = String::new();
-        let mut highlighter = SearchMatchHighlighter::new(&[], None);
+        let mut highlighter = SearchMatchHighlighter::new(&[4..5, 7..8], Some(1));
         for (i, typeset_line) in typeset_lines.0.iter().enumerate() {
             if i > 0 {
                 s.push_str("\n\n");
@@ -769,17 +752,21 @@ mod tests {
 
         assert_snapshot!(render_doc_line(&doc, 0, NodeIndex(1)), @r"
         text: ((num_fiel
-              012.......
+              012.34.56.
         0: parens                    : range(0..1)
-        1: parens (focused)          : range(1..2)
-        2: record_key (focused)      : range(2..10)
+        1: parens!                   : range(1..2)
+        2: record_key!               : range(2..4)
+        3: record_key! (match)       : range(4..5)
+        4: record_key!               : range(5..7)
+        5: record_key! (curr match)  : range(7..8)
+        6: record_key!               : range(8..10)
 
         text: d 123)
               012..3
-        0: record_key (focused)      : range(10..11)
+        0: record_key!               : range(10..11)
         1: whitespace                : range(11..12)
         2: number                    : range(12..15)
-        3: parens (focused)          : range(15..16)
+        3: parens!                   : range(15..16)
         ");
 
         assert_snapshot!(render_doc_line(&doc, 1, NodeIndex(0)), @r"
@@ -795,7 +782,7 @@ mod tests {
         1: whitespace                : range(28..29)
         2: bool                      : range(29..33)
         3: parens                    : range(33..34)
-        4: parens (focused)          : range(34..35)
+        4: parens!                   : range(34..35)
         ");
     }
 }

@@ -532,10 +532,15 @@ impl Color {
 /// and it matches a search input
 #[derive(Copy, Clone, Debug)]
 pub struct TokenColorScheme {
-    pub normal: Attrs,
-    pub focused: Attrs,
-    pub search_match: Attrs,
-    pub focused_search_match: Attrs,
+    pub normal: HighlightAttrs,
+    pub focused: HighlightAttrs,
+}
+
+#[derive(Copy, Clone, Debug)]
+pub struct HighlightAttrs {
+    pub current_match: Attrs,
+    pub other_match: Attrs,
+    pub not_a_match: Attrs,
 }
 
 #[cfg(test)]
@@ -589,27 +594,48 @@ pub mod test_helpers {
         }
     }
 
+    const fn new_attrs(n: u8, i: u8) -> Attrs {
+        Attrs::from_fg(Color::Rgb256(6 * n + i))
+    }
+
+    pub const fn create_distinct_token_color_scheme(n: u8) -> TokenColorScheme {
+        TokenColorScheme {
+            normal: HighlightAttrs {
+                not_a_match: new_attrs(n, 0),
+                current_match: new_attrs(n, 1),
+                other_match: new_attrs(n, 2),
+            },
+            focused: HighlightAttrs {
+                not_a_match: new_attrs(n, 3),
+                current_match: new_attrs(n, 4),
+                other_match: new_attrs(n, 5),
+            },
+        }
+    }
+
     pub fn build_style_map(
         token_styles: Vec<(TokenColorScheme, &'static str)>,
     ) -> HashMap<Attrs, String> {
         let mut map = HashMap::new();
 
         for (token_style, style_name) in token_styles.into_iter() {
-            let normal = format!("{style_name}");
-            let focused = format!("{style_name} (focused)");
+            let normal = token_style.normal;
+            let focused = token_style.focused;
 
-            if let Some(prev_name) = map.insert(token_style.normal, normal) {
-                panic!(
-                    "{style_name} conflicts with {prev_name} in style map; both have attrs {:?}",
-                    token_style.normal,
-                );
-            }
-
-            if let Some(prev_name) = map.insert(token_style.focused, focused) {
-                panic!(
-                    "{style_name} conflicts with {prev_name} in style map; both have attrs {:?}",
-                    token_style.focused,
-                );
+            for (style_variant, variant_name) in [
+                (normal.not_a_match, format!("{style_name}")),
+                (normal.current_match, format!("{style_name} (curr match)")),
+                (normal.other_match, format!("{style_name} (match)")),
+                (focused.not_a_match, format!("{style_name}!")),
+                (focused.current_match, format!("{style_name}! (curr match)")),
+                (focused.other_match, format!("{style_name}! (match)")),
+            ] {
+                if let Some(prev_name) = map.insert(style_variant, variant_name.clone()) {
+                    panic!(
+                            "{variant_name} conflicts with {prev_name} in style map; both have attrs {:?}",
+                            style_variant,
+                        );
+                }
             }
         }
 
@@ -670,55 +696,38 @@ pub mod test_helpers {
 
     #[cfg(test)]
     mod tests {
-        use super::super::*;
         use super::*;
 
         use insta::assert_snapshot;
 
         #[test]
         fn test_dump_segments() {
-            let default = Attrs::default();
-            let inverted = default.invert();
-            let red = Attrs::from_ansi_fg(AnsiColor::Red);
-            let blue = Attrs::from_ansi_fg(AnsiColor::Blue);
-
-            let normal_token = TokenColorScheme {
-                normal: default,
-                focused: inverted,
-                search_match: default,
-                focused_search_match: default,
-            };
-
-            let color_token = TokenColorScheme {
-                normal: red,
-                focused: blue,
-                search_match: default,
-                focused_search_match: default,
-            };
+            let default_style = create_distinct_token_color_scheme(0);
+            let color_style = create_distinct_token_color_scheme(1);
 
             let style_map =
-                build_style_map(vec![(normal_token, "default"), (color_token, "color")]);
+                build_style_map(vec![(default_style, "default"), (color_style, "color")]);
 
             let dumped = dump_segments(
                 vec![
                     StyledSegment {
-                        attrs: normal_token.normal,
+                        attrs: default_style.normal.not_a_match,
                         content: Text::SourceRange(0..6),
                     },
                     StyledSegment {
-                        attrs: normal_token.focused,
+                        attrs: default_style.focused.not_a_match,
                         content: Text::spaces(5),
                     },
                     StyledSegment {
-                        attrs: color_token.normal,
+                        attrs: color_style.normal.current_match,
                         content: Text::SourceRange(6..11),
                     },
                     StyledSegment {
-                        attrs: normal_token.focused,
+                        attrs: default_style.focused.not_a_match,
                         content: Text::spaces(1),
                     },
                     StyledSegment {
-                        attrs: color_token.focused,
+                        attrs: color_style.focused.other_match,
                         content: Text::String((std::rc::Rc::new("🦀".to_string()), 0.."🦀".len())),
                     },
                 ],
@@ -730,10 +739,10 @@ pub mod test_helpers {
             text: hello,     world 🦀
                   0.....1....2....34.
             0: default                   : range(0..6)
-            1: default (focused)         : static
-            2: color                     : range(6..11)
-            3: default (focused)         : static
-            4: color (focused)           : string(0..4)
+            1: default!                  : static
+            2: color (curr match)        : range(6..11)
+            3: default!                  : static
+            4: color! (match)            : string(0..4)
             ");
         }
     }

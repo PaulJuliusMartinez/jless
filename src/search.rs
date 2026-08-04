@@ -4,7 +4,7 @@ use std::ops::Range;
 use regex::bytes::{Regex as ByteRegex, RegexBuilder as ByteRegexBuilder};
 use regex::{Captures as StrCaptures, Regex as StrRegex};
 
-use crate::rendering::{Attrs, StyledSegment, Text};
+use crate::rendering::{HighlightAttrs, StyledSegment, Text};
 use crate::sorted_ranges::SortedRanges;
 
 #[derive(PartialEq, Eq, Debug, Copy, Clone)]
@@ -600,16 +600,14 @@ impl<'a> SearchMatchHighlighter<'a> {
     pub fn highlight<'mh>(
         &'mh mut self,
         source_range: Range<usize>,
-        current_match_attrs: Attrs,
-        other_match_attrs: Attrs,
-        not_a_match_attrs: Attrs,
+        highlight_attrs: HighlightAttrs,
     ) -> impl Iterator<Item = StyledSegment> + use<'mh, 'a> {
         self.highlighted_ranges(source_range)
             .map(move |(highlight_range, highlight_kind)| {
                 let attrs = match highlight_kind {
-                    HighlightKind::CurrentMatch => current_match_attrs,
-                    HighlightKind::OtherMatch => other_match_attrs,
-                    HighlightKind::NotAMatch => not_a_match_attrs,
+                    HighlightKind::CurrentMatch => highlight_attrs.current_match,
+                    HighlightKind::OtherMatch => highlight_attrs.other_match,
+                    HighlightKind::NotAMatch => highlight_attrs.not_a_match,
                 };
 
                 StyledSegment {
