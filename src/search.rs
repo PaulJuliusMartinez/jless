@@ -293,12 +293,16 @@ impl SearchState {
     }
 
     pub fn highlighter(&self) -> SearchMatchHighlighter<'_> {
-        let current_match_index = match &self.last_jump {
-            None => None,
-            Some(last_jump) => Some(last_jump.match_jumped_to),
-        };
+        if self.should_show_matches() {
+            let current_match_index = match &self.last_jump {
+                None => None,
+                Some(last_jump) => Some(last_jump.match_jumped_to),
+            };
 
-        SearchMatchHighlighter::new(&self.matches, current_match_index)
+            SearchMatchHighlighter::new(&self.matches, current_match_index)
+        } else {
+            SearchMatchHighlighter::empty()
+        }
     }
 
     pub fn stop_searching(&mut self) {
