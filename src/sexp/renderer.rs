@@ -660,10 +660,13 @@ mod tests {
     use super::*;
 
     use std::collections::HashMap;
+    use std::fmt::Write;
+    use std::ops::Range;
 
     use crate::document::Document;
     use crate::rendering::test_helpers::{
-        build_style_map, create_distinct_token_color_scheme, dump_segments,
+        build_style_map, create_distinct_token_color_scheme, dump_segments_content,
+        dump_segments_with_styles,
     };
     use crate::rendering::Attrs;
     use crate::sexp::color_scheme::ColorScheme;
@@ -671,6 +674,7 @@ mod tests {
     use crate::sexp::document::SexpDocument;
 
     use insta::assert_snapshot;
+    use unicode_width::UnicodeWidthStr;
 
     const COLOR_SCHEME: ColorScheme = ColorScheme {
         default: Attrs::const_default(),
@@ -710,20 +714,76 @@ mod tests {
         ])
     }
 
-    fn render_doc_line(doc: &SexpDocument, line: usize, focus: NodeIndex) -> String {
+    fn render_doc_contents(doc: &SexpDocument, focus: NodeIndex) -> String {
+        let render_context = doc.render_context_with_color_scheme(&COLOR_SCHEME, focus);
+        let render_context_ref = &render_context;
+        let logical_lines = logical_lines(&doc);
+        logical_lines
+            .into_iter()
+            .flat_map(move |logical_line| {
+                doc.typeset_logical_line(&logical_line)
+                    .0
+                    .into_iter()
+                    .map(move |typeset_line| {
+                        dump_segments_content(
+                            style_typeset_line(
+                                &doc.core,
+                                render_context_ref,
+                                &logical_line,
+                                &typeset_line,
+                                &mut SearchMatchHighlighter::empty(),
+                            ),
+                            doc.raw_bytes_for_searching(),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render_doc_line_contents(doc: &SexpDocument, line: usize, focus: NodeIndex) -> String {
+        let render_context = doc.render_context_with_color_scheme(&COLOR_SCHEME, focus);
+        let logical_lines = logical_lines(&doc);
+
+        doc.typeset_logical_line(&logical_lines[line])
+            .0
+            .into_iter()
+            .map(|typeset_line| {
+                dump_segments_content(
+                    style_typeset_line(
+                        &doc.core,
+                        &render_context,
+                        &logical_lines[line],
+                        &typeset_line,
+                        &mut SearchMatchHighlighter::empty(),
+                    ),
+                    doc.raw_bytes_for_searching(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render_doc_line_with_search_matches(
+        doc: &SexpDocument,
+        line: usize,
+        focus: NodeIndex,
+        matches: &[Range<usize>],
+        current_match: Option<usize>,
+    ) -> String {
         let render_context = doc.render_context_with_color_scheme(&COLOR_SCHEME, focus);
         let logical_lines = logical_lines(&doc);
         let typeset_lines = doc.typeset_logical_line(&logical_lines[line]);
 
         let mut s = String::new();
-        let mut highlighter = SearchMatchHighlighter::new(&[4..5, 7..8], Some(1));
+        let mut highlighter = SearchMatchHighlighter::new(matches, current_match);
         for (i, typeset_line) in typeset_lines.0.iter().enumerate() {
             if i > 0 {
                 s.push_str("\n\n");
             }
 
             s.push_str(
-                dump_segments(
+                dump_segments_with_styles(
                     style_typeset_line(
                         &doc.core,
                         &render_context,
@@ -741,25 +801,32 @@ mod tests {
         s
     }
 
+    fn render_doc_line_with_styles(doc: &SexpDocument, line: usize, focus: NodeIndex) -> String {
+        render_doc_line_with_search_matches(doc, line, focus, &[], None)
+    }
+
     #[test]
-    fn test_basic_render() {
+    fn test_basic_render_styling() {
         let mut doc = new_doc(b"((num_field 123)(bool_field true))");
-        doc.resize(nz(10));
-        assert_snapshot!(dump_with_byte_indexes(&doc), @r"
-        0..=4  :   0..16  : ((num_field 123)
-        5..=9  :  17..35  :  (bool_field true))
+        assert_snapshot!(render_doc_contents(&doc, NodeIndex(0)), @r"
+        ((num_field 123)
+         (bool_field true))
         ");
 
-        assert_snapshot!(render_doc_line(&doc, 0, NodeIndex(1)), @r"
+        doc.resize(nz(10));
+        assert_snapshot!(render_doc_contents(&doc, NodeIndex(0)), @r"
+        ((num_fiel
+        d 123)
+         (bool_fie
+        ld true))
+        ");
+
+        assert_snapshot!(render_doc_line_with_styles(&doc, 0, NodeIndex(1)), @r"
         text: ((num_fiel
-              012.34.56.
+              012.......
         0: parens                    : range(0..1)
         1: parens!                   : range(1..2)
-        2: record_key!               : range(2..4)
-        3: record_key! (match)       : range(4..5)
-        4: record_key!               : range(5..7)
-        5: record_key! (curr match)  : range(7..8)
-        6: record_key!               : range(8..10)
+        2: record_key!               : range(2..10)
 
         text: d 123)
               012..3
@@ -769,7 +836,7 @@ mod tests {
         3: parens!                   : range(15..16)
         ");
 
-        assert_snapshot!(render_doc_line(&doc, 1, NodeIndex(0)), @r"
+        assert_snapshot!(render_doc_line_with_styles(&doc, 1, NodeIndex(0)), @r"
         text:  (bool_fie
               012.......
         0: whitespace                : static
@@ -783,6 +850,189 @@ mod tests {
         2: bool                      : range(29..33)
         3: parens                    : range(33..34)
         4: parens!                   : range(34..35)
+        ");
+
+        let _new_cursor = doc.collapse_or_move_cursor_left_or_up(&NodeIndex(0));
+        doc.resize(nz(50));
+        assert_snapshot!(render_doc_line_with_styles(&doc, 0, NodeIndex(0)), @r"
+        text: ((num_field 123) (bool_field true))
+              012........34..5678.........9a...bc
+        0: comment                   : range(0..1)
+        1: comment                   : range(1..2)
+        2: comment                   : range(2..11)
+        3: whitespace                : range(11..12)
+        4: comment                   : range(12..15)
+        5: comment                   : range(15..16)
+        6: whitespace                : range(16..17)
+        7: comment                   : range(17..18)
+        8: comment                   : range(18..28)
+        9: whitespace                : range(28..29)
+        a: comment                   : range(29..33)
+        b: comment                   : range(33..34)
+        c: comment                   : range(34..35)
+        ");
+
+        doc.resize(nz(30));
+        assert_snapshot!(render_doc_line_with_styles(&doc, 0, NodeIndex(0)), @r"
+        text: ((num_field 123) (bool_fi… …))
+              012........34..5678......9abcd
+        0: comment                   : range(0..1)
+        1: comment                   : range(1..2)
+        2: comment                   : range(2..11)
+        3: whitespace                : range(11..12)
+        4: comment                   : range(12..15)
+        5: comment                   : range(15..16)
+        6: whitespace                : range(16..17)
+        7: comment                   : range(17..18)
+        8: comment                   : range(18..25)
+        9: comment                   : static
+        a: whitespace                : range(28..29)
+        b: comment                   : static
+        c: comment                   : range(33..34)
+        d: comment                   : range(34..35)
+        ");
+    }
+
+    #[test]
+    fn test_highlight_search_matches() {
+        let matches = [3..5, 8..12];
+        let mut doc = new_doc(b"(12345678\nabcdefghi)");
+        assert_snapshot!(render_doc_contents(&doc, NodeIndex(0)), @r"
+        (12345678
+         abcdefghi)
+        ");
+
+        assert_snapshot!(render_doc_line_with_search_matches(&doc, 0, NodeIndex(0), &matches, Some(1)), @r"
+        text: (12345678
+              01.2.3..4
+        0: parens!                   : range(0..1)
+        1: number                    : range(1..3)
+        2: number (match)            : range(3..5)
+        3: number                    : range(5..8)
+        4: number (curr match)       : range(8..9)
+        ");
+
+        assert_snapshot!(render_doc_line_with_search_matches(&doc, 1, NodeIndex(0), &matches, Some(1)), @r"
+        text:  abcdefghi)
+              01.2......3
+        0: whitespace                : static
+        1: plain_atom (curr match)   : range(10..12)
+        2: plain_atom                : range(12..19)
+        3: parens!                   : range(19..20)
+        ");
+
+        let _new_cursor = doc.collapse_or_move_cursor_left_or_up(&NodeIndex(0));
+        assert_snapshot!(render_doc_line_with_search_matches(&doc, 0, NodeIndex(0), &matches, Some(1)), @r"
+        text: (12345678 abcdefghi)
+              01.2.3..456.7......8
+        0: comment                   : range(0..1)
+        1: comment                   : range(1..3)
+        2: comment (match)           : range(3..5)
+        3: comment                   : range(5..8)
+        4: comment (curr match)      : range(8..9)
+        5: whitespace (curr match)   : range(9..10)
+        6: comment (curr match)      : range(10..12)
+        7: comment                   : range(12..19)
+        8: comment                   : range(19..20)
+        ");
+    }
+
+    fn render_line_preview_at_different_widths(
+        doc: &mut SexpDocument,
+        line: usize,
+        widths: impl IntoIterator<Item = usize>,
+    ) -> String {
+        widths
+            .into_iter()
+            .map(|width| {
+                doc.resize(nz(width));
+                let mut formatted = format!(
+                    "{width:<2}: {}",
+                    render_doc_line_contents(&doc, line, NodeIndex(0))
+                );
+                let actual_width = UnicodeWidthStr::width(formatted.as_str()) - 4;
+                if actual_width != width {
+                    let _ = write!(formatted, "   (only used {actual_width})");
+                }
+                formatted
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn render_top_level_preview_at_different_widths(
+        input: &'static [u8],
+        widths: impl IntoIterator<Item = usize>,
+    ) -> String {
+        let mut doc = new_doc(input);
+        let _new_cursor = doc.collapse_or_move_cursor_left_or_up(&NodeIndex(0));
+        render_line_preview_at_different_widths(&mut doc, 0, widths)
+    }
+
+    fn render_second_record_value_preview_at_different_widths(
+        input: &'static [u8],
+        widths: impl IntoIterator<Item = usize>,
+    ) -> String {
+        let mut doc = new_doc(input);
+        // ((k v) (
+        // 012 34 5
+        let _new_cursor = doc.collapse_or_move_cursor_left_or_up(&NodeIndex(5));
+        render_line_preview_at_different_widths(&mut doc, 1, widths)
+    }
+
+    #[test]
+    fn test_previews() {
+        use render_top_level_preview_at_different_widths as f;
+
+        // Simple record
+        assert_snapshot!(f(b"((abc 123) (def 456))", vec![21, 20, 19, 18, 17, 13, 12, 11, 10, 9, 3, 2]), @r"
+        21: ((abc 123) (def 456))
+        20: ((abc 123) (def 4…))
+        19: ((abc 123) (def …))
+        18: ((abc 123) (d… …))
+        17: ((abc 123) …)   (only used 13)
+        13: ((abc 123) …)
+        12: ((abc 1…) …)
+        11: ((abc …) …)
+        10: ((a… …) …)
+        9 : (…)   (only used 3)
+        3 : (…)
+        2 : …   (only used 1)
+        ");
+
+        // Variant tuple
+        assert_snapshot!(f(b"(Var 1 two)", vec![11, 10, 9, 8, 7, 6, 5, 2]), @r"
+        11: (Var 1 two)
+        10: (Var 1 t…)
+        9 : (Var 1 …)
+        8 : (Var …)   (only used 7)
+        7 : (Var …)
+        6 : (V… …)
+        5 : (…)   (only used 3)
+        2 : …   (only used 1)
+        ");
+
+        // Variant record
+        assert_snapshot!(f(b"(Var (abc 123) (def 456))", vec![25, 24, 23, 22, 21]), @r"
+        25: (Var (abc 123) (def 456))
+        24: (Var (abc 123) (def 4…))
+        23: (Var (abc 123) (def …))
+        22: (Var (abc 123) (d… …))
+        21: (Var (abc 123) …)   (only used 17)
+        ");
+
+        // Record with single value variant key
+        // Someday: This shouldn't truncate the 222.
+        assert_snapshot!(f(b"((a 1) (b (Var 222)))", vec![30, 18]), @r"
+        30: ((a 1) (b (Var …)))   (only used 19)
+        18: ((a 1) (b (V… …)))
+        ");
+
+        use render_second_record_value_preview_at_different_widths as g;
+        // Someday: This should be: (bee (Var ((x 2) (y 3)))))
+        assert_snapshot!(g(b"((a 1) (bee (Var ((x 2) (y 3)))))", vec![30, 16]), @r"
+        30:  (bee (Var (…))))   (only used 17)
+        16:  (bee (Var …)))   (only used 15)
         ");
     }
 }

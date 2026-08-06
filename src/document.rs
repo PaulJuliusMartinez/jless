@@ -190,6 +190,7 @@ pub trait Document {
         }
     }
 
+    // Someday: This is also used for printing...
     fn raw_bytes_for_searching(&self) -> &[u8];
     fn raw_byte_range_of_cursor(&self, cursor: &Self::Cursor) -> Range<usize>;
 

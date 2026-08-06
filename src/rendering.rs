@@ -642,7 +642,15 @@ pub mod test_helpers {
         map
     }
 
-    pub fn dump_segments(
+    pub fn dump_segments_content(segments: Vec<StyledSegment>, content: &[u8]) -> String {
+        let mut s = String::new();
+        for segment in segments {
+            let _ = write!(s, "{}", segment.content.as_bytes(content).as_bstr());
+        }
+        s
+    }
+
+    pub fn dump_segments_with_styles(
         segments: Vec<StyledSegment>,
         content: &[u8],
         style_map: &HashMap<Attrs, String>,
@@ -701,14 +709,14 @@ pub mod test_helpers {
         use insta::assert_snapshot;
 
         #[test]
-        fn test_dump_segments() {
+        fn test_dump_segment_with_styless() {
             let default_style = create_distinct_token_color_scheme(0);
             let color_style = create_distinct_token_color_scheme(1);
 
             let style_map =
                 build_style_map(vec![(default_style, "default"), (color_style, "color")]);
 
-            let dumped = dump_segments(
+            let dumped = dump_segments_with_styles(
                 vec![
                     StyledSegment {
                         attrs: default_style.normal.not_a_match,
