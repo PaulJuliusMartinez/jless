@@ -157,15 +157,6 @@ impl SexpDocument {
         self.state.logical_line_of_node_index(node_index)
     }
 
-    fn collapsible_nodes_in_line<'a>(
-        &'a self,
-        logical_line: &LogicalLine,
-    ) -> impl DoubleEndedIterator<Item = (&'a NodeIndex, &'a CollapseState)> {
-        self.state
-            .collapsible_nodes
-            .range(logical_line.start_index()..=logical_line.end_index())
-    }
-
     // Returns the focusable nodes in a line. We use a bunch of heuristics to decide what
     // is and isn't "focusable", trying to capture something that feels natural and intuitive
     // when thinking about where the syntax highlighting moves, and what gets copied to the
@@ -447,7 +438,7 @@ impl SexpDocument {
         // If something is collapsed, then the next visible line is the line immediately
         // after the end of that collapsed node. If a line contains multiple collapsed nodes, it's
         // the line after the end of first collapsed node (and thus later in doc).
-        for (node_index, collapsed_state) in self.collapsible_nodes_in_line(logical_line) {
+        for (node_index, collapsed_state) in self.state.collapsible_nodes_in_line(logical_line) {
             match collapsed_state {
                 Expanded => continue,
                 Collapsed => {
@@ -595,15 +586,16 @@ impl SexpDocument {
         // try moving left if possible; if not possible, then collapse it (not sure this can
         // ever happen)
 
-        let node_to_collapse = self.collapsible_nodes_in_line(&current_line).find_map(
-            |(node_index, collapsed_state)| {
+        let node_to_collapse = self
+            .state
+            .collapsible_nodes_in_line(&current_line)
+            .find_map(|(node_index, collapsed_state)| {
                 if *cursor <= *node_index && *collapsed_state == Expanded {
                     Some(*node_index)
                 } else {
                     None
                 }
-            },
-        );
+            });
 
         let focusable_nodes = self.focusable_nodes_in_line(&current_line);
         let mut cursor_focus_target_kind = FocusTargetKind::Normal;
@@ -974,7 +966,7 @@ impl Document for SexpDocument {
             .map(|(node_index, _)| *node_index);
 
         let node_to_expand = 'find_node_to_expand: {
-            let collapsible_nodes_in_line = self.collapsible_nodes_in_line(&current_line);
+            let collapsible_nodes_in_line = self.state.collapsible_nodes_in_line(&current_line);
 
             let end_of_range_to_check_for_collapsed_nodes =
                 next_focusable_node_in_line.unwrap_or(current_line.end_index());
@@ -1443,7 +1435,6 @@ impl Document for SexpDocument {
         let color_scheme = ColorScheme::default();
         let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
         Some(style_typeset_line(
-            &self.state.core,
             &render_context,
             &screen_line.logical_line,
             screen_line.typeset_line(),

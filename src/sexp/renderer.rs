@@ -1,3 +1,4 @@
+use std::cell::OnceCell;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
@@ -11,8 +12,176 @@ use crate::sexp::document::{TypesetLine, TypesetLines};
 use crate::sexp::layout::LogicalLine;
 use crate::sexp::state::{CollapseState, DocState};
 
+#[derive(Clone, Debug)]
+pub struct TreeLineCell {
+    parent: NodeIndex,
+    indentation: usize,
+    last_collapsible_child: Option<LogicalLine>,
+}
+
+#[derive(Clone, Debug)]
+pub struct TreeLineInfo {
+    total_width: usize,
+    tree_line_cells: Vec<TreeLineCell>,
+    line_is_collapsible: bool,
+}
+
+impl TreeLineInfo {
+    fn new(state: &DocState, logical_line: &LogicalLine) -> Self {
+        let mut tree_line_cells = vec![];
+        let mut curr_line_start_node_index = logical_line.start_index();
+        let mut curr_indentation = logical_line.indentation();
+
+        while curr_indentation > 0 {
+            let Some(parent_index) = state.core.node(curr_line_start_node_index).parent_index()
+            else {
+                break;
+            };
+
+            let parent_logical_line = state.logical_line_of_node_index(parent_index);
+            let parent_indentation = parent_logical_line.indentation();
+
+            let last_collapsible_child =
+                Self::compute_last_collapsible_child(state, &parent_logical_line);
+            tree_line_cells.push(TreeLineCell {
+                parent: parent_logical_line.start_index(),
+                indentation: parent_indentation,
+                last_collapsible_child,
+            });
+
+            curr_line_start_node_index = parent_logical_line.start_index();
+            curr_indentation = parent_indentation;
+        }
+
+        tree_line_cells.reverse();
+
+        TreeLineInfo {
+            total_width: logical_line.indentation(),
+            tree_line_cells,
+            line_is_collapsible: Self::line_is_collapsible(state, logical_line),
+        }
+    }
+
+    fn line_is_collapsible(state: &DocState, logical_line: &LogicalLine) -> bool {
+        state
+            .collapsible_nodes
+            .range(logical_line.start_index()..=logical_line.end_index())
+            .next()
+            .is_some()
+    }
+
+    // For a given line, we want to compute the last child where we'll *always* extend a tree line to.
+    //
+    // The difference here is that we always show tree lines to collapsible children,
+    // but only show tree lines to the non-collapsible lines if that line is currently focused.
+    //
+    // A couple of examples:
+    //
+    // ((a 1)
+    //  (b 2)
+    //  (c (Var     < last child we'll always extend a tree line to
+    //    y
+    //    z))
+    //  (d 4)
+    //  (e 5))
+    //
+    // ((a 1)
+    //  (b 2)
+    //  (c (Var     < last child we'll always extend a tree line to
+    //    x
+    //    (Var2
+    //      y
+    //      z))))
+    //
+    // We can calculate this by taking the start of line, and jumping to the line that contains
+    // the end of the list. Then, from there, we'll keep jumping back to the parents of the starts
+    // of these lines. The last time the parent is not the the line we started with, then that's
+    // the last child we'll *ever* extend a tree line to.
+    //
+    // If that line is also collapsible, great! That's also the last line we'll always extend
+    // a tree line to. But if it's not, we'll find the last collapsible node in between the end
+    // of the starting line, and the start of the end of that last line.
+    fn compute_last_collapsible_child(
+        state: &DocState,
+        logical_line: &LogicalLine,
+    ) -> Option<LogicalLine> {
+        let DocumentToken::StartOfList(list_metadata) =
+            state.core.token(logical_line.start_index())
+        else {
+            return None;
+        };
+
+        let Some(end_index) = list_metadata.end_index() else {
+            return None;
+        };
+
+        let start_of_line_below_start = logical_line.end_index() + 1;
+        let range = start_of_line_below_start..=end_index;
+
+        let mut iter = state.collapsible_nodes.range(range);
+        let (node_index_of_last_collapsible_line, _collapse_state) = iter.next_back()?;
+
+        let mut last_collapsible_child =
+            state.logical_line_of_node_index(*node_index_of_last_collapsible_line);
+
+        // Same as before, go up until we get to the starting line.
+        loop {
+            // THIS WILL BREAK
+            let parent_index = state
+                .core
+                .node(last_collapsible_child.start_index())
+                .parent_index()
+                .unwrap();
+            let parent_line = state.logical_line_of_node_index(parent_index);
+            if parent_line.start_index() == logical_line.start_index() {
+                break;
+            }
+
+            last_collapsible_child = parent_line;
+        }
+
+        Some(last_collapsible_child)
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
+enum TreeLineState {
+    Hidden,
+    Visible,
+    Focused,
+}
+
+impl TreeLineState {
+    fn intersection_str(bottom_state: TreeLineState, right_state: TreeLineState) -> &'static str {
+        use TreeLineState::*;
+        match (bottom_state, right_state) {
+            (Hidden, Hidden) => " ",
+            (Hidden, Visible) => "└",
+            (Hidden, Focused) => "┗",
+            (Visible, Hidden) => "│",
+            (Visible, Visible) => "├",
+            (Visible, Focused) => "┡",
+            (Focused, Hidden) => "┃",
+            (Focused, Visible) => "┠",
+            (Focused, Focused) => "┣",
+        }
+    }
+
+    fn horizontal_str(right_state: TreeLineState) -> &'static str {
+        use TreeLineState::*;
+        match right_state {
+            Hidden => " ",
+            Visible => "─",
+            Focused => "━",
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
 pub enum FragmentSource {
+    // We use a OnceCell so that we can lazily compute this when we actually render
+    // it, and don't have to do it when just typesetting the line.
+    Indentation(OnceCell<TreeLineInfo>),
     Cursor,
     Whitespace,
     Node(NodeIndex),
@@ -25,7 +194,7 @@ impl FragmentSource {
     pub fn node_index(&self) -> Option<NodeIndex> {
         use FragmentSource::*;
         match self {
-            Cursor | Whitespace | ElidedPreviewNodes => None,
+            Indentation(_) | Cursor | Whitespace | ElidedPreviewNodes => None,
             Node(node_index) | NodePreview(node_index) | SexpComment(node_index) => {
                 Some(*node_index)
             }
@@ -82,8 +251,10 @@ const EXPANDED_CONTAINER: &str = "▽ ";
 impl<'a> Typesetter<'a> {
     fn typeset(&mut self) {
         if self.logical_line.indentation() > 0 {
-            self.compositor
-                .append_spaces(self.logical_line.indentation(), FragmentSource::Whitespace);
+            self.compositor.append_spaces(
+                self.logical_line.indentation(),
+                FragmentSource::Indentation(OnceCell::new()),
+            );
         }
 
         if self.include_cursor {
@@ -513,6 +684,7 @@ pub struct RenderContext<'a> {
     state: &'a DocState,
     focused_node_indexes: Vec<NodeIndex>,
     focus: NodeIndex,
+    focus_ancestors: Vec<NodeIndex>,
 }
 
 impl<'a> RenderContext<'a> {
@@ -549,11 +721,19 @@ impl<'a> RenderContext<'a> {
             _ => vec![focus],
         };
 
+        let mut ancestor_node_index = Some(focus);
+        let mut focus_ancestors = vec![];
+        while let Some(node_index) = ancestor_node_index {
+            focus_ancestors.push(node_index);
+            ancestor_node_index = state.core.node(node_index).parent_index();
+        }
+
         RenderContext {
             color_scheme,
             state,
             focused_node_indexes,
             focus,
+            focus_ancestors,
         }
     }
 
@@ -607,11 +787,101 @@ impl<'a> RenderContext<'a> {
     }
 }
 
+fn render_tree_line(
+    styled_segments: &mut Vec<StyledSegment>,
+    tree_line_info: &TreeLineInfo,
+    context: &RenderContext<'_>,
+    logical_line: &LogicalLine,
+    line_contains_cursor: bool,
+) {
+    let width = tree_line_info.total_width;
+    let curr_line_start_index = logical_line.start_index();
+    let curr_line_end_index = logical_line.end_index();
+    let num_cells = tree_line_info.tree_line_cells.len();
+
+    let curr_line_contains_focus_ancestor = context
+        .focus_ancestors
+        .contains(&logical_line.start_index());
+
+    let curr_line_is_focused = line_contains_cursor || curr_line_contains_focus_ancestor;
+
+    // Compute deepest cell that is a parent to determine if earlier cells should be focused?
+    let mut last_cell_index_of_cell_that_is_in_focus_ancestor = None;
+    for (i, tree_line_cell) in tree_line_info.tree_line_cells.iter().enumerate() {
+        if context.focus_ancestors.contains(&tree_line_cell.parent) {
+            last_cell_index_of_cell_that_is_in_focus_ancestor = Some(i);
+        }
+    }
+
+    for (i, tree_line_cell) in tree_line_info.tree_line_cells.iter().enumerate() {
+        let start_col = tree_line_cell.indentation;
+        let is_last_cell = i == num_cells - 1;
+        let end_col = if is_last_cell {
+            width
+        } else {
+            tree_line_info.tree_line_cells[i + 1].indentation
+        };
+
+        let is_last_cell_thats_focus_ancestor =
+            if let Some(last_cell_index) = last_cell_index_of_cell_that_is_in_focus_ancestor {
+                i == last_cell_index
+            } else {
+                false
+            };
+
+        let bottom_state = {
+            let is_focused = is_last_cell_thats_focus_ancestor
+                && !curr_line_contains_focus_ancestor
+                && !line_contains_cursor
+                && curr_line_end_index < context.focus;
+
+            if is_focused {
+                TreeLineState::Focused
+            } else {
+                match &tree_line_cell.last_collapsible_child {
+                    Some(last_collapsible_child) => {
+                        if curr_line_start_index < last_collapsible_child.start_index() {
+                            TreeLineState::Visible
+                        } else {
+                            TreeLineState::Hidden
+                        }
+                    }
+                    None => TreeLineState::Hidden,
+                }
+            }
+        };
+
+        let right_state = if is_last_cell {
+            if curr_line_is_focused {
+                TreeLineState::Focused
+            } else if tree_line_info.line_is_collapsible {
+                TreeLineState::Visible
+            } else {
+                TreeLineState::Hidden
+            }
+        } else {
+            TreeLineState::Hidden
+        };
+
+        for col in start_col..end_col {
+            let col_str = if col == start_col {
+                TreeLineState::intersection_str(bottom_state, right_state)
+            } else {
+                TreeLineState::horizontal_str(right_state)
+            };
+
+            styled_segments.push(StyledSegment {
+                attrs: context.color_scheme.comment.normal.not_a_match,
+                content: Text::Static(col_str),
+            });
+        }
+    }
+}
+
 // 'l for lifetime of the line renderer
 // 's for the lifetime of rendering the whole screen
 // 'h for the lifetime of the highlighter's search match ranges
 pub fn style_typeset_line<'l, 's, 'h>(
-    core: &'l DocCore,
     context: &'l RenderContext<'s>,
     logical_line: &'l LogicalLine,
     fragments: &'l TypesetLine,
@@ -620,7 +890,23 @@ pub fn style_typeset_line<'l, 's, 'h>(
     let mut styled_segments = vec![];
 
     for fragment in &fragments.0 {
-        let (focused, token_color_scheme) = match fragment.source {
+        let (focused, token_color_scheme) = match &fragment.source {
+            FragmentSource::Indentation(tree_line_info) => {
+                let tree_line_info =
+                    tree_line_info.get_or_init(|| TreeLineInfo::new(&context.state, logical_line));
+                let line_contains_cursor = logical_line.contains_node_index(context.focus);
+
+                let line_number = context.state.line_number(logical_line);
+                render_tree_line(
+                    &mut styled_segments,
+                    tree_line_info,
+                    context,
+                    logical_line,
+                    line_contains_cursor,
+                );
+
+                continue;
+            }
             FragmentSource::Cursor => {
                 let cursor = context.cursor_content(logical_line);
 
@@ -640,8 +926,8 @@ pub fn style_typeset_line<'l, 's, 'h>(
                 (focused, context.color_scheme.comment)
             }
             FragmentSource::Node(node_index) => {
-                let focused = context.focused_node_indexes.contains(&node_index);
-                let token_color_scheme = match core.token(node_index) {
+                let focused = context.focused_node_indexes.contains(node_index);
+                let token_color_scheme = match context.state.core.token(*node_index) {
                     DocumentToken::StartOfList(_)
                     | DocumentToken::EndOfList(_)
                     | DocumentToken::Unit { .. } => context.color_scheme.parens,
@@ -751,7 +1037,6 @@ mod tests {
                     .map(move |typeset_line| {
                         dump_segments_content(
                             style_typeset_line(
-                                &doc.state.core,
                                 render_context_ref,
                                 &logical_line,
                                 &typeset_line,
@@ -775,7 +1060,6 @@ mod tests {
             .map(|typeset_line| {
                 dump_segments_content(
                     style_typeset_line(
-                        &doc.state.core,
                         &render_context,
                         &logical_lines[line],
                         &typeset_line,
@@ -809,7 +1093,6 @@ mod tests {
             s.push_str(
                 dump_segments_with_styles(
                     style_typeset_line(
-                        &doc.state.core,
                         &render_context,
                         &logical_lines[line],
                         &typeset_line,

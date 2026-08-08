@@ -174,7 +174,7 @@ pub struct Compositor<'a, Source> {
     reserved_space: Option<usize>,
 }
 
-impl<'a, Source: Copy> Compositor<'a, Source> {
+impl<'a, Source: Clone> Compositor<'a, Source> {
     pub fn new(doc_content: &'a [u8], doc_width: NonZeroUsize) -> Self {
         Compositor {
             doc_content,
@@ -258,7 +258,7 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
                     self.add_entire_fragment_to_current_line(Fragment {
                         text: Text::ellipsis(),
                         width: 1,
-                        source,
+                        source: source.clone(),
                     });
 
                     let next_grapheme_len = remaining_s.graphemes(true).next().unwrap().len();
@@ -273,7 +273,7 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
             self.add_entire_fragment_to_current_line(Fragment {
                 text: text.sub_range(portion_range),
                 width: used_width,
-                source,
+                source: source.clone(),
             });
 
             processed_bytes += portion.len();
@@ -410,7 +410,7 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
             self.add_entire_fragment_to_current_line(Fragment {
                 text: open_delimiter,
                 width: 1,
-                source,
+                source: source.clone(),
             });
         }
 
@@ -427,7 +427,7 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
         self.add_entire_fragment_to_current_line(Fragment {
             text: prefix,
             width: used_space,
-            source,
+            source: source.clone(),
         });
 
         // We only fit part of the string, so now we have to add the ellipsis too.
@@ -435,7 +435,7 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
             self.add_entire_fragment_to_current_line(Fragment {
                 text: Text::ellipsis(),
                 width: 1,
-                source,
+                source: source.clone(),
             });
         }
 
@@ -443,7 +443,7 @@ impl<'a, Source: Copy> Compositor<'a, Source> {
             self.add_entire_fragment_to_current_line(Fragment {
                 text: close_delimiter,
                 width: 1,
-                source,
+                source: source.clone(),
             });
         }
 

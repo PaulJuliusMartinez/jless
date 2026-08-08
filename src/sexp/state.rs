@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::iter::DoubleEndedIterator;
 use std::num::NonZeroUsize;
 
 use crate::sexp::core::{DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex};
@@ -423,6 +424,14 @@ impl DocState {
 
     pub fn logical_line_of_node_index(&self, node_index: NodeIndex) -> LogicalLine {
         self.maybe_logical_line_of_node_index(node_index).unwrap()
+    }
+
+    pub fn collapsible_nodes_in_line<'a>(
+        &'a self,
+        logical_line: &LogicalLine,
+    ) -> impl DoubleEndedIterator<Item = (&'a NodeIndex, &'a CollapseState)> {
+        self.collapsible_nodes
+            .range(logical_line.start_index()..=logical_line.end_index())
     }
 }
 
