@@ -9,7 +9,7 @@ categories = ["command-line-utilities"]
 repository = "https://github.com/PaulJuliusMartinez/jless"
 homepage = "https://jless.io"
 documentation = "https://jless.io/user-guide.html"
-edition = "2018"
+edition = "2021"
 rust-version = "1.87"
 
 [features]
