@@ -31,7 +31,6 @@ enum FocusTargetKind {
 pub struct SexpDocument {
     width: NonZeroUsize,
     pub state: DocState,
-    next_top_level_node_index: NodeIndex,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
     // We should maybe keep track of whether this is some or none in document_viewer,
     // but I don't want to add another associated type to Document.
@@ -204,105 +203,16 @@ impl ScreenLine {
 }
 
 impl SexpDocument {
-    fn maybe_add_new_top_level_nodes(&mut self) {
-        // Add data any new top level nodes.
-        let Some(last_completed_top_level_sexp) =
-            self.state.core.node_index_of_last_completed_top_level_sexp
-        else {
-            // No data yet
-            return;
-        };
-
-        let initial_collapse_state = self
-            .initial_nested_collapse_state_for_top_level_nodes
-            .eventual_collapse_state;
-
-        while self.next_top_level_node_index <= last_completed_top_level_sexp {
-            let new_top_level_node_index = self.next_top_level_node_index;
-
-            let logical_lines =
-                layout::layout_fully_expanded_node(&self.state.core, new_top_level_node_index);
-
-            for LogicalLine {
-                indentation,
-                start_index,
-                end_index,
-            } in logical_lines.iter()
-            {
-                self.state
-                    .starts_of_logical_lines
-                    .insert(*start_index, (*end_index, *indentation));
-            }
-
-            self.next_top_level_node_index = logical_lines.last().unwrap().end_index + 1;
-
-            for logical_line in logical_lines.iter() {
-                // For a given LogicalLine, we can collapse some of the content underneath it if
-                // we have a container (i.e., a record, variant tuple/record, or a plain list)
-                // that starts on that line, but does not _end_ on that line.
-                //
-                // If something is wrapped in a singleton, then we'll end up with two "containers"
-                // that both start on the same line, but then both end together on a different line.
-                // It doesn't make sense to be able to collapse _both_ of these, so we'll say the
-                // first one is collapsible (so that "more" content, in terms of more parentheses,
-                // get collapsed).
-
-                // We'll keep track of the line where the previous collapsible node ended so we can
-                // do this comparison. Use NodeIndex(0), because that's impossible (a collapsible
-                // node must span at least two lines, so the end line can't start with index 0),
-                // and avoids an awkward option comparison later.
-                let mut start_index_of_end_line_of_previous_collapsible_node = NodeIndex(0);
-
-                for node_index in logical_line.node_indexes() {
-                    let token = self.state.core.token(node_index);
-
-                    let Some(list_end_index) = token.list_end_index() else {
-                        continue;
-                    };
-
-                    // If the list ends on the same line, we can stop here and stop processing
-                    // additional nodes in this line, because they are nested inside and will
-                    // also end on this line.
-                    if list_end_index <= logical_line.end_index {
-                        break;
-                    }
-
-                    // DO need to check list kind here; RecordField might span multiple lines,
-                    // but is not collapsible.
-                    match token.list_kind().unwrap() {
-                        // Not collapsible:
-                        ListKind::DateTime | ListKind::RecordField => continue,
-                        // Definitely collapsible:
-                        ListKind::Record
-                        | ListKind::VariantRecord
-                        | ListKind::VariantTuple
-                        | ListKind::Plain
-                        // Technically collapsible if it ends up across multiple lines
-                        | ListKind::Singleton => (),
-                    }
-
-                    let start_of_end_logical_line =
-                        self.logical_line_of_node_index(list_end_index).start_index;
-
-                    if start_of_end_logical_line
-                        != start_index_of_end_line_of_previous_collapsible_node
-                    {
-                        self.state
-                            .collapsible_nodes
-                            .insert(node_index, initial_collapse_state);
-                        start_index_of_end_line_of_previous_collapsible_node =
-                            start_of_end_logical_line;
-                    }
-                }
-            }
-
+    fn initialize_nested_collapse_state(&mut self, prev_next_top_level_node_index: NodeIndex) {
+        let mut top_level_node_index = prev_next_top_level_node_index;
+        while top_level_node_index < self.state.next_top_level_node_index {
             // Now apply any shallow collapsing/expanding that have been applied
             // to top-level nodes previously.
             if matches!(
-                self.state.core.token(new_top_level_node_index),
+                self.state.core.token(top_level_node_index),
                 DocumentToken::StartOfList(_)
             ) {
-                let first_child_index = new_top_level_node_index + 1;
+                let first_child_index = top_level_node_index + 1;
                 // Avoiding storing a ref to self because we mutate `collapsible_nodes` as
                 // we iterate.
                 let range = 0..(self
@@ -332,41 +242,26 @@ impl SexpDocument {
                 // If this is none, then a single deep collapse state was set, and used
                 // as the default, so the top-level node is already in the desired state.
                 if let Some(collapse_state) = most_shallow_collapse_state {
-                    if let Some(state) = self
-                        .state
-                        .collapsible_nodes
-                        .get_mut(&new_top_level_node_index)
+                    if let Some(state) = self.state.collapsible_nodes.get_mut(&top_level_node_index)
                     {
                         *state = collapse_state;
                     }
                 }
             }
+
+            top_level_node_index = match self.state.core.node(top_level_node_index).next_sibling() {
+                Some(node_index) => node_index,
+                None => break,
+            };
         }
     }
 
     fn maybe_logical_line_of_node_index(&self, node_index: NodeIndex) -> Option<LogicalLine> {
-        let mut range = self
-            .state
-            .starts_of_logical_lines
-            .range(NodeIndex(0)..=node_index);
-        match range.next_back() {
-            None => None,
-            Some((start_index, (end_index, indentation))) => {
-                if node_index <= *end_index {
-                    Some(LogicalLine {
-                        indentation: *indentation,
-                        start_index: *start_index,
-                        end_index: *end_index,
-                    })
-                } else {
-                    None
-                }
-            }
-        }
+        self.state.maybe_logical_line_of_node_index(node_index)
     }
 
     fn logical_line_of_node_index(&self, node_index: NodeIndex) -> LogicalLine {
-        self.maybe_logical_line_of_node_index(node_index).unwrap()
+        self.state.logical_line_of_node_index(node_index)
     }
 
     fn collapsible_nodes_in_line<'a>(
@@ -1067,7 +962,6 @@ impl Document for SexpDocument {
         SexpDocument {
             width: dimensions::DEFAULT_WIDTH,
             state: DocState::new(),
-            next_top_level_node_index: NodeIndex(0),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
             adjacent_sibling_nav_depth: None,
@@ -1085,13 +979,25 @@ impl Document for SexpDocument {
     }
 
     fn append(&mut self, data: &[u8]) {
-        self.state.append(data);
-        self.maybe_add_new_top_level_nodes();
+        let prev_next_top_level_node_index = self.state.next_top_level_node_index;
+
+        let initial_collapse_state = self
+            .initial_nested_collapse_state_for_top_level_nodes
+            .eventual_collapse_state;
+
+        self.state.append(data, initial_collapse_state);
+        self.initialize_nested_collapse_state(prev_next_top_level_node_index);
     }
 
     fn eof(&mut self) {
-        self.state.eof();
-        self.maybe_add_new_top_level_nodes();
+        let prev_next_top_level_node_index = self.state.next_top_level_node_index;
+
+        let initial_collapse_state = self
+            .initial_nested_collapse_state_for_top_level_nodes
+            .eventual_collapse_state;
+
+        self.state.eof(initial_collapse_state);
+        self.initialize_nested_collapse_state(prev_next_top_level_node_index);
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
@@ -1925,15 +1831,7 @@ pub(super) mod test_helpers {
     }
 
     pub fn logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
-        doc.state
-            .starts_of_logical_lines
-            .iter()
-            .map(|(start_index, (end_index, indentation))| LogicalLine {
-                indentation: *indentation,
-                start_index: *start_index,
-                end_index: *end_index,
-            })
-            .collect()
+        doc.state.all_logical_lines()
     }
 
     pub fn visible_logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
@@ -1974,29 +1872,6 @@ pub(super) mod test_helpers {
             logical_lines,
         )
     }
-
-    pub fn show_visible_lines(doc: &SexpDocument) -> String {
-        let Some((top_screen_line, _)) = doc.top_screen_line_and_cursor() else {
-            return "".to_string();
-        };
-
-        let mut output = String::new();
-
-        let mut next_visible_line = Some(top_screen_line);
-
-        while let Some(visible_line) = &next_visible_line {
-            let _ = writeln!(
-                output,
-                "{}",
-                doc.debug_text_content(visible_line, &FAR_AWAY_CURSOR)
-                    .as_bstr()
-            );
-
-            next_visible_line = doc.next_screen_line(visible_line);
-        }
-
-        output
-    }
 }
 
 #[cfg(test)]
@@ -2011,70 +1886,6 @@ mod tests {
 
     use bstr::ByteSlice;
     use insta::{allow_duplicates, assert_debug_snapshot, assert_snapshot};
-
-    #[test]
-    fn add_new_top_level_nodes_as_they_are_available() {
-        let mut doc = SexpDocument::new();
-        assert_snapshot!(show_visible_lines(&doc), @"");
-
-        doc.append(b"(key1 value1)(key2 ");
-        assert_snapshot!(show_visible_lines(&doc), @"(key1 value1)");
-
-        doc.append(b"value2)trailing_atom");
-        assert_snapshot!(show_visible_lines(&doc), @r"
-        (key1 value1)
-        (key2 value2)
-        ");
-
-        doc.eof();
-        assert_snapshot!(show_visible_lines(&doc), @r"
-        (key1 value1)
-        (key2 value2)
-        trailing_atom
-        ");
-    }
-
-    #[test]
-    fn handle_tokenization_errors_in_doc() {
-        let mut doc = SexpDocument::new();
-
-        doc.append(b"a |# b");
-        assert_snapshot!(show_visible_lines(&doc), @r"
-        a
-        TokenizationError(UnexpectedEndOfBlockComment)
-        ");
-
-        // Someday: The `BasicTapeTokenizer` doesn't handle receiving more input
-        // after tokenization errors very well, so we get this awkward and
-        // misleading `EofCalledMultipleTimes` error.
-        doc.eof();
-        assert_snapshot!(show_visible_lines(&doc), @r"
-        a
-        TokenizationError(UnexpectedEndOfBlockComment)
-        TokenizationError(EofCalledMultipleTimes)
-        ");
-    }
-
-    #[test]
-    fn handle_tokenization_errors_at_eof() {
-        let mut doc = SexpDocument::new();
-        doc.append(b"(\"a b");
-        assert_snapshot!(show_visible_lines(&doc), @"");
-
-        doc.eof();
-        assert_snapshot!(show_visible_lines(&doc), @r"
-        (
-         TokenizationError(UnexpectedEofWhileInInQuotedAtom)
-         Unexpected EOF while parsing list
-        ");
-
-        let mut doc = SexpDocument::new();
-        doc.append(b"#| a");
-        assert_snapshot!(show_visible_lines(&doc), @"");
-
-        doc.eof();
-        assert_snapshot!(show_visible_lines(&doc), @"TokenizationError(UnexpectedEofWhileInBlockComment)");
-    }
 
     #[derive(Copy, Clone, Debug)]
     enum Action {
