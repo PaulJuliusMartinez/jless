@@ -1,5 +1,4 @@
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
 use std::iter::DoubleEndedIterator;
 use std::num::NonZeroUsize;
 use std::ops::{Index, Range, RangeInclusive};
@@ -11,23 +10,17 @@ use crate::rendering::{Fragment, StyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters, SearchMatchHighlighter};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
-    invariants, AtomKind, AtomMetadata, DocCore, DocumentToken, EndOfListMetadata, ListKind,
-    ListMetadata, NodeIndex,
+    invariants, AtomKind, AtomMetadata, DocumentToken, EndOfListMetadata, ListKind, ListMetadata,
+    NodeIndex,
 };
 use crate::sexp::layout;
 use crate::sexp::layout::LogicalLine;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
+use crate::sexp::state::{CollapseState, DocState};
 
 use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
 use ocaml_sexplib::Ref;
-use wabi_tree::OSBTreeMap;
-
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum CollapseState {
-    Collapsed,
-    Expanded,
-}
 
 use CollapseState::*;
 
@@ -41,10 +34,8 @@ enum FocusTargetKind {
 pub struct SexpDocument {
     width: NonZeroUsize,
     tokenizer: BasicTapeTokenizer,
-    pub core: DocCore,
+    pub state: DocState,
     next_top_level_node_index: NodeIndex,
-    starts_of_logical_lines: OSBTreeMap<NodeIndex, (NodeIndex, usize)>,
-    collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
     // We should maybe keep track of whether this is some or none in document_viewer,
     // but I don't want to add another associated type to Document.
@@ -221,15 +212,15 @@ impl SexpDocument {
         while let Some(witness) = self.tokenizer.has_enough_data_to_produce_tokens() {
             let current_data = current_data.map(Ref::Transient);
             match self.tokenizer.next_raw_token(witness, current_data) {
-                Ok(Some(raw_token)) => self.core.append_raw_token(raw_token),
+                Ok(Some(raw_token)) => self.state.core.append_raw_token(raw_token),
                 Ok(None) => {
-                    self.core.append_eof();
+                    self.state.core.append_eof();
                     break;
                 }
                 Err(err) => {
-                    self.core.append_tokenizer_error(err);
+                    self.state.core.append_tokenizer_error(err);
                     if seen_eof {
-                        self.core.append_eof();
+                        self.state.core.append_eof();
                     }
                     break;
                 }
@@ -238,7 +229,7 @@ impl SexpDocument {
 
         // Add data any new top level nodes.
         let Some(last_completed_top_level_sexp) =
-            self.core.node_index_of_last_completed_top_level_sexp
+            self.state.core.node_index_of_last_completed_top_level_sexp
         else {
             // No data yet
             return;
@@ -252,7 +243,7 @@ impl SexpDocument {
             let new_top_level_node_index = self.next_top_level_node_index;
 
             let logical_lines =
-                layout::layout_fully_expanded_node(&self.core, new_top_level_node_index);
+                layout::layout_fully_expanded_node(&self.state.core, new_top_level_node_index);
 
             for LogicalLine {
                 indentation,
@@ -260,7 +251,8 @@ impl SexpDocument {
                 end_index,
             } in logical_lines.iter()
             {
-                self.starts_of_logical_lines
+                self.state
+                    .starts_of_logical_lines
                     .insert(*start_index, (*end_index, *indentation));
             }
 
@@ -284,7 +276,7 @@ impl SexpDocument {
                 let mut start_index_of_end_line_of_previous_collapsible_node = NodeIndex(0);
 
                 for node_index in logical_line.node_indexes() {
-                    let token = self.core.token(node_index);
+                    let token = self.state.core.token(node_index);
 
                     let Some(list_end_index) = token.list_end_index() else {
                         continue;
@@ -317,7 +309,8 @@ impl SexpDocument {
                     if start_of_end_logical_line
                         != start_index_of_end_line_of_previous_collapsible_node
                     {
-                        self.collapsible_nodes
+                        self.state
+                            .collapsible_nodes
                             .insert(node_index, initial_collapse_state);
                         start_index_of_end_line_of_previous_collapsible_node =
                             start_of_end_logical_line;
@@ -328,7 +321,7 @@ impl SexpDocument {
             // Now apply any shallow collapsing/expanding that have been applied
             // to top-level nodes previously.
             if matches!(
-                self.core.token(new_top_level_node_index),
+                self.state.core.token(new_top_level_node_index),
                 DocumentToken::StartOfList(_)
             ) {
                 let first_child_index = new_top_level_node_index + 1;
@@ -361,7 +354,11 @@ impl SexpDocument {
                 // If this is none, then a single deep collapse state was set, and used
                 // as the default, so the top-level node is already in the desired state.
                 if let Some(collapse_state) = most_shallow_collapse_state {
-                    if let Some(state) = self.collapsible_nodes.get_mut(&new_top_level_node_index) {
+                    if let Some(state) = self
+                        .state
+                        .collapsible_nodes
+                        .get_mut(&new_top_level_node_index)
+                    {
                         *state = collapse_state;
                     }
                 }
@@ -371,6 +368,7 @@ impl SexpDocument {
 
     fn maybe_logical_line_of_node_index(&self, node_index: NodeIndex) -> Option<LogicalLine> {
         let mut range = self
+            .state
             .starts_of_logical_lines
             .range(NodeIndex(0)..=node_index);
         match range.next_back() {
@@ -397,7 +395,8 @@ impl SexpDocument {
         &'a self,
         logical_line: &LogicalLine,
     ) -> impl DoubleEndedIterator<Item = (&'a NodeIndex, &'a CollapseState)> {
-        self.collapsible_nodes
+        self.state
+            .collapsible_nodes
             .range(logical_line.start_index..=logical_line.end_index)
     }
 
@@ -465,7 +464,7 @@ impl SexpDocument {
             next_token_is_record_value = false;
             next_token_is_variant_value = false;
 
-            match self.core.token(node_index) {
+            match self.state.core.token(node_index) {
                 // These are always focusable
                 DocumentToken::LineComment
                 | DocumentToken::BlockComment
@@ -597,7 +596,7 @@ impl SexpDocument {
         }
 
         let reference_node = self.first_normal_focusable_node_to_left_of_node_or_node(node_index);
-        let depth = self.core.depth(reference_node);
+        let depth = self.state.core.depth(reference_node);
         self.adjacent_sibling_nav_depth = Some(depth);
         depth
     }
@@ -605,7 +604,7 @@ impl SexpDocument {
     // Returns true if a node is the first child of its parent, unless the parent is a variant,
     // in which case it only returns true if it is the second child of its parent.
     fn is_logically_the_first_elem_in_list(&self, node_index: NodeIndex) -> bool {
-        let node = self.core.node(node_index);
+        let node = self.state.core.node(node_index);
 
         let Some(parent_index) = node.parent_index() else {
             // If node doesn't have a parent, then just check if it is actually the first
@@ -613,7 +612,7 @@ impl SexpDocument {
             return node.prev_sibling().is_none();
         };
 
-        match self.core.token(parent_index).list_kind() {
+        match self.state.core.token(parent_index).list_kind() {
             Some(ListKind::VariantRecord | ListKind::VariantTuple) => {
                 // If parent is a variant, check if the previous sibling is the constructor
                 // (i.e., the first element).
@@ -621,7 +620,7 @@ impl SexpDocument {
                     None => false,
                     Some(prev_sibling) => {
                         invariants::constructors_are_the_first_child_of_variants();
-                        self.core.node(prev_sibling).prev_sibling().is_none()
+                        self.state.core.node(prev_sibling).prev_sibling().is_none()
                     }
                 }
             }
@@ -644,7 +643,7 @@ impl SexpDocument {
     ) -> RangeInclusive<NodeIndex> {
         let logical_line = self.logical_line_of_node_index(node_index);
 
-        match self.core.token(node_index) {
+        match self.state.core.token(node_index) {
             // When we're focused on non-lists, we don't consider any other nodes as part of the
             // cursor.
             DocumentToken::Atom(_)
@@ -657,8 +656,10 @@ impl SexpDocument {
                 ListKind::Record | ListKind::Singleton | ListKind::Plain => node_index..=node_index,
                 ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
                     let atom_node_index = node_index + 1;
-                    if matches!(self.core.token(atom_node_index), DocumentToken::Atom(_))
-                        && logical_line.contains_node_index(atom_node_index)
+                    if matches!(
+                        self.state.core.token(atom_node_index),
+                        DocumentToken::Atom(_)
+                    ) && logical_line.contains_node_index(atom_node_index)
                     {
                         node_index..=atom_node_index
                     } else {
@@ -684,7 +685,8 @@ impl SexpDocument {
             match collapsed_state {
                 Expanded => continue,
                 Collapsed => {
-                    let list_end_index = self.core.token(*node_index).list_end_index().unwrap();
+                    let list_end_index =
+                        self.state.core.token(*node_index).list_end_index().unwrap();
                     let end_line = self.logical_line_of_node_index(list_end_index);
                     return self.maybe_logical_line_of_node_index(end_line.end_index + 1);
                 }
@@ -699,8 +701,8 @@ impl SexpDocument {
         let mut closest_visible = *cursor;
         let mut curr = *cursor;
 
-        while let Some(parent_index) = self.core.parent_index(curr) {
-            match self.collapsible_nodes.get(&parent_index) {
+        while let Some(parent_index) = self.state.core.parent_index(curr) {
+            match self.state.collapsible_nodes.get(&parent_index) {
                 Some(Collapsed) => closest_visible = parent_index,
                 None | Some(Expanded) => (),
             }
@@ -739,7 +741,7 @@ impl SexpDocument {
             }
         };
 
-        let node = self.core.node(cursor);
+        let node = self.state.core.node(cursor);
         let parent_index = node.parent_index();
         let prev_sibling = node.prev_sibling();
 
@@ -871,7 +873,10 @@ impl SexpDocument {
             };
 
             if should_collapse && should_actually_collapse {
-                let _prev_state = self.collapsible_nodes.insert(node_to_collapse, Collapsed);
+                let _prev_state = self
+                    .state
+                    .collapsible_nodes
+                    .insert(node_to_collapse, Collapsed);
                 // Cursor doesn't move.
                 return Some(*cursor);
             }
@@ -883,7 +888,7 @@ impl SexpDocument {
         }
 
         // Can't move further left on our line, so we'll try to move to our parent.
-        if let Some(parent_index) = self.core.parent_index(*cursor) {
+        if let Some(parent_index) = self.state.core.parent_index(*cursor) {
             // We don't always want the focus to move to the parent_index. Specifically,
             // if the parent is the value of a record field, then we want to move the
             // cursor to record key, not the parent.
@@ -941,7 +946,7 @@ impl SexpDocument {
     ) -> NodeIndex {
         // If we're updating the collapse state of all the top level nodes, we need to update
         // our initial state to apply to new top-level nodes that stream in.
-        if self.core.parent_index(node_index).is_none() {
+        if self.state.core.parent_index(node_index).is_none() {
             self.initial_nested_collapse_state_for_top_level_nodes
                 .update(desired_state, depth);
         }
@@ -954,7 +959,7 @@ impl SexpDocument {
                 self.deep_set_collapse_state_on_node_and_siblings(node_index, desired_state);
             }
             Some(n) => {
-                let first_child = match self.core.parent_index(node_index) {
+                let first_child = match self.state.core.parent_index(node_index) {
                     None => NodeIndex(0),
                     Some(parent_index) => parent_index + 1,
                 };
@@ -965,10 +970,10 @@ impl SexpDocument {
 
         // If the user was somehow focused on the closing paren of a node, and that node is now
         // collapsed, switch to the opening paren.
-        match self.core.token(node_index) {
+        match self.state.core.token(node_index) {
             DocumentToken::EndOfList(EndOfListMetadata {
                 list_start_index, ..
-            }) => match self.collapsible_nodes.get(list_start_index) {
+            }) => match self.state.collapsible_nodes.get(list_start_index) {
                 Some(Collapsed) => *list_start_index,
                 _ => node_index,
             },
@@ -981,17 +986,17 @@ impl SexpDocument {
         node_index: NodeIndex,
         desired_state: CollapseState,
     ) {
-        let range = match self.core.parent_index(node_index) {
+        let range = match self.state.core.parent_index(node_index) {
             None => {
                 // If we're on a top-level node, we want to update everything in the doc.
-                self.collapsible_nodes.range_mut(..)
+                self.state.collapsible_nodes.range_mut(..)
             }
             Some(parent_index) => {
                 // Otherwise we'll update everything inside the parent (no matter the depth).
                 let start = parent_index + 1;
-                match self.core.token(parent_index).list_end_index() {
-                    Some(end) => self.collapsible_nodes.range_mut(start..end),
-                    None => self.collapsible_nodes.range_mut(start..),
+                match self.state.core.token(parent_index).list_end_index() {
+                    Some(end) => self.state.collapsible_nodes.range_mut(start..end),
+                    None => self.state.collapsible_nodes.range_mut(start..),
                 }
             }
         };
@@ -1015,13 +1020,13 @@ impl SexpDocument {
 
         while let Some(sibling_index) = next_sibling {
             let mut rec_depth = depth;
-            if let Some(state) = self.collapsible_nodes.get_mut(&sibling_index) {
+            if let Some(state) = self.state.collapsible_nodes.get_mut(&sibling_index) {
                 *state = desired_state;
                 rec_depth -= 1;
             }
 
             if matches!(
-                self.core.token(sibling_index),
+                self.state.core.token(sibling_index),
                 DocumentToken::StartOfList(_),
             ) {
                 let first_child = sibling_index + 1;
@@ -1032,7 +1037,7 @@ impl SexpDocument {
                 );
             }
 
-            next_sibling = self.core.node(sibling_index).next_sibling();
+            next_sibling = self.state.core.node(sibling_index).next_sibling();
         }
     }
 
@@ -1041,15 +1046,20 @@ impl SexpDocument {
         color_scheme: &'a ColorScheme,
         focus: NodeIndex,
     ) -> RenderContext<'a> {
-        RenderContext::new(color_scheme, &self.core, &self.collapsible_nodes, focus)
+        RenderContext::new(
+            color_scheme,
+            &self.state.core,
+            &self.state.collapsible_nodes,
+            focus,
+        )
     }
 
     pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> TypesetLines {
         renderer::typeset_logical_line(
             logical_line,
             self.width,
-            &self.core,
-            &self.collapsible_nodes,
+            &self.state.core,
+            &self.state.collapsible_nodes,
             self.include_cursor,
         )
     }
@@ -1079,10 +1089,8 @@ impl Document for SexpDocument {
         SexpDocument {
             width: dimensions::DEFAULT_WIDTH,
             tokenizer: BasicTapeTokenizer::new(),
-            core: DocCore::new(),
+            state: DocState::new(),
             next_top_level_node_index: NodeIndex(0),
-            starts_of_logical_lines: OSBTreeMap::new(),
-            collapsible_nodes: BTreeMap::new(),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
             adjacent_sibling_nav_depth: None,
@@ -1110,21 +1118,24 @@ impl Document for SexpDocument {
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
-        self.starts_of_logical_lines.first_key_value().map(|kvp| {
-            let (start_index, (end_index, indentation)) = kvp;
-            (
-                self.first_typeset_screen_line_for_logical_line(LogicalLine {
-                    indentation: *indentation,
-                    start_index: *start_index,
-                    end_index: *end_index,
-                }),
-                *start_index,
-            )
-        })
+        self.state
+            .starts_of_logical_lines
+            .first_key_value()
+            .map(|kvp| {
+                let (start_index, (end_index, indentation)) = kvp;
+                (
+                    self.first_typeset_screen_line_for_logical_line(LogicalLine {
+                        indentation: *indentation,
+                        start_index: *start_index,
+                        end_index: *end_index,
+                    }),
+                    *start_index,
+                )
+            })
     }
 
     fn bottom_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
-        match self.starts_of_logical_lines.last_key_value() {
+        match self.state.starts_of_logical_lines.last_key_value() {
             None => None,
             Some((start_index, (end_index, indentation))) => {
                 let last_logical_line = LogicalLine {
@@ -1147,8 +1158,8 @@ impl Document for SexpDocument {
 
     fn first_visible_cursor_at_or_before_line_index(&self, index: usize) -> Option<Self::Cursor> {
         let (start_index, (end_index, indentation)) =
-            match self.starts_of_logical_lines.get_by_rank(index) {
-                None => self.starts_of_logical_lines.last_key_value()?,
+            match self.state.starts_of_logical_lines.get_by_rank(index) {
+                None => self.state.starts_of_logical_lines.last_key_value()?,
                 Some(x) => x,
             };
 
@@ -1185,13 +1196,14 @@ impl Document for SexpDocument {
 
     fn line_number(&self, screen_line: &ScreenLine) -> usize {
         1 + self
+            .state
             .starts_of_logical_lines
             .rank_of(&screen_line.logical_line.start_index)
             .expect("to find logical line start in `starts_of_logical_lines`")
     }
 
     fn num_lines(&self) -> usize {
-        self.starts_of_logical_lines.len()
+        self.state.starts_of_logical_lines.len()
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -1368,7 +1380,10 @@ impl Document for SexpDocument {
 
         // If we found a collapsed node, expand it!
         if let Some(node_to_expand) = node_to_expand {
-            let _prev_state = self.collapsible_nodes.insert(node_to_expand, Expanded);
+            let _prev_state = self
+                .state
+                .collapsible_nodes
+                .insert(node_to_expand, Expanded);
             // Cursor doesn't move.
             return Some(*cursor);
         }
@@ -1379,7 +1394,7 @@ impl Document for SexpDocument {
             return Some(next_focusable_node_in_line);
         }
 
-        let should_move_down = match self.core.token(*cursor).list_end_index() {
+        let should_move_down = match self.state.core.token(*cursor).list_end_index() {
             None => false,
             Some(end_index) => current_line.end_index < end_index,
         };
@@ -1405,12 +1420,13 @@ impl Document for SexpDocument {
     }
 
     fn move_cursor_to_first_sibling(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
-        let Some(parent_index) = self.core.parent_index(*cursor) else {
+        let Some(parent_index) = self.state.core.parent_index(*cursor) else {
             // If we're focused on a top level sexp, we'll move to the first one.
             return Some(NodeIndex(0));
         };
 
-        let DocumentToken::StartOfList(parent_list_metadata) = self.core.token(parent_index) else {
+        let DocumentToken::StartOfList(parent_list_metadata) = self.state.core.token(parent_index)
+        else {
             panic!("parent_index didn't point to StartOfList");
         };
 
@@ -1430,18 +1446,18 @@ impl Document for SexpDocument {
             ListKind::VariantRecord | ListKind::VariantTuple => {
                 // For variants, we actually want to focus the first thing after the constructor.
                 invariants::constructors_are_the_first_child_of_variants();
-                self.core.node(first_child).next_sibling()
+                self.state.core.node(first_child).next_sibling()
             }
         }
     }
 
     fn move_cursor_to_last_sibling(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
-        let Some(parent_index) = self.core.parent_index(*cursor) else {
+        let Some(parent_index) = self.state.core.parent_index(*cursor) else {
             // If we're focused on a top level sexp, we'll move to the last one.
-            return self.core.node_index_of_last_completed_top_level_sexp;
+            return self.state.core.node_index_of_last_completed_top_level_sexp;
         };
 
-        let DocumentToken::StartOfList(list_metadata) = self.core.token(parent_index) else {
+        let DocumentToken::StartOfList(list_metadata) = self.state.core.token(parent_index) else {
             panic!("parent_index didn't point to StartOfList");
         };
 
@@ -1450,7 +1466,7 @@ impl Document for SexpDocument {
 
     fn move_cursor_to_next_sibling_or_down(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
         let desired_depth = self.current_adjacent_sibling_nav_depth_or_calculate_new_value(*cursor);
-        let curr_depth = self.core.depth(*cursor);
+        let curr_depth = self.state.core.depth(*cursor);
 
         // If currently at the correct depth, try to move to the next sibling. When
         // moving backwards, there are concerns that we wouldn't want to focus the
@@ -1458,7 +1474,7 @@ impl Document for SexpDocument {
         // record field, or from the first value of a variant to the constructor),
         // but that isn't a concern when moving forward in the document.
         if curr_depth == desired_depth {
-            if let Some(next_sibling) = self.core.node(*cursor).next_sibling() {
+            if let Some(next_sibling) = self.state.core.node(*cursor).next_sibling() {
                 return Some(next_sibling);
             }
         }
@@ -1470,7 +1486,7 @@ impl Document for SexpDocument {
         let mut candidate_line = self.next_visible_logical_line(&starting_logical_line)?;
 
         loop {
-            let leading_depth = self.core.depth(candidate_line.start_index);
+            let leading_depth = self.state.core.depth(candidate_line.start_index);
 
             match leading_depth.cmp(&desired_depth) {
                 Ordering::Equal => {
@@ -1487,7 +1503,7 @@ impl Document for SexpDocument {
                     {
                         // Stop as soon as we see something more deeply nested. (This might
                         // help do the right thing when we put more stuff on one line.)
-                        if self.core.depth(node_index) > desired_depth {
+                        if self.state.core.depth(node_index) > desired_depth {
                             break;
                         }
 
@@ -1507,8 +1523,17 @@ impl Document for SexpDocument {
                 Ordering::Greater => {
                     // We've ended up at more deeply nested line than we want. We'll go to
                     // the parent, zoom to its ending, then go to the next line after that.
-                    let parent_index = self.core.parent_index(candidate_line.start_index).unwrap();
-                    let closing_paren = self.core.token(parent_index).list_end_index().unwrap();
+                    let parent_index = self
+                        .state
+                        .core
+                        .parent_index(candidate_line.start_index)
+                        .unwrap();
+                    let closing_paren = self
+                        .state
+                        .core
+                        .token(parent_index)
+                        .list_end_index()
+                        .unwrap();
                     let closing_paren_line = self.logical_line_of_node_index(closing_paren);
                     candidate_line = self.next_visible_logical_line(&closing_paren_line)?;
                 }
@@ -1518,14 +1543,14 @@ impl Document for SexpDocument {
 
     fn move_cursor_to_prev_sibling_or_up(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
         let desired_depth = self.current_adjacent_sibling_nav_depth_or_calculate_new_value(*cursor);
-        let curr_depth = self.core.depth(*cursor);
+        let curr_depth = self.state.core.depth(*cursor);
 
         // If currently at the correct depth, try to move to the previous sibling, but
         // make sure that's actually a focusable node! We don't want to move from the
         // first argument in a variant to the constructor, or from the value of a record
         // field to the key.
         if curr_depth == desired_depth {
-            if let Some(prev_sibling) = self.core.node(*cursor).prev_sibling() {
+            if let Some(prev_sibling) = self.state.core.node(*cursor).prev_sibling() {
                 return Some(
                     self.first_normal_focusable_node_to_left_of_node_or_node(prev_sibling),
                 );
@@ -1537,7 +1562,7 @@ impl Document for SexpDocument {
         let mut candidate_cursor = self.move_cursor_up_one_line(*cursor)?;
 
         loop {
-            let leading_depth = self.core.depth(candidate_cursor);
+            let leading_depth = self.state.core.depth(candidate_cursor);
 
             match leading_depth.cmp(&desired_depth) {
                 Ordering::Equal => {
@@ -1622,6 +1647,7 @@ impl Document for SexpDocument {
                 }
 
                 let target_index = self
+                    .state
                     .core
                     .node(next_logical_line.start_index)
                     .parent_index()
@@ -1689,6 +1715,7 @@ impl Document for SexpDocument {
                 // we'll move to its sibling.
                 if !self.is_logically_the_first_elem_in_list(curr_logical_line.start_index) {
                     let first_elem = self
+                        .state
                         .core
                         .node(curr_logical_line.start_index)
                         .parent_index()
@@ -1728,7 +1755,7 @@ impl Document for SexpDocument {
     }
 
     fn path_to_cursor(&self, cursor: &NodeIndex) -> Option<String> {
-        self.core.sexp_get_style_path_to_node(*cursor)
+        self.state.core.sexp_get_style_path_to_node(*cursor)
     }
 
     fn debug_text_content(&self, screen_line: &ScreenLine, cursor: &NodeIndex) -> Vec<u8> {
@@ -1741,8 +1768,9 @@ impl Document for SexpDocument {
         for fragment in screen_line.typeset_line().0.iter() {
             match &fragment.text {
                 Text::SourceRange(range) => {
-                    let content = std::str::from_utf8(&self.core.pretty_printed[range.clone()])
-                        .unwrap_or("INVALID UTF8");
+                    let content =
+                        std::str::from_utf8(&self.state.core.pretty_printed[range.clone()])
+                            .unwrap_or("INVALID UTF8");
 
                     let source_node_index = fragment.source.node_index();
 
@@ -1785,7 +1813,7 @@ impl Document for SexpDocument {
         let color_scheme = ColorScheme::default();
         let render_context = self.render_context_with_color_scheme(&color_scheme, *cursor);
         Some(style_typeset_line(
-            &self.core,
+            &self.state.core,
             &render_context,
             &screen_line.logical_line,
             screen_line.typeset_line(),
@@ -1794,13 +1822,13 @@ impl Document for SexpDocument {
     }
 
     fn get_search_input_under_cursor(&self, cursor: &NodeIndex) -> Option<String> {
-        let node = self.core.node(*cursor);
+        let node = self.state.core.node(*cursor);
         let data_range = match &node.token {
             DocumentToken::StartOfList(ListMetadata { list_kind, .. }) => match list_kind {
                 ListKind::RecordField | ListKind::VariantRecord | ListKind::VariantTuple => {
                     invariants::record_keys_are_the_first_child_of_record_fields();
                     invariants::constructors_are_the_first_child_of_variants();
-                    let atom_range_end = self.core.node(*cursor + 1).data_range.end;
+                    let atom_range_end = self.state.core.node(*cursor + 1).data_range.end;
                     Some(node.data_range.start..atom_range_end)
                 }
                 ListKind::Plain | ListKind::Record | ListKind::Singleton | ListKind::DateTime => {
@@ -1816,7 +1844,7 @@ impl Document for SexpDocument {
 
         // Right now the only non-UTF-8 content can appear in comments, which we
         // don't try to convert to search terms.
-        let raw_text = &self.core.pretty_printed[data_range];
+        let raw_text = &self.state.core.pretty_printed[data_range];
         let text = match std::str::from_utf8(raw_text) {
             Ok(s) => s,
             Err(_) => return None,
@@ -1837,23 +1865,23 @@ impl Document for SexpDocument {
     }
 
     fn raw_bytes_for_searching(&self) -> &[u8] {
-        self.core.raw_bytes_of_complete_content()
+        self.state.core.raw_bytes_of_complete_content()
     }
 
     fn raw_byte_range_of_cursor(&self, cursor: &NodeIndex) -> Range<usize> {
         let nodes = self.nodes_considered_as_part_of_cursor(*cursor);
-        let start = self.core.node(*nodes.start()).data_range.start;
-        let end = self.core.node(*nodes.end()).data_range.end;
+        let start = self.state.core.node(*nodes.start()).data_range.start;
+        let end = self.state.core.node(*nodes.end()).data_range.end;
         start..end
     }
 
     fn raw_byte_index_to_cursor(&self, byte_index: usize) -> NodeIndex {
-        let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
+        let closest_node_to_byte_index = self.state.core.closest_node_to_byte_index(byte_index);
         self.first_normal_focusable_node_to_left_of_node_or_node(closest_node_to_byte_index)
     }
 
     fn raw_byte_index_to_visible_screen_line(&self, byte_index: usize) -> ScreenLine {
-        let closest_node_to_byte_index = self.core.closest_node_to_byte_index(byte_index);
+        let closest_node_to_byte_index = self.state.core.closest_node_to_byte_index(byte_index);
         let closest_visible_ancestor = self.closest_visible_ancestor(&closest_node_to_byte_index);
         let logical_line = self.logical_line_of_node_index(closest_visible_ancestor);
         let typeset_lines = self.typeset_logical_line(&logical_line);
@@ -1920,7 +1948,8 @@ pub(super) mod test_helpers {
     }
 
     pub fn logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
-        doc.starts_of_logical_lines
+        doc.state
+            .starts_of_logical_lines
             .iter()
             .map(|(start_index, (end_index, indentation))| LogicalLine {
                 indentation: *indentation,
@@ -1933,7 +1962,7 @@ pub(super) mod test_helpers {
     pub fn visible_logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
         let mut curr_logical_line = {
             let (start_index, (end_index, indentation)) =
-                doc.starts_of_logical_lines.iter().next().unwrap();
+                doc.state.starts_of_logical_lines.iter().next().unwrap();
             LogicalLine {
                 indentation: *indentation,
                 start_index: *start_index,
@@ -1953,17 +1982,20 @@ pub(super) mod test_helpers {
 
     pub fn dump(doc: &SexpDocument) -> String {
         let logical_lines = logical_lines(doc);
-        crate::sexp::layout::tests::show_logical_lines(&doc.core, logical_lines)
+        crate::sexp::layout::tests::show_logical_lines(&doc.state.core, logical_lines)
     }
 
     pub fn dump_visible(doc: &SexpDocument) -> String {
         let visible_logical_lines = visible_logical_lines(doc);
-        crate::sexp::layout::tests::show_logical_lines(&doc.core, visible_logical_lines)
+        crate::sexp::layout::tests::show_logical_lines(&doc.state.core, visible_logical_lines)
     }
 
     pub fn dump_with_byte_indexes(doc: &SexpDocument) -> String {
         let logical_lines = logical_lines(doc);
-        crate::sexp::layout::tests::show_logical_lines_with_byte_indexes(&doc.core, logical_lines)
+        crate::sexp::layout::tests::show_logical_lines_with_byte_indexes(
+            &doc.state.core,
+            logical_lines,
+        )
     }
 
     pub fn show_visible_lines(doc: &SexpDocument) -> String {
@@ -2123,9 +2155,9 @@ mod tests {
         current_cursor: NodeIndex,
         action: Action,
     ) -> (Option<NodeIndex>, String) {
-        let prev_collapsed_states = doc.collapsible_nodes.clone();
+        let prev_collapsed_states = doc.state.collapsible_nodes.clone();
         let new_cursor = doc.perform_action(current_cursor, action);
-        let new_collapsed_states = doc.collapsible_nodes.clone();
+        let new_collapsed_states = doc.state.collapsible_nodes.clone();
 
         assert_eq!(prev_collapsed_states.len(), new_collapsed_states.len());
 
@@ -3159,7 +3191,7 @@ mod tests {
                 ");
 
                 let collapse_states = doc
-                    .collapsible_nodes
+                    .state.collapsible_nodes
                     .iter()
                     .map(|(node_index, state)| format!("{} => {state:?}", node_index.0))
                     .collect::<Vec<_>>()
@@ -3377,10 +3409,10 @@ mod tests {
         let hidden_into_next_line = 19..25;
         let hidden_into_next_line_into_hidden = 19..42;
 
-        assert_snapshot!(doc.core.pretty_printed[var.clone()].as_bstr(), @"ar");
-        assert_snapshot!(doc.core.pretty_printed[hidden_var_value.clone()].as_bstr(), @"c)");
-        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line.clone()].as_bstr(), @"c)) (k");
-        assert_snapshot!(doc.core.pretty_printed[hidden_into_next_line_into_hidden.clone()].as_bstr(), @"c)) (k3 d) (k4 (Var e f");
+        assert_snapshot!(doc.state.core.pretty_printed[var.clone()].as_bstr(), @"ar");
+        assert_snapshot!(doc.state.core.pretty_printed[hidden_var_value.clone()].as_bstr(), @"c)");
+        assert_snapshot!(doc.state.core.pretty_printed[hidden_into_next_line.clone()].as_bstr(), @"c)) (k");
+        assert_snapshot!(doc.state.core.pretty_printed[hidden_into_next_line_into_hidden.clone()].as_bstr(), @"c)) (k3 d) (k4 (Var e f");
 
         assert_snapshot!(doc.is_raw_byte_range_visible(var.clone()), @"true");
         assert_snapshot!(doc.is_raw_byte_range_visible(hidden_var_value.clone()), @"true");

@@ -8,8 +8,9 @@ use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
 };
-use crate::sexp::document::{CollapseState, TypesetLine, TypesetLines};
+use crate::sexp::document::{TypesetLine, TypesetLines};
 use crate::sexp::layout::LogicalLine;
+use crate::sexp::state::CollapseState;
 
 #[derive(Copy, Clone, Debug)]
 pub enum FragmentSource {
@@ -727,7 +728,7 @@ mod tests {
                     .map(move |typeset_line| {
                         dump_segments_content(
                             style_typeset_line(
-                                &doc.core,
+                                &doc.state.core,
                                 render_context_ref,
                                 &logical_line,
                                 &typeset_line,
@@ -751,7 +752,7 @@ mod tests {
             .map(|typeset_line| {
                 dump_segments_content(
                     style_typeset_line(
-                        &doc.core,
+                        &doc.state.core,
                         &render_context,
                         &logical_lines[line],
                         &typeset_line,
@@ -785,7 +786,7 @@ mod tests {
             s.push_str(
                 dump_segments_with_styles(
                     style_typeset_line(
-                        &doc.core,
+                        &doc.state.core,
                         &render_context,
                         &logical_lines[line],
                         &typeset_line,
