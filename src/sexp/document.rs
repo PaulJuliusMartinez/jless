@@ -705,22 +705,11 @@ impl SexpDocument {
         color_scheme: &'a ColorScheme,
         focus: NodeIndex,
     ) -> RenderContext<'a> {
-        RenderContext::new(
-            color_scheme,
-            &self.state.core,
-            &self.state.collapsible_nodes,
-            focus,
-        )
+        RenderContext::new(color_scheme, &self.state, focus)
     }
 
     pub fn typeset_logical_line(&self, logical_line: &LogicalLine) -> TypesetLines {
-        renderer::typeset_logical_line(
-            logical_line,
-            self.width,
-            &self.state.core,
-            &self.state.collapsible_nodes,
-            self.include_cursor,
-        )
+        renderer::typeset_logical_line(logical_line, self.width, &self.state, self.include_cursor)
     }
 
     fn first_typeset_screen_line_for_logical_line(&self, logical_line: LogicalLine) -> ScreenLine {

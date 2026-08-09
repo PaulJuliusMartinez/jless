@@ -10,7 +10,7 @@ use crate::sexp::core::{
 };
 use crate::sexp::document::{TypesetLine, TypesetLines};
 use crate::sexp::layout::LogicalLine;
-use crate::sexp::state::CollapseState;
+use crate::sexp::state::{CollapseState, DocState};
 
 #[derive(Copy, Clone, Debug)]
 pub enum FragmentSource {
@@ -37,8 +37,7 @@ impl FragmentSource {
 struct Typesetter<'a> {
     logical_line: &'a LogicalLine,
     doc_content: &'a [u8],
-    core: &'a DocCore,
-    collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
+    state: &'a DocState,
     compositor: Compositor<'a, FragmentSource>,
     include_cursor: bool,
 }
@@ -46,18 +45,16 @@ struct Typesetter<'a> {
 pub fn typeset_logical_line(
     logical_line: &LogicalLine,
     doc_width: NonZeroUsize,
-    core: &DocCore,
-    collapsible_nodes: &BTreeMap<NodeIndex, CollapseState>,
+    state: &DocState,
     include_cursor: bool,
 ) -> TypesetLines {
-    let doc_content = core.pretty_printed.data();
+    let doc_content = state.core.pretty_printed.data();
     let compositor = Compositor::new(doc_content, doc_width);
 
     let mut typesetter = Typesetter {
         logical_line,
         doc_content,
-        core,
-        collapsible_nodes,
+        state,
         compositor,
         include_cursor,
     };
@@ -99,7 +96,7 @@ impl<'a> Typesetter<'a> {
         let mut collapsed_start_and_end = None;
 
         for node_index in self.logical_line.node_indexes() {
-            let node = self.core.node(node_index);
+            let node = self.state.core.node(node_index);
 
             if let Some(end_index) = prev_node_end_index {
                 let whitespace_range = end_index..(node.data_range.start);
@@ -123,7 +120,8 @@ impl<'a> Typesetter<'a> {
 
             match &node.token {
                 DocumentToken::StartOfList(list_metadata) => {
-                    if let Some(CollapseState::Collapsed) = self.collapsible_nodes.get(&node_index)
+                    if let Some(CollapseState::Collapsed) =
+                        self.state.collapsible_nodes.get(&node_index)
                     {
                         collapsed_start_and_end = Some((node_index, list_metadata.end_index()));
                         break;
@@ -169,13 +167,22 @@ impl<'a> Typesetter<'a> {
                 .append_text(Text::ellipsis(), FragmentSource::ElidedPreviewNodes);
 
             let mut closing_paren = close_index + 1;
-            while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
-                if !matches!(self.core.token(closing_paren), DocumentToken::EndOfList(_)) {
+            while closing_paren
+                <= self
+                    .state
+                    .core
+                    .last_node_index_of_part_of_completed_sexp
+                    .unwrap()
+            {
+                if !matches!(
+                    self.state.core.token(closing_paren),
+                    DocumentToken::EndOfList(_)
+                ) {
                     break;
                 }
 
                 self.compositor.append_text(
-                    Text::SourceRange(self.core.node(closing_paren).data_range.clone()),
+                    Text::SourceRange(self.state.core.node(closing_paren).data_range.clone()),
                     FragmentSource::Node(closing_paren),
                 );
 
@@ -192,8 +199,17 @@ impl<'a> Typesetter<'a> {
     fn count_trailing_paren(&self, mut closing_paren: NodeIndex) -> usize {
         let mut count = 0;
 
-        while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
-            if !matches!(self.core.token(closing_paren), DocumentToken::EndOfList(_)) {
+        while closing_paren
+            <= self
+                .state
+                .core
+                .last_node_index_of_part_of_completed_sexp
+                .unwrap()
+        {
+            if !matches!(
+                self.state.core.token(closing_paren),
+                DocumentToken::EndOfList(_)
+            ) {
                 break;
             }
 
@@ -205,13 +221,22 @@ impl<'a> Typesetter<'a> {
     }
 
     fn add_trailing_paren_after_collapsed_preview(&mut self, mut closing_paren: NodeIndex) {
-        while closing_paren <= self.core.last_node_index_of_part_of_completed_sexp.unwrap() {
-            if !matches!(self.core.token(closing_paren), DocumentToken::EndOfList(_)) {
+        while closing_paren
+            <= self
+                .state
+                .core
+                .last_node_index_of_part_of_completed_sexp
+                .unwrap()
+        {
+            if !matches!(
+                self.state.core.token(closing_paren),
+                DocumentToken::EndOfList(_)
+            ) {
                 break;
             }
 
             self.compositor.append_reserved_text(
-                Text::SourceRange(self.core.node(closing_paren).data_range.clone()),
+                Text::SourceRange(self.state.core.node(closing_paren).data_range.clone()),
                 FragmentSource::Node(closing_paren),
             );
 
@@ -224,7 +249,7 @@ impl<'a> Typesetter<'a> {
         list_index: NodeIndex,
         closing_paren: NodeIndex,
     ) -> bool {
-        let list_metadata = self.core.token(list_index).list_metadata();
+        let list_metadata = self.state.core.token(list_index).list_metadata();
         let num_elems = list_metadata.data_length();
 
         // We've reserved 1; if there's no children it _should_ be an atom, but
@@ -243,7 +268,7 @@ impl<'a> Typesetter<'a> {
         if num_elems == 1 {
             let inner_list_index = list_index + 1;
             if let DocumentToken::StartOfList(inner_list_metadata) =
-                self.core.token(inner_list_index)
+                self.state.core.token(inner_list_index)
             {
                 if let Some(inner_closing_paren) = inner_list_metadata.end_index() {
                     if !self.try_typeset_list_preview(inner_list_index, inner_closing_paren) {
@@ -260,7 +285,7 @@ impl<'a> Typesetter<'a> {
         let mut next_elem = Some(list_index + 1);
 
         while let Some(elem_index) = next_elem {
-            let node = self.core.node(elem_index);
+            let node = self.state.core.node(elem_index);
 
             // Skip line/block comments, errors and sexp comments.
             if !node.token.is_data() || node.token.is_sexp_commented_out() {
@@ -306,13 +331,13 @@ impl<'a> Typesetter<'a> {
 
     fn append_reserved_node_as_preview(&mut self, index: NodeIndex) {
         self.compositor.append_reserved_text(
-            Text::SourceRange(self.core.node(index).data_range.clone()),
+            Text::SourceRange(self.state.core.node(index).data_range.clone()),
             FragmentSource::NodePreview(index),
         )
     }
 
     fn try_typeset_elem_preview(&mut self, index: NodeIndex) -> bool {
-        let node = self.core.node(index);
+        let node = self.state.core.node(index);
         match &node.token {
             DocumentToken::Atom(_) => {
                 let start = node.data_range.start;
@@ -404,7 +429,7 @@ impl<'a> Typesetter<'a> {
         let (atom_node, second_elem_index) = {
             invariants::record_keys_are_the_first_child_of_record_fields();
             invariants::constructors_are_the_first_child_of_variants();
-            (self.core.node(index + 1), index + 2)
+            (self.state.core.node(index + 1), index + 2)
         };
 
         let atom_content = Text::SourceRange(atom_node.data_range.clone());
@@ -438,8 +463,9 @@ impl<'a> Typesetter<'a> {
         }
 
         let mut next_elem = second_elem_index;
-        while !self.core.token(next_elem).is_data() {
+        while !self.state.core.token(next_elem).is_data() {
             next_elem = self
+                .state
                 .core
                 .node(next_elem)
                 .next_sibling()
@@ -449,7 +475,7 @@ impl<'a> Typesetter<'a> {
         self.write_space_before_elem_or_static_space(next_elem);
 
         if matches!(
-            self.core.token(index).list_kind(),
+            self.state.core.token(index).list_kind(),
             Some(ListKind::RecordField)
         ) {
             if !self.try_typeset_elem_preview(next_elem) {
@@ -461,13 +487,15 @@ impl<'a> Typesetter<'a> {
         }
 
         // Closing paren
-        self.append_reserved_node_as_preview(self.core.token(index).list_end_index().unwrap());
+        self.append_reserved_node_as_preview(
+            self.state.core.token(index).list_end_index().unwrap(),
+        );
 
         true
     }
 
     fn write_space_before_elem_or_static_space(&mut self, index: NodeIndex) {
-        let node_start = self.core.node(index).data_range.start;
+        let node_start = self.state.core.node(index).data_range.start;
         let space_before = node_start - 1;
 
         let space_content = if self.doc_content[space_before] == b' ' {
@@ -483,19 +511,14 @@ impl<'a> Typesetter<'a> {
 
 pub struct RenderContext<'a> {
     color_scheme: &'a ColorScheme,
-    collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
+    state: &'a DocState,
     focused_node_indexes: Vec<NodeIndex>,
     focus: NodeIndex,
 }
 
 impl<'a> RenderContext<'a> {
-    pub fn new(
-        color_scheme: &'a ColorScheme,
-        core: &'a DocCore,
-        collapsible_nodes: &'a BTreeMap<NodeIndex, CollapseState>,
-        focus: NodeIndex,
-    ) -> Self {
-        let focused_node_indexes = match core.token(focus) {
+    pub fn new(color_scheme: &'a ColorScheme, state: &'a DocState, focus: NodeIndex) -> Self {
+        let focused_node_indexes = match state.core.token(focus) {
             DocumentToken::StartOfList(list_metadata) => {
                 let mut indexes = vec![focus];
 
@@ -529,7 +552,7 @@ impl<'a> RenderContext<'a> {
 
         RenderContext {
             color_scheme,
-            collapsible_nodes,
+            state,
             focused_node_indexes,
             focus,
         }
@@ -543,6 +566,7 @@ impl<'a> RenderContext<'a> {
         let line_contains_cursor = logical_line.contains_node_index(self.focus);
 
         let collapsible_nodes_in_line = self
+            .state
             .collapsible_nodes
             .range(logical_line.start_index..=logical_line.end_index);
 
