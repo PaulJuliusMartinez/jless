@@ -764,23 +764,20 @@ impl Document for SexpDocument {
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
-        self.state
-            .logical_lines_by_start_index
-            .first_key_value()
-            .map(|(start_index, logical_line)| {
-                (
-                    self.first_typeset_screen_line_for_logical_line(logical_line.clone()),
-                    *start_index,
-                )
-            })
+        self.state.first_logical_line().map(|logical_line| {
+            (
+                self.first_typeset_screen_line_for_logical_line(logical_line.clone()),
+                logical_line.start_index(),
+            )
+        })
     }
 
     fn bottom_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
-        match self.state.logical_lines_by_start_index.last_key_value() {
+        match self.state.last_logical_line() {
             None => None,
-            Some((_start_index, last_logical_line)) => {
+            Some(last_logical_line) => {
                 let last_visible_logical_line =
-                    self.first_visible_line_at_or_above(last_logical_line);
+                    self.first_visible_line_at_or_above(&last_logical_line);
 
                 let cursor = last_visible_logical_line.start_index();
                 let last_screen_line =
@@ -795,14 +792,12 @@ impl Document for SexpDocument {
         &self,
         line_number: NonZeroUsize,
     ) -> Option<Self::Cursor> {
-        let index = line_number.get() - 1;
-        let (_start_index, line_at_index) =
-            match self.state.logical_lines_by_start_index.get_by_rank(index) {
-                None => self.state.logical_lines_by_start_index.last_key_value()?,
-                Some(x) => x,
-            };
+        let line_at_index = match self.state.logical_line_at_line_number(line_number) {
+            None => self.state.last_logical_line()?,
+            Some(x) => x,
+        };
 
-        let visible_line_at_or_before_index = self.first_visible_line_at_or_above(line_at_index);
+        let visible_line_at_or_before_index = self.first_visible_line_at_or_above(&line_at_index);
 
         Some(visible_line_at_or_before_index.start_index())
     }
@@ -828,15 +823,11 @@ impl Document for SexpDocument {
     }
 
     fn line_number(&self, screen_line: &ScreenLine) -> usize {
-        1 + self
-            .state
-            .logical_lines_by_start_index
-            .rank_of(&screen_line.logical_line.start_index())
-            .expect("to find logical line start in `logical_lines_by_start_index`")
+        self.state.line_number(&screen_line.logical_line)
     }
 
     fn num_lines(&self) -> usize {
-        self.state.logical_lines_by_start_index.len()
+        self.state.num_logical_lines()
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -1587,13 +1578,7 @@ pub(super) mod test_helpers {
     }
 
     pub fn visible_logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
-        let mut curr_logical_line = doc
-            .state
-            .logical_lines_by_start_index
-            .first_key_value()
-            .unwrap()
-            .1
-            .clone();
+        let mut curr_logical_line = doc.state.first_logical_line().unwrap();
 
         let mut visible_logical_lines = vec![curr_logical_line.clone()];
 

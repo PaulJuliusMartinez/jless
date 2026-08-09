@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::num::NonZeroUsize;
 
 use crate::sexp::core::{DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex};
 use crate::sexp::layout;
@@ -20,7 +21,7 @@ pub struct DocState {
     tokenizer: BasicTapeTokenizer,
     pub core: DocCore,
     next_top_level_node_index: NodeIndex,
-    pub logical_lines_by_start_index: OSBTreeMap<NodeIndex, LogicalLine>,
+    logical_lines_by_start_index: OSBTreeMap<NodeIndex, LogicalLine>,
     pub collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
 }
@@ -373,6 +374,35 @@ impl DocState {
 
             next_sibling = self.core.node(sibling_index).next_sibling();
         }
+    }
+
+    pub fn first_logical_line(&self) -> Option<LogicalLine> {
+        self.logical_lines_by_start_index
+            .first_key_value()
+            .map(|(_start_index, logical_line)| logical_line.clone())
+    }
+
+    pub fn last_logical_line(&self) -> Option<LogicalLine> {
+        self.logical_lines_by_start_index
+            .last_key_value()
+            .map(|(_start_index, logical_line)| logical_line.clone())
+    }
+
+    pub fn num_logical_lines(&self) -> usize {
+        self.logical_lines_by_start_index.len()
+    }
+
+    pub fn line_number(&self, logical_line: &LogicalLine) -> usize {
+        1 + self
+            .logical_lines_by_start_index
+            .rank_of(&logical_line.start_index())
+            .expect("to find logical line start in `logical_lines_by_start_index`")
+    }
+
+    pub fn logical_line_at_line_number(&self, line_number: NonZeroUsize) -> Option<LogicalLine> {
+        self.logical_lines_by_start_index
+            .get_by_rank(line_number.get() - 1)
+            .map(|(_start_index, logical_line)| logical_line.clone())
     }
 
     pub fn maybe_logical_line_of_node_index(&self, node_index: NodeIndex) -> Option<LogicalLine> {
