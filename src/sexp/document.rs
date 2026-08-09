@@ -10,10 +10,8 @@ use crate::rendering::{Fragment, StyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters, SearchMatchHighlighter};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
-    invariants, AtomKind, AtomMetadata, DocumentToken, EndOfListMetadata, ListKind, ListMetadata,
-    NodeIndex,
+    invariants, AtomKind, AtomMetadata, DocumentToken, ListKind, ListMetadata, NodeIndex,
 };
-use crate::sexp::layout;
 use crate::sexp::layout::LogicalLine;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
@@ -31,68 +29,12 @@ enum FocusTargetKind {
 pub struct SexpDocument {
     width: NonZeroUsize,
     pub state: DocState,
-    initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
     // We should maybe keep track of whether this is some or none in document_viewer,
     // but I don't want to add another associated type to Document.
     adjacent_sibling_nav_depth: Option<usize>,
     // TODO: Probably put this in DocumentViewer; this only exists so I could set
     // it to false in tests and not update a bunch of them.
     include_cursor: bool,
-}
-
-// When streaming in input, if the user hits 'C' to deeply collapse all input, then
-// as new top-level nodes arrive, they should also be deeply collapsed. And if the user
-// then hits 'e' to shallowly expand the top level nodes, then new top-level nodes should
-// appear expanded one level, then deeply collapsed after that, as if they had been
-// present all along.
-//
-// To achieve this, we don't need to remember every call to `collapse_node_and_siblings`,
-// but can just maintain the desired deep collapsed state, and any shallow collapse states
-// in order of decreasing depth. Running an expand/collapse command to a depth N overrides
-// all previous commands to depths < N.
-#[derive(Debug)]
-struct InitialNestedCollapseStateForTopLevelNodes {
-    eventual_collapse_state: CollapseState,
-    shallow_collapse_states: Vec<(CollapseState, usize)>,
-}
-
-impl InitialNestedCollapseStateForTopLevelNodes {
-    fn new() -> Self {
-        InitialNestedCollapseStateForTopLevelNodes {
-            eventual_collapse_state: Expanded,
-            shallow_collapse_states: vec![],
-        }
-    }
-
-    fn update(&mut self, collapse_state: CollapseState, depth: Option<usize>) {
-        match depth {
-            None => {
-                self.eventual_collapse_state = collapse_state;
-                self.shallow_collapse_states.clear();
-            }
-            Some(depth) => {
-                // Pop states that apply to a lesser depth; these are now overridden.
-                while let Some((_, other_depth)) = self.shallow_collapse_states.last() {
-                    if *other_depth <= depth {
-                        self.shallow_collapse_states.pop();
-                    } else {
-                        break;
-                    }
-                }
-
-                // If the next state is the same one we're applying, we don't need to push our new
-                // state.
-                let next_state = match self.shallow_collapse_states.last() {
-                    Some((state, _)) => *state,
-                    None => self.eventual_collapse_state,
-                };
-
-                if collapse_state != next_state {
-                    self.shallow_collapse_states.push((collapse_state, depth));
-                }
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -203,59 +145,6 @@ impl ScreenLine {
 }
 
 impl SexpDocument {
-    fn initialize_nested_collapse_state(&mut self, prev_next_top_level_node_index: NodeIndex) {
-        let mut top_level_node_index = prev_next_top_level_node_index;
-        while top_level_node_index < self.state.next_top_level_node_index {
-            // Now apply any shallow collapsing/expanding that have been applied
-            // to top-level nodes previously.
-            if matches!(
-                self.state.core.token(top_level_node_index),
-                DocumentToken::StartOfList(_)
-            ) {
-                let first_child_index = top_level_node_index + 1;
-                // Avoiding storing a ref to self because we mutate `collapsible_nodes` as
-                // we iterate.
-                let range = 0..(self
-                    .initial_nested_collapse_state_for_top_level_nodes
-                    .shallow_collapse_states
-                    .len());
-                let mut most_shallow_collapse_state = None;
-
-                for i in range {
-                    let (collapse_state, depth) = self
-                        .initial_nested_collapse_state_for_top_level_nodes
-                        .shallow_collapse_states[i];
-                    most_shallow_collapse_state = Some(collapse_state);
-
-                    // Normally this would get called on NodeIndex(0) when the user hit c/C/e/E,
-                    // but that'd affect all the top-level nodes, and we just want to update a
-                    // single one, which is nested in one level, so we use `depth - 1`. The
-                    // top-level node itself is handled below, using the most recent applied
-                    // collapse state.
-                    self.set_collapse_state_on_first_child_and_siblings(
-                        first_child_index,
-                        depth - 1,
-                        collapse_state,
-                    );
-                }
-
-                // If this is none, then a single deep collapse state was set, and used
-                // as the default, so the top-level node is already in the desired state.
-                if let Some(collapse_state) = most_shallow_collapse_state {
-                    if let Some(state) = self.state.collapsible_nodes.get_mut(&top_level_node_index)
-                    {
-                        *state = collapse_state;
-                    }
-                }
-            }
-
-            top_level_node_index = match self.state.core.node(top_level_node_index).next_sibling() {
-                Some(node_index) => node_index,
-                None => break,
-            };
-        }
-    }
-
     fn maybe_logical_line_of_node_index(&self, node_index: NodeIndex) -> Option<LogicalLine> {
         self.state.maybe_logical_line_of_node_index(node_index)
     }
@@ -811,109 +700,6 @@ impl SexpDocument {
         None
     }
 
-    fn set_collapse_state_on_node_and_siblings(
-        &mut self,
-        node_index: NodeIndex,
-        depth: Option<usize>,
-        desired_state: CollapseState,
-    ) -> NodeIndex {
-        // If we're updating the collapse state of all the top level nodes, we need to update
-        // our initial state to apply to new top-level nodes that stream in.
-        if self.state.core.parent_index(node_index).is_none() {
-            self.initial_nested_collapse_state_for_top_level_nodes
-                .update(desired_state, depth);
-        }
-
-        match depth {
-            None => {
-                // We implement deep collapsing/expanding in a more efficient manner by simply
-                // updating all the collapsible nodes in a certain range, rather than traversing
-                // the whole subtree and having to check how nested we are.
-                self.deep_set_collapse_state_on_node_and_siblings(node_index, desired_state);
-            }
-            Some(n) => {
-                let first_child = match self.state.core.parent_index(node_index) {
-                    None => NodeIndex(0),
-                    Some(parent_index) => parent_index + 1,
-                };
-
-                self.set_collapse_state_on_first_child_and_siblings(first_child, n, desired_state);
-            }
-        }
-
-        // If the user was somehow focused on the closing paren of a node, and that node is now
-        // collapsed, switch to the opening paren.
-        match self.state.core.token(node_index) {
-            DocumentToken::EndOfList(EndOfListMetadata {
-                list_start_index, ..
-            }) => match self.state.collapsible_nodes.get(list_start_index) {
-                Some(Collapsed) => *list_start_index,
-                _ => node_index,
-            },
-            _ => node_index,
-        }
-    }
-
-    fn deep_set_collapse_state_on_node_and_siblings(
-        &mut self,
-        node_index: NodeIndex,
-        desired_state: CollapseState,
-    ) {
-        let range = match self.state.core.parent_index(node_index) {
-            None => {
-                // If we're on a top-level node, we want to update everything in the doc.
-                self.state.collapsible_nodes.range_mut(..)
-            }
-            Some(parent_index) => {
-                // Otherwise we'll update everything inside the parent (no matter the depth).
-                let start = parent_index + 1;
-                match self.state.core.token(parent_index).list_end_index() {
-                    Some(end) => self.state.collapsible_nodes.range_mut(start..end),
-                    None => self.state.collapsible_nodes.range_mut(start..),
-                }
-            }
-        };
-
-        for (_, state) in range {
-            *state = desired_state;
-        }
-    }
-
-    fn set_collapse_state_on_first_child_and_siblings(
-        &mut self,
-        first_child_index: NodeIndex,
-        depth: usize,
-        desired_state: CollapseState,
-    ) {
-        if depth == 0 {
-            return;
-        }
-
-        let mut next_sibling = Some(first_child_index);
-
-        while let Some(sibling_index) = next_sibling {
-            let mut rec_depth = depth;
-            if let Some(state) = self.state.collapsible_nodes.get_mut(&sibling_index) {
-                *state = desired_state;
-                rec_depth -= 1;
-            }
-
-            if matches!(
-                self.state.core.token(sibling_index),
-                DocumentToken::StartOfList(_),
-            ) {
-                let first_child = sibling_index + 1;
-                self.set_collapse_state_on_first_child_and_siblings(
-                    first_child,
-                    rec_depth,
-                    desired_state,
-                );
-            }
-
-            next_sibling = self.state.core.node(sibling_index).next_sibling();
-        }
-    }
-
     pub fn render_context_with_color_scheme<'a>(
         &'a self,
         color_scheme: &'a ColorScheme,
@@ -962,8 +748,6 @@ impl Document for SexpDocument {
         SexpDocument {
             width: dimensions::DEFAULT_WIDTH,
             state: DocState::new(),
-            initial_nested_collapse_state_for_top_level_nodes:
-                InitialNestedCollapseStateForTopLevelNodes::new(),
             adjacent_sibling_nav_depth: None,
             include_cursor: !cfg!(test),
         }
@@ -979,25 +763,11 @@ impl Document for SexpDocument {
     }
 
     fn append(&mut self, data: &[u8]) {
-        let prev_next_top_level_node_index = self.state.next_top_level_node_index;
-
-        let initial_collapse_state = self
-            .initial_nested_collapse_state_for_top_level_nodes
-            .eventual_collapse_state;
-
-        self.state.append(data, initial_collapse_state);
-        self.initialize_nested_collapse_state(prev_next_top_level_node_index);
+        self.state.append(data);
     }
 
     fn eof(&mut self) {
-        let prev_next_top_level_node_index = self.state.next_top_level_node_index;
-
-        let initial_collapse_state = self
-            .initial_nested_collapse_state_for_top_level_nodes
-            .eventual_collapse_state;
-
-        self.state.eof(initial_collapse_state);
-        self.initialize_nested_collapse_state(prev_next_top_level_node_index);
+        self.state.eof();
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
@@ -1626,7 +1396,10 @@ impl Document for SexpDocument {
         cursor: &NodeIndex,
         depth: Option<usize>,
     ) -> Option<Self::Cursor> {
-        Some(self.set_collapse_state_on_node_and_siblings(*cursor, depth, Collapsed))
+        Some(
+            self.state
+                .set_collapse_state_on_node_and_siblings(*cursor, depth, Collapsed),
+        )
     }
 
     fn expand_node_and_siblings(
@@ -1634,7 +1407,10 @@ impl Document for SexpDocument {
         cursor: &NodeIndex,
         depth: Option<usize>,
     ) -> Option<Self::Cursor> {
-        Some(self.set_collapse_state_on_node_and_siblings(*cursor, depth, Expanded))
+        Some(
+            self.state
+                .set_collapse_state_on_node_and_siblings(*cursor, depth, Expanded),
+        )
     }
 
     fn path_to_cursor(&self, cursor: &NodeIndex) -> Option<String> {
@@ -1807,10 +1583,6 @@ pub(super) mod test_helpers {
 
     use crate::document::Document;
 
-    use std::fmt::Write;
-
-    use bstr::ByteSlice;
-
     const FAR_AWAY_CURSOR: NodeIndex = NodeIndex(usize::MAX);
 
     pub fn nz(n: usize) -> NonZeroUsize {
@@ -1885,7 +1657,7 @@ mod tests {
     use std::fmt::Write;
 
     use bstr::ByteSlice;
-    use insta::{allow_duplicates, assert_debug_snapshot, assert_snapshot};
+    use insta::{assert_debug_snapshot, assert_snapshot};
 
     #[derive(Copy, Clone, Debug)]
     enum Action {
@@ -1901,8 +1673,6 @@ mod tests {
         NextIndentationChange,
         PrevIndentationChange,
         FocusBottom,
-        Collapse(Option<usize>),
-        Expand(Option<usize>),
     }
 
     use Action::*;
@@ -1932,8 +1702,6 @@ mod tests {
                 FocusBottom => self
                     .bottom_screen_line_and_cursor()
                     .map(|(_, cursor)| cursor),
-                Collapse(depth) => self.collapse_node_and_siblings(&current_cursor, depth),
-                Expand(depth) => self.expand_node_and_siblings(&current_cursor, depth),
             }
         }
     }
@@ -2849,164 +2617,6 @@ mod tests {
         NodeIndex(1)
         NodeIndex(0)
         ");
-    }
-
-    #[test]
-    fn test_collapsing_and_expanding_nodes_and_siblings() {
-        let mut doc = new_doc(
-            b"((a 1)(b ((cc 3)(dd 4)(ee ((fff 5)(ggg 6)))))(h ((ii 7)(jj 8))))((w 1)(xx yy zz))",
-        );
-        assert_snapshot!(dump(&doc), @r"
-         0..=4  : ((a 1)
-         5..=7  :  (b (
-         8..=11 :    (cc 3)
-        12..=15 :    (dd 4)
-        16..=18 :    (ee (
-        19..=22 :      (fff 5)
-        23..=30 :      (ggg 6)))))
-        31..=33 :  (h (
-        34..=37 :    (ii 7)
-        38..=44 :    (jj 8))))
-        45..=49 : ((w 1)
-        50..=51 :  (xx
-        52..=52 :   yy
-        53..=55 :   zz))
-        ");
-
-        let mut go = |node_index, action| {
-            let (new_index, mut result) = perform_action_and_compute_collapse_state_changes(
-                &mut doc,
-                NodeIndex(node_index),
-                action,
-            );
-
-            match new_index {
-                Some(new_index) if new_index.0 == node_index => (),
-                _ => {
-                    let _ = write!(result, " (returned {new_index:?})");
-                }
-            }
-
-            result
-        };
-
-        assert_snapshot!(go(0, Collapse(Some(1))), @"Collapsed(0) Collapsed(45)");
-        assert_snapshot!(go(0, Collapse(Some(2))), @"Collapsed(7) Collapsed(33) Collapsed(50)");
-        assert_snapshot!(go(1, Collapse(None)), @"Collapsed(18)");
-
-        assert_snapshot!(go(1, Expand(None)), @"Expanded(7) Expanded(18) Expanded(33)");
-        assert_snapshot!(go(0, Expand(None)), @"Expanded(0) Expanded(45) Expanded(50)");
-
-        // Switch to start of list if on end and it gets collapsed.
-        assert_snapshot!(go(55, Collapse(Some(1))), @"Collapsed(0) Collapsed(45) (returned Some(NodeIndex(45)))");
-    }
-
-    #[test]
-    fn test_initial_nested_collapse_state_for_top_level_nodes() {
-        let mut state = InitialNestedCollapseStateForTopLevelNodes::new();
-
-        let dump = |state: &InitialNestedCollapseStateForTopLevelNodes| {
-            let eventual = format!("eventual = {:?}", state.eventual_collapse_state);
-            let shallow = format!("shallow  = {:?}", state.shallow_collapse_states);
-            format!("{eventual}\n{shallow}")
-        };
-
-        assert_snapshot!(dump(&state), @r"
-        eventual = Expanded
-        shallow  = []
-        ");
-
-        state.update(Collapsed, None);
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = []
-        ");
-
-        state.update(Collapsed, Some(5));
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = []
-        ");
-
-        state.update(Expanded, Some(3));
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = [(Expanded, 3)]
-        ");
-
-        state.update(Expanded, Some(1));
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = [(Expanded, 3)]
-        ");
-
-        state.update(Collapsed, Some(2));
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = [(Expanded, 3), (Collapsed, 2)]
-        ");
-
-        state.update(Expanded, Some(5));
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = [(Expanded, 5)]
-        ");
-
-        state.update(Collapsed, Some(6));
-        assert_snapshot!(dump(&state), @r"
-        eventual = Collapsed
-        shallow  = []
-        ");
-    }
-
-    #[test]
-    fn test_deep_collapsing_and_expanding_applies_to_new_top_level_nodes() {
-        fn check(actions: Vec<Action>) -> String {
-            allow_duplicates! {
-                let mut doc = new_partial_doc(b"start ");
-                for action in actions.into_iter() {
-                    doc.perform_action(NodeIndex(0), action);
-                }
-
-                doc.append(b"((1 (4 (6 (8 _)))))");
-                assert_snapshot!(dump(&doc), @r"
-                 0..=0  : start
-                 1..=3  : ((1
-                 4..=5  :   (4
-                 6..=7  :    (6
-                 8..=9  :     (8
-                10..=15 :      _)))))
-                ");
-
-                let collapse_states = doc
-                    .state.collapsible_nodes
-                    .iter()
-                    .map(|(node_index, state)| format!("{} => {state:?}", node_index.0))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("{:?}", collapse_states)
-            }
-        }
-
-        assert_snapshot!(
-            check(vec![]),
-            @r#""1 => Expanded, 4 => Expanded, 6 => Expanded, 8 => Expanded""#,
-        );
-
-        assert_snapshot!(
-            check(vec![Collapse(None)]),
-            @r#""1 => Collapsed, 4 => Collapsed, 6 => Collapsed, 8 => Collapsed""#,
-        );
-
-        assert_snapshot!(
-            check(vec![Collapse(None), Expand(Some(1))]),
-            @r#""1 => Expanded, 4 => Collapsed, 6 => Collapsed, 8 => Collapsed""#,
-        );
-
-        assert_snapshot!(
-            check(vec![Collapse(None), Expand(Some(3)), Collapse(Some(2)), Expand(Some(1))]),
-            @r#""1 => Expanded, 4 => Collapsed, 6 => Expanded, 8 => Collapsed""#,
-        );
     }
 
     #[test]
