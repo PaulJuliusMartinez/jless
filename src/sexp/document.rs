@@ -474,7 +474,7 @@ impl SexpDocument {
         closest_visible
     }
 
-    fn first_visible_line_at_or_above(&self, logical_line: LogicalLine) -> LogicalLine {
+    fn first_visible_line_at_or_above(&self, logical_line: &LogicalLine) -> LogicalLine {
         let visible_ancestor = self.closest_visible_ancestor(&logical_line.start_index);
         self.logical_line_of_node_index(visible_ancestor)
     }
@@ -486,7 +486,7 @@ impl SexpDocument {
 
         let previous_logical_line = self.logical_line_of_node_index(logical_line.start_index - 1);
 
-        Some(self.first_visible_line_at_or_above(previous_logical_line))
+        Some(self.first_visible_line_at_or_above(&previous_logical_line))
     }
 
     // Very annoying that this can't be in the `impl Document` block...
@@ -761,31 +761,20 @@ impl Document for SexpDocument {
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
         self.state
-            .starts_of_logical_lines
+            .logical_lines_by_start_index
             .first_key_value()
-            .map(|kvp| {
-                let (start_index, (end_index, indentation)) = kvp;
+            .map(|(start_index, logical_line)| {
                 (
-                    self.first_typeset_screen_line_for_logical_line(LogicalLine {
-                        indentation: *indentation,
-                        start_index: *start_index,
-                        end_index: *end_index,
-                    }),
+                    self.first_typeset_screen_line_for_logical_line(logical_line.clone()),
                     *start_index,
                 )
             })
     }
 
     fn bottom_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
-        match self.state.starts_of_logical_lines.last_key_value() {
+        match self.state.logical_lines_by_start_index.last_key_value() {
             None => None,
-            Some((start_index, (end_index, indentation))) => {
-                let last_logical_line = LogicalLine {
-                    indentation: *indentation,
-                    start_index: *start_index,
-                    end_index: *end_index,
-                };
-
+            Some((_start_index, last_logical_line)) => {
                 let last_visible_logical_line =
                     self.first_visible_line_at_or_above(last_logical_line);
 
@@ -799,17 +788,11 @@ impl Document for SexpDocument {
     }
 
     fn first_visible_cursor_at_or_before_line_index(&self, index: usize) -> Option<Self::Cursor> {
-        let (start_index, (end_index, indentation)) =
-            match self.state.starts_of_logical_lines.get_by_rank(index) {
-                None => self.state.starts_of_logical_lines.last_key_value()?,
+        let (_start_index, line_at_index) =
+            match self.state.logical_lines_by_start_index.get_by_rank(index) {
+                None => self.state.logical_lines_by_start_index.last_key_value()?,
                 Some(x) => x,
             };
-
-        let line_at_index = LogicalLine {
-            indentation: *indentation,
-            start_index: *start_index,
-            end_index: *end_index,
-        };
 
         let visible_line_at_or_before_index = self.first_visible_line_at_or_above(line_at_index);
 
@@ -839,13 +822,13 @@ impl Document for SexpDocument {
     fn line_number(&self, screen_line: &ScreenLine) -> usize {
         1 + self
             .state
-            .starts_of_logical_lines
+            .logical_lines_by_start_index
             .rank_of(&screen_line.logical_line.start_index)
-            .expect("to find logical line start in `starts_of_logical_lines`")
+            .expect("to find logical line start in `logical_lines_by_start_index`")
     }
 
     fn num_lines(&self) -> usize {
-        self.state.starts_of_logical_lines.len()
+        self.state.logical_lines_by_start_index.len()
     }
 
     fn is_wrapped_line(&self, screen_line: &ScreenLine) -> bool {
@@ -1596,15 +1579,13 @@ pub(super) mod test_helpers {
     }
 
     pub fn visible_logical_lines(doc: &SexpDocument) -> Vec<LogicalLine> {
-        let mut curr_logical_line = {
-            let (start_index, (end_index, indentation)) =
-                doc.state.starts_of_logical_lines.iter().next().unwrap();
-            LogicalLine {
-                indentation: *indentation,
-                start_index: *start_index,
-                end_index: *end_index,
-            }
-        };
+        let mut curr_logical_line = doc
+            .state
+            .logical_lines_by_start_index
+            .first_key_value()
+            .unwrap()
+            .1
+            .clone();
 
         let mut visible_logical_lines = vec![curr_logical_line.clone()];
 

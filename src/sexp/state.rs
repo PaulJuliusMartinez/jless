@@ -20,7 +20,7 @@ pub struct DocState {
     tokenizer: BasicTapeTokenizer,
     pub core: DocCore,
     next_top_level_node_index: NodeIndex,
-    pub starts_of_logical_lines: OSBTreeMap<NodeIndex, (NodeIndex, usize)>,
+    pub logical_lines_by_start_index: OSBTreeMap<NodeIndex, LogicalLine>,
     pub collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
 }
@@ -86,7 +86,7 @@ impl DocState {
             tokenizer: BasicTapeTokenizer::new(),
             core: DocCore::new(),
             next_top_level_node_index: NodeIndex(0),
-            starts_of_logical_lines: OSBTreeMap::new(),
+            logical_lines_by_start_index: OSBTreeMap::new(),
             collapsible_nodes: BTreeMap::new(),
             initial_nested_collapse_state_for_top_level_nodes:
                 InitialNestedCollapseStateForTopLevelNodes::new(),
@@ -158,14 +158,9 @@ impl DocState {
     ) -> Vec<LogicalLine> {
         let logical_lines = layout::layout_fully_expanded_node(&self.core, top_level_node_index);
 
-        for LogicalLine {
-            indentation,
-            start_index,
-            end_index,
-        } in logical_lines.iter()
-        {
-            self.starts_of_logical_lines
-                .insert(*start_index, (*end_index, *indentation));
+        for logical_line in logical_lines.iter() {
+            self.logical_lines_by_start_index
+                .insert(logical_line.start_index, logical_line.clone());
         }
 
         logical_lines
@@ -381,17 +376,13 @@ impl DocState {
 
     pub fn maybe_logical_line_of_node_index(&self, node_index: NodeIndex) -> Option<LogicalLine> {
         let mut range = self
-            .starts_of_logical_lines
+            .logical_lines_by_start_index
             .range(NodeIndex(0)..=node_index);
         match range.next_back() {
             None => None,
-            Some((start_index, (end_index, indentation))) => {
-                if node_index <= *end_index {
-                    Some(LogicalLine {
-                        indentation: *indentation,
-                        start_index: *start_index,
-                        end_index: *end_index,
-                    })
+            Some((_start_index, logical_line)) => {
+                if node_index <= logical_line.end_index {
+                    Some(logical_line.clone())
                 } else {
                     None
                 }
@@ -412,14 +403,10 @@ pub(super) mod test_helpers {
 
     impl DocState {
         pub fn all_logical_lines(&self) -> Vec<LogicalLine> {
-            self.starts_of_logical_lines
-                .iter()
-                .map(|(start_index, (end_index, indentation))| LogicalLine {
-                    indentation: *indentation,
-                    start_index: *start_index,
-                    end_index: *end_index,
-                })
-                .collect()
+            self.logical_lines_by_start_index
+                .values()
+                .cloned()
+                .collect::<Vec<_>>()
         }
 
         pub fn dump_all_logical_lines(&self) -> String {
