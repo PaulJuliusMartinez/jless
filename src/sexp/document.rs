@@ -19,9 +19,6 @@ use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
 use crate::sexp::state::{CollapseState, DocState};
 
-use ocaml_sexplib::tokenizer::{BasicTapeTokenizer, RawTokenTape};
-use ocaml_sexplib::Ref;
-
 use CollapseState::*;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -33,7 +30,6 @@ enum FocusTargetKind {
 
 pub struct SexpDocument {
     width: NonZeroUsize,
-    tokenizer: BasicTapeTokenizer,
     pub state: DocState,
     next_top_level_node_index: NodeIndex,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,
@@ -208,25 +204,7 @@ impl ScreenLine {
 }
 
 impl SexpDocument {
-    fn process_additional_data(&mut self, current_data: Option<&[u8]>, seen_eof: bool) {
-        while let Some(witness) = self.tokenizer.has_enough_data_to_produce_tokens() {
-            let current_data = current_data.map(Ref::Transient);
-            match self.tokenizer.next_raw_token(witness, current_data) {
-                Ok(Some(raw_token)) => self.state.core.append_raw_token(raw_token),
-                Ok(None) => {
-                    self.state.core.append_eof();
-                    break;
-                }
-                Err(err) => {
-                    self.state.core.append_tokenizer_error(err);
-                    if seen_eof {
-                        self.state.core.append_eof();
-                    }
-                    break;
-                }
-            }
-        }
-
+    fn maybe_add_new_top_level_nodes(&mut self) {
         // Add data any new top level nodes.
         let Some(last_completed_top_level_sexp) =
             self.state.core.node_index_of_last_completed_top_level_sexp
@@ -1088,7 +1066,6 @@ impl Document for SexpDocument {
     fn new() -> Self {
         SexpDocument {
             width: dimensions::DEFAULT_WIDTH,
-            tokenizer: BasicTapeTokenizer::new(),
             state: DocState::new(),
             next_top_level_node_index: NodeIndex(0),
             initial_nested_collapse_state_for_top_level_nodes:
@@ -1108,13 +1085,13 @@ impl Document for SexpDocument {
     }
 
     fn append(&mut self, data: &[u8]) {
-        self.tokenizer.feed_more_data(data);
-        self.process_additional_data(Some(data), false);
+        self.state.append(data);
+        self.maybe_add_new_top_level_nodes();
     }
 
     fn eof(&mut self) {
-        self.tokenizer.eof();
-        self.process_additional_data(None, true);
+        self.state.eof();
+        self.maybe_add_new_top_level_nodes();
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
