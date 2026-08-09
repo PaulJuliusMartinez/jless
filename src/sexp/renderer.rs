@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
 
@@ -82,9 +81,9 @@ const EXPANDED_CONTAINER: &str = "▽ ";
 
 impl<'a> Typesetter<'a> {
     fn typeset(&mut self) {
-        if self.logical_line.indentation > 0 {
+        if self.logical_line.indentation() > 0 {
             self.compositor
-                .append_spaces(self.logical_line.indentation, FragmentSource::Whitespace);
+                .append_spaces(self.logical_line.indentation(), FragmentSource::Whitespace);
         }
 
         if self.include_cursor {
@@ -568,7 +567,7 @@ impl<'a> RenderContext<'a> {
         let collapsible_nodes_in_line = self
             .state
             .collapsible_nodes
-            .range(logical_line.start_index..=logical_line.end_index);
+            .range(logical_line.start_index()..=logical_line.end_index());
 
         let mut first_collapse_state = None;
         let mut first_collapse_state_at_or_after_cursor = None;

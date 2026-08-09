@@ -142,7 +142,7 @@ impl DocState {
 
             let logical_lines = self.add_logical_lines_for_top_level_node(top_level_node_index);
 
-            self.next_top_level_node_index = logical_lines.last().unwrap().end_index + 1;
+            self.next_top_level_node_index = logical_lines.last().unwrap().end_index() + 1;
 
             for logical_line in logical_lines.iter() {
                 self.create_collapsible_nodes(logical_line, eventual_collapse_state);
@@ -160,7 +160,7 @@ impl DocState {
 
         for logical_line in logical_lines.iter() {
             self.logical_lines_by_start_index
-                .insert(logical_line.start_index, logical_line.clone());
+                .insert(logical_line.start_index(), logical_line.clone());
         }
 
         logical_lines
@@ -197,7 +197,7 @@ impl DocState {
             // If the list ends on the same line, we can stop here and stop processing
             // additional nodes in this line, because they are nested inside and will
             // also end on this line.
-            if list_end_index <= logical_line.end_index {
+            if list_end_index <= logical_line.end_index() {
                 break;
             }
 
@@ -215,8 +215,9 @@ impl DocState {
                 | ListKind::Singleton => (),
             }
 
-            let start_of_end_logical_line =
-                self.logical_line_of_node_index(list_end_index).start_index;
+            let start_of_end_logical_line = self
+                .logical_line_of_node_index(list_end_index)
+                .start_index();
 
             if start_of_end_logical_line != start_index_of_end_line_of_previous_collapsible_node {
                 self.collapsible_nodes
@@ -381,7 +382,7 @@ impl DocState {
         match range.next_back() {
             None => None,
             Some((_start_index, logical_line)) => {
-                if node_index <= logical_line.end_index {
+                if node_index <= logical_line.end_index() {
                     Some(logical_line.clone())
                 } else {
                     None

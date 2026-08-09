@@ -159,7 +159,7 @@ impl SexpDocument {
     ) -> impl DoubleEndedIterator<Item = (&'a NodeIndex, &'a CollapseState)> {
         self.state
             .collapsible_nodes
-            .range(logical_line.start_index..=logical_line.end_index)
+            .range(logical_line.start_index()..=logical_line.end_index())
     }
 
     // Returns the focusable nodes in a line. We use a bunch of heuristics to decide what
@@ -450,13 +450,13 @@ impl SexpDocument {
                     let list_end_index =
                         self.state.core.token(*node_index).list_end_index().unwrap();
                     let end_line = self.logical_line_of_node_index(list_end_index);
-                    return self.maybe_logical_line_of_node_index(end_line.end_index + 1);
+                    return self.maybe_logical_line_of_node_index(end_line.end_index() + 1);
                 }
             }
         }
 
         // If nothing is collapsed, then it's just the next logical line.
-        self.maybe_logical_line_of_node_index(logical_line.end_index + 1)
+        self.maybe_logical_line_of_node_index(logical_line.end_index() + 1)
     }
 
     fn closest_visible_ancestor(&self, cursor: &NodeIndex) -> NodeIndex {
@@ -475,16 +475,16 @@ impl SexpDocument {
     }
 
     fn first_visible_line_at_or_above(&self, logical_line: &LogicalLine) -> LogicalLine {
-        let visible_ancestor = self.closest_visible_ancestor(&logical_line.start_index);
+        let visible_ancestor = self.closest_visible_ancestor(&logical_line.start_index());
         self.logical_line_of_node_index(visible_ancestor)
     }
 
     fn prev_visible_logical_line(&self, logical_line: &LogicalLine) -> Option<LogicalLine> {
-        if logical_line.start_index == NodeIndex(0) {
+        if logical_line.start_index() == NodeIndex(0) {
             return None;
         }
 
-        let previous_logical_line = self.logical_line_of_node_index(logical_line.start_index - 1);
+        let previous_logical_line = self.logical_line_of_node_index(logical_line.start_index() - 1);
 
         Some(self.first_visible_line_at_or_above(&previous_logical_line))
     }
@@ -495,7 +495,7 @@ impl SexpDocument {
         let Some(prev_logical_line) = self.prev_visible_logical_line(&logical_line) else {
             // If there's no previous line, then we'll focus the first focusable node in
             // that line. (This should only ever happen if it's the first line of the document.)
-            assert_eq!(logical_line.start_index.0, 0);
+            assert_eq!(logical_line.start_index().0, 0);
             if cursor.0 != 0 {
                 return Some(NodeIndex(0));
             } else {
@@ -541,7 +541,7 @@ impl SexpDocument {
                 Some(node_index) => Some(node_index),
                 None => {
                     // Probably shouldn't ever happen; just return the start of the line.
-                    Some(prev_logical_line.start_index)
+                    Some(prev_logical_line.start_index())
                 }
             }
         } else {
@@ -778,7 +778,7 @@ impl Document for SexpDocument {
                 let last_visible_logical_line =
                     self.first_visible_line_at_or_above(last_logical_line);
 
-                let cursor = last_visible_logical_line.start_index;
+                let cursor = last_visible_logical_line.start_index();
                 let last_screen_line =
                     self.last_typeset_screen_line_for_logical_line(last_visible_logical_line);
 
@@ -796,7 +796,7 @@ impl Document for SexpDocument {
 
         let visible_line_at_or_before_index = self.first_visible_line_at_or_above(line_at_index);
 
-        Some(visible_line_at_or_before_index.start_index)
+        Some(visible_line_at_or_before_index.start_index())
     }
 
     fn next_screen_line(&self, screen_line: &ScreenLine) -> Option<ScreenLine> {
@@ -823,7 +823,7 @@ impl Document for SexpDocument {
         1 + self
             .state
             .logical_lines_by_start_index
-            .rank_of(&screen_line.logical_line.start_index)
+            .rank_of(&screen_line.logical_line.start_index())
             .expect("to find logical line start in `logical_lines_by_start_index`")
     }
 
@@ -871,7 +871,7 @@ impl Document for SexpDocument {
         _prev_cursor: &NodeIndex,
     ) -> NodeIndex {
         // TODO: SCREEN LINE FIX THIS COULD BE IMPROVED.
-        let fallback = screen_line.logical_line.start_index;
+        let fallback = screen_line.logical_line.start_index();
         screen_line
             .typeset_line()
             .0
@@ -898,7 +898,7 @@ impl Document for SexpDocument {
         } else {
             // At least for now, we'll always assume we want the new focus to be at the start
             // of the line, rather than figuring out offset within the line.
-            Some(logical_line.start_index)
+            Some(logical_line.start_index())
         }
     }
 
@@ -978,7 +978,7 @@ impl Document for SexpDocument {
             let collapsible_nodes_in_line = self.collapsible_nodes_in_line(&current_line);
 
             let end_of_range_to_check_for_collapsed_nodes =
-                next_focusable_node_in_line.unwrap_or(current_line.end_index);
+                next_focusable_node_in_line.unwrap_or(current_line.end_index());
 
             'checking_collapsible_nodes: for (node_index, collapse_state) in
                 collapsible_nodes_in_line
@@ -1021,7 +1021,7 @@ impl Document for SexpDocument {
 
         let should_move_down = match self.state.core.token(*cursor).list_end_index() {
             None => false,
-            Some(end_index) => current_line.end_index < end_index,
+            Some(end_index) => current_line.end_index() < end_index,
         };
 
         if should_move_down {
@@ -1111,18 +1111,18 @@ impl Document for SexpDocument {
         let mut candidate_line = self.next_visible_logical_line(&starting_logical_line)?;
 
         loop {
-            let leading_depth = self.state.core.depth(candidate_line.start_index);
+            let leading_depth = self.state.core.depth(candidate_line.start_index());
 
             match leading_depth.cmp(&desired_depth) {
                 Ordering::Equal => {
                     // The first node in any line is always focusable, so if we're at the right
                     // depth, great! We'll stop there.
-                    return Some(candidate_line.start_index);
+                    return Some(candidate_line.start_index());
                 }
                 Ordering::Less => {
                     // If the line is starts at a higher level, pick the deepest normal focusable
                     // node (that's not too deep).
-                    let mut best_choice = candidate_line.start_index;
+                    let mut best_choice = candidate_line.start_index();
                     for (node_index, focus_target_kind) in
                         self.focusable_nodes_in_line(&candidate_line).into_iter()
                     {
@@ -1151,7 +1151,7 @@ impl Document for SexpDocument {
                     let parent_index = self
                         .state
                         .core
-                        .parent_index(candidate_line.start_index)
+                        .parent_index(candidate_line.start_index())
                         .unwrap();
                     let closing_paren = self
                         .state
@@ -1217,20 +1217,20 @@ impl Document for SexpDocument {
 
     fn move_cursor_to_next_indentation_change(&mut self, cursor: &NodeIndex) -> Option<NodeIndex> {
         let mut curr_logical_line = self.logical_line_of_node_index(*cursor);
-        let mut starting_indentation = curr_logical_line.indentation;
+        let mut starting_indentation = curr_logical_line.indentation();
         let mut is_first = true;
 
         loop {
             let Some(next_logical_line) = self.next_visible_logical_line(&curr_logical_line) else {
                 // If we hit the bottom of the document, just return the start of that line.
-                if *cursor < curr_logical_line.start_index {
-                    return Some(curr_logical_line.start_index);
+                if *cursor < curr_logical_line.start_index() {
+                    return Some(curr_logical_line.start_index());
                 } else {
                     return None;
                 }
             };
 
-            if next_logical_line.indentation < starting_indentation {
+            if next_logical_line.indentation() < starting_indentation {
                 // This is this case:
                 //
                 // start:      (y 1)
@@ -1238,8 +1238,8 @@ impl Document for SexpDocument {
                 // end:   (next thing)
                 //
                 // We want to go to (next thing)
-                return Some(next_logical_line.start_index);
-            } else if next_logical_line.indentation > starting_indentation {
+                return Some(next_logical_line.start_index());
+            } else if next_logical_line.indentation() > starting_indentation {
                 // We've run up to a nested thing. If this is not the immediate
                 // next line, we'll stop at the parent:
                 //
@@ -1248,7 +1248,7 @@ impl Document for SexpDocument {
                 // end:    (c (
                 //           ...
                 if !is_first {
-                    return Some(curr_logical_line.start_index);
+                    return Some(curr_logical_line.start_index());
                 }
 
                 // So we started on one line, and the next line is immediately more indented.
@@ -1267,14 +1267,14 @@ impl Document for SexpDocument {
                 // The heuristic we'll use is to check if the next line is the logically the
                 // "first" elem in a list. If it's not, we'll try to focus the first element
                 // of that list instead.
-                if self.is_logically_the_first_elem_in_list(next_logical_line.start_index) {
-                    return Some(next_logical_line.start_index);
+                if self.is_logically_the_first_elem_in_list(next_logical_line.start_index()) {
+                    return Some(next_logical_line.start_index());
                 }
 
                 let target_index = self
                     .state
                     .core
-                    .node(next_logical_line.start_index)
+                    .node(next_logical_line.start_index())
                     .parent_index()
                     .unwrap()
                     + 1;
@@ -1288,7 +1288,7 @@ impl Document for SexpDocument {
 
                 // And now we have to update our starting indentation to the next line as if
                 // that's the indentation level where we started.
-                starting_indentation = next_logical_line.indentation;
+                starting_indentation = next_logical_line.indentation();
             }
 
             is_first = false;
@@ -1306,19 +1306,19 @@ impl Document for SexpDocument {
             }
         }
 
-        let mut starting_indentation = curr_logical_line.indentation;
+        let mut starting_indentation = curr_logical_line.indentation();
         let mut is_first = true;
         loop {
             let Some(prev_logical_line) = self.prev_visible_logical_line(&curr_logical_line) else {
                 // If we're at the top of the document just go to the start of that line.
-                if curr_logical_line.start_index < *cursor {
-                    return Some(curr_logical_line.start_index);
+                if curr_logical_line.start_index() < *cursor {
+                    return Some(curr_logical_line.start_index());
                 } else {
                     return None;
                 }
             };
 
-            if prev_logical_line.indentation > starting_indentation {
+            if prev_logical_line.indentation() > starting_indentation {
                 // This is this case:
                 //
                 //             ((a 1)
@@ -1331,18 +1331,18 @@ impl Document for SexpDocument {
                 // and go on from there so we keep going past "(z 2)". But otherwise we stop so we
                 // end up at "(y 1)" and not "(b 2)".
                 if is_first {
-                    starting_indentation = prev_logical_line.indentation;
+                    starting_indentation = prev_logical_line.indentation();
                 } else {
-                    return Some(curr_logical_line.start_index);
+                    return Some(curr_logical_line.start_index());
                 }
-            } else if prev_logical_line.indentation < starting_indentation {
+            } else if prev_logical_line.indentation() < starting_indentation {
                 // We've bumped into a parent. If the current node isn't logically the first child,
                 // we'll move to its sibling.
-                if !self.is_logically_the_first_elem_in_list(curr_logical_line.start_index) {
+                if !self.is_logically_the_first_elem_in_list(curr_logical_line.start_index()) {
                     let first_elem = self
                         .state
                         .core
-                        .node(curr_logical_line.start_index)
+                        .node(curr_logical_line.start_index())
                         .parent_index()
                         .unwrap()
                         + 1;
@@ -1352,9 +1352,9 @@ impl Document for SexpDocument {
                 // Otherwise, if this the immediately preceding line, we'll move to it, but if
                 // we've been moving for a while, we'll stop before it.
                 if is_first {
-                    return Some(prev_logical_line.start_index);
+                    return Some(prev_logical_line.start_index());
                 } else {
-                    return Some(curr_logical_line.start_index);
+                    return Some(curr_logical_line.start_index());
                 }
             }
 
@@ -2697,15 +2697,15 @@ mod tests {
         "#);
 
         fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
-            let LogicalLine {
-                start_index,
-                end_index,
-                ..
-            } = doc
+            let logical_line = doc
                 .raw_byte_index_to_visible_screen_line(index)
                 .logical_line;
 
-            format!("{}..={}", start_index.0, end_index.0)
+            format!(
+                "{}..={}",
+                logical_line.start_index().0,
+                logical_line.end_index().0
+            )
         }
 
         assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 0), @"0..=5");
@@ -2737,16 +2737,10 @@ mod tests {
 
         fn raw_byte_index_to_visible_screen_line(doc: &SexpDocument, index: usize) -> String {
             let screen_line = doc.raw_byte_index_to_visible_screen_line(index);
-            let LogicalLine {
-                start_index,
-                end_index,
-                ..
-            } = screen_line.logical_line;
+            let start_index = screen_line.logical_line.start_index().0;
+            let end_index = screen_line.logical_line.end_index().0;
 
-            format!(
-                "{}..={} [{}]",
-                start_index.0, end_index.0, screen_line.index
-            )
+            format!("{start_index}..={end_index} [{}]", screen_line.index)
         }
 
         assert_snapshot!(raw_byte_index_to_visible_screen_line(&doc, 0),  @"0..=0 [0]");

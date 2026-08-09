@@ -5,12 +5,32 @@ use crate::sexp::core::{AtomKind, DocCore, DocumentToken, ListKind, ListMetadata
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct LogicalLine {
-    pub start_index: NodeIndex,
-    pub end_index: NodeIndex,
-    pub indentation: usize,
+    start_index: NodeIndex,
+    end_index: NodeIndex,
+    indentation: usize,
 }
 
 impl LogicalLine {
+    pub fn new(start_index: NodeIndex, end_index: NodeIndex, indentation: usize) -> Self {
+        LogicalLine {
+            start_index,
+            end_index,
+            indentation,
+        }
+    }
+
+    pub fn start_index(&self) -> NodeIndex {
+        self.start_index
+    }
+
+    pub fn end_index(&self) -> NodeIndex {
+        self.end_index
+    }
+
+    pub fn indentation(&self) -> usize {
+        self.indentation
+    }
+
     pub fn node_indexes(&self) -> impl DoubleEndedIterator<Item = NodeIndex> {
         ((self.start_index.0)..=(self.end_index.0)).map(NodeIndex)
     }
@@ -177,11 +197,11 @@ impl<'a> LayoutEngine<'a> {
         );
 
         let end_index = self.next_index - 1;
-        self.lines.push(LogicalLine {
-            indentation,
-            start_index: self.current_line_start_index,
+        self.lines.push(LogicalLine::new(
+            self.current_line_start_index,
             end_index,
-        });
+            indentation,
+        ));
 
         self.layout_state = new_layout_state;
         self.current_line_start_index = self.next_index;
@@ -496,12 +516,11 @@ pub mod tests {
     ) -> String {
         let mut output = String::new();
 
-        for LogicalLine {
-            indentation,
-            start_index,
-            end_index,
-        } in lines.into_iter()
-        {
+        for logical_line in lines.into_iter() {
+            let start_index = logical_line.start_index();
+            let end_index = logical_line.end_index();
+            let indentation = logical_line.indentation();
+
             let mut start_range = doc.node(start_index).data_range.clone();
             if doc.node(start_index).token.is_sexp_commented_out() {
                 start_range.start -= 3;
