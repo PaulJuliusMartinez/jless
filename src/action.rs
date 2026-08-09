@@ -57,7 +57,7 @@ pub enum Action {
     JumpUp(Option<NonZeroUsize>),
 
     MoveToSearchMatch(MovementMethod, JumpDirection, usize),
-    MoveToLineIndex(usize),
+    MoveToLineNumber(NonZeroUsize),
 
     FocusTop,
     FocusBottom,
@@ -83,7 +83,7 @@ impl Action {
             | Action::MoveToSearchMatch(_, _, _)
             | Action::FocusTop
             | Action::FocusBottom
-            | Action::MoveToLineIndex(_) => true,
+            | Action::MoveToLineNumber(_) => true,
             Action::NoOp
             | Action::CollapseNodeAndSiblings(_)
             | Action::ExpandNodeAndSiblings(_)

@@ -791,7 +791,11 @@ impl Document for SexpDocument {
         }
     }
 
-    fn first_visible_cursor_at_or_before_line_index(&self, index: usize) -> Option<Self::Cursor> {
+    fn first_visible_cursor_at_or_before_line_number(
+        &self,
+        line_number: NonZeroUsize,
+    ) -> Option<Self::Cursor> {
+        let index = line_number.get() - 1;
         let (_start_index, line_at_index) =
             match self.state.logical_lines_by_start_index.get_by_rank(index) {
                 None => self.state.logical_lines_by_start_index.last_key_value()?,
@@ -2157,7 +2161,7 @@ mod tests {
     }
 
     #[test]
-    fn test_first_visible_cursor_at_or_before_line_index() {
+    fn test_first_visible_cursor_at_or_before_line_number() {
         let mut doc = new_doc(b"((0 1 2)(3 (4 5))(6 7 8))");
         assert_snapshot!(dump(&doc), @r"
          0..=2  : ((0
@@ -2171,22 +2175,22 @@ mod tests {
         16..=18 :   8))
         ");
 
-        let f = |doc: &mut SexpDocument, index| {
-            doc.first_visible_cursor_at_or_before_line_index(index)
+        let f = |doc: &mut SexpDocument, line_number| {
+            doc.first_visible_cursor_at_or_before_line_number(nz(line_number))
                 .unwrap()
                 .0
         };
 
-        assert_debug_snapshot!(f(&mut doc, 0), @"0");
-        assert_debug_snapshot!(f(&mut doc, 3), @"6");
-        assert_debug_snapshot!(f(&mut doc, 5), @"10");
-        assert_debug_snapshot!(f(&mut doc, 8), @"16");
+        assert_debug_snapshot!(f(&mut doc, 1), @"0");
+        assert_debug_snapshot!(f(&mut doc, 4), @"6");
+        assert_debug_snapshot!(f(&mut doc, 6), @"10");
         assert_debug_snapshot!(f(&mut doc, 9), @"16");
+        assert_debug_snapshot!(f(&mut doc, 10), @"16");
         assert_debug_snapshot!(f(&mut doc, 100), @"16");
 
         doc.collapse_or_move_cursor_left_or_up(&NodeIndex(6));
-        assert_debug_snapshot!(f(&mut doc, 3), @"6");
-        assert_debug_snapshot!(f(&mut doc, 5), @"6");
+        assert_debug_snapshot!(f(&mut doc, 4), @"6");
+        assert_debug_snapshot!(f(&mut doc, 6), @"6");
 
         doc.collapse_or_move_cursor_left_or_up(&NodeIndex(13));
         assert_debug_snapshot!(f(&mut doc, 100), @"13");

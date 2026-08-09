@@ -470,8 +470,11 @@ impl<D: Document> DocumentViewer<D> {
         self.current_focus = cursor;
     }
 
-    fn move_to_line_index(&mut self, index: usize) {
-        if let Some(new_cursor) = self.doc.first_visible_cursor_at_or_before_line_index(index) {
+    fn move_to_line_number(&mut self, line_number: NonZeroUsize) {
+        if let Some(new_cursor) = self
+            .doc
+            .first_visible_cursor_at_or_before_line_number(line_number)
+        {
             self.current_focus = new_cursor;
             self.update_so_current_focus_is_visible();
         }
@@ -1394,7 +1397,7 @@ impl<D: Document> DocumentViewer<D> {
                 focused_bottom = true;
                 self.focus_bottom()
             }
-            Action::MoveToLineIndex(i) => self.move_to_line_index(i),
+            Action::MoveToLineNumber(n) => self.move_to_line_number(n),
             Action::MoveFocusedElemToTop => self.move_focused_elem_to_top(),
             Action::MoveFocusedElemToCenter => self.move_focused_elem_to_center(),
             Action::MoveFocusedElemToBottom => self.move_focused_elem_to_bottom(),
@@ -1787,6 +1790,10 @@ mod test {
     use crate::test_helpers::format_table;
     use crate::text_document::{Cursor, TextDocument};
 
+    pub fn nz(n: usize) -> NonZeroUsize {
+        NonZeroUsize::new(n).unwrap()
+    }
+
     fn init_doc<D: Document>(
         contents: &[u8],
         width: usize,
@@ -1929,8 +1936,8 @@ mod test {
         Change::Action(Action::FocusBottom)
     }
 
-    fn move_to_line_number(line_number: usize) -> Change {
-        Change::Action(Action::MoveToLineIndex(line_number - 1))
+    fn move_to_line_number(line_number: NonZeroUsize) -> Change {
+        Change::Action(Action::MoveToLineNumber(line_number))
     }
 
     fn move_focused_elem_to_top() -> Change {
@@ -2771,26 +2778,26 @@ mod test {
     }
 
     #[test]
-    fn test_move_to_line_index() {
+    fn test_move_to_line_number() {
         let mut viewer = init(b"a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\n", 1, 5, 1);
         let output = run(
             &mut viewer,
             vec![
-                vec![move_to_line_number(6)],
-                vec![move_to_line_number(100)],
-                vec![move_to_line_number(2)],
-                vec![move_to_line_number(1)],
+                vec![move_to_line_number(nz(6))],
+                vec![move_to_line_number(nz(100))],
+                vec![move_to_line_number(nz(2))],
+                vec![move_to_line_number(nz(1))],
             ],
         );
         assert_snapshot!(output, @r"
-                     MoveToLineIndex(5) MoveToLineIndex(99) MoveToLineIndex(1) MoveToLineIndex(0)
-        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐       ┌SI┬─L#┬───┐        ┌SI┬─L#┬───┐       ┌SI┬─L#┬───┐
-        │ 0│*1 │ a │ │ 0│ 3 │ c │       │ 0│ 7 │ g │        │ 0│ 1 │ a │       │ 0│*1 │ a │
-        │ 1│ 2 │ b │ │ 1│ 4 │ d │       │ 1│ 8 │ h │        │ 1│*2 │ b │       │ 1│ 2 │ b │
-        │ 2│ 3 │ c │ │ 2│ 5 │ e │       │ 2│ 9 │ i │        │ 2│ 3 │ c │       │ 2│ 3 │ c │
-        │ 3│ 4 │ d │ │ 3│*6 │ f │       │ 3│ 10│ j │        │ 3│ 4 │ d │       │ 3│ 4 │ d │
-        │ 4│ 5 │ e │ │ 4│ 7 │ g │       │ 4│*11│ k │        │ 4│ 5 │ e │       │ 4│ 5 │ e │
-        └──┴───┴───┘ └──┴───┴───┘       └──┴───┴───┘        └──┴───┴───┘       └──┴───┴───┘
+                     MoveToLineNumber(6) MoveToLineNumber(100) MoveToLineNumber(2) MoveToLineNumber(1)
+        ┌SI┬─L#┬───┐ ┌SI┬─L#┬───┐        ┌SI┬─L#┬───┐          ┌SI┬─L#┬───┐        ┌SI┬─L#┬───┐
+        │ 0│*1 │ a │ │ 0│ 3 │ c │        │ 0│ 7 │ g │          │ 0│ 1 │ a │        │ 0│*1 │ a │
+        │ 1│ 2 │ b │ │ 1│ 4 │ d │        │ 1│ 8 │ h │          │ 1│*2 │ b │        │ 1│ 2 │ b │
+        │ 2│ 3 │ c │ │ 2│ 5 │ e │        │ 2│ 9 │ i │          │ 2│ 3 │ c │        │ 2│ 3 │ c │
+        │ 3│ 4 │ d │ │ 3│*6 │ f │        │ 3│ 10│ j │          │ 3│ 4 │ d │        │ 3│ 4 │ d │
+        │ 4│ 5 │ e │ │ 4│ 7 │ g │        │ 4│*11│ k │          │ 4│ 5 │ e │        │ 4│ 5 │ e │
+        └──┴───┴───┘ └──┴───┴───┘        └──┴───┴───┘          └──┴───┴───┘        └──┴───┴───┘
         ");
     }
 

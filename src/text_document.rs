@@ -345,11 +345,17 @@ impl Document for TextDocument {
         Some((screen_line, cursor))
     }
 
-    fn first_visible_cursor_at_or_before_line_index(&self, index: usize) -> Option<Cursor> {
+    fn first_visible_cursor_at_or_before_line_number(
+        &self,
+        line_number: NonZeroUsize,
+    ) -> Option<Cursor> {
         if self.complete_line_ranges.is_empty() {
             None
         } else {
-            Some(usize::min(index, self.complete_line_ranges.len() - 1))
+            Some(usize::min(
+                line_number.get() - 1,
+                self.complete_line_ranges.len() - 1,
+            ))
         }
     }
 

@@ -188,13 +188,13 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                             Key::Char('C') => Some(Action::CollapseNodeAndSiblings(count)),
                             Key::Home => Some(Action::FocusTop),
                             Key::End => Some(Action::FocusBottom),
-                            Key::Char('g') => match count {
+                            Key::Char('g') => match count.and_then(NonZeroUsize::new) {
                                 None => Some(Action::FocusTop),
-                                Some(n) => Some(Action::MoveToLineIndex(n - 1)),
+                                Some(n) => Some(Action::MoveToLineNumber(n)),
                             },
-                            Key::Char('G') => match count {
+                            Key::Char('G') => match count.and_then(NonZeroUsize::new) {
                                 None => Some(Action::FocusBottom),
-                                Some(n) => Some(Action::MoveToLineIndex(n - 1)),
+                                Some(n) => Some(Action::MoveToLineNumber(n)),
                             },
                             Key::Ctrl('e') => Some(Action::ScrollViewportDown(count_or_1)),
                             Key::Ctrl('y') => Some(Action::ScrollViewportUp(count_or_1)),
