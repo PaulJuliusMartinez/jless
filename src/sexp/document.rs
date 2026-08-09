@@ -99,7 +99,11 @@ impl Ord for ScreenLine {
             "cmp called on `sexp::ScreenLine`s with different widths"
         );
 
-        match self.logical_line.cmp(&other.logical_line) {
+        match self
+            .logical_line
+            .start_index()
+            .cmp(&other.logical_line.start_index())
+        {
             Ordering::Less => Ordering::Less,
             Ordering::Greater => Ordering::Greater,
             Ordering::Equal => self.index.cmp(&other.index),

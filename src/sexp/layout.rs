@@ -1,42 +1,108 @@
+use std::fmt;
 use std::iter::DoubleEndedIterator;
 
 use crate::sexp::core::invariants;
 use crate::sexp::core::{AtomKind, DocCore, DocumentToken, ListKind, ListMetadata, NodeIndex};
 
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub struct LogicalLine {
-    start_index: NodeIndex,
-    end_index: NodeIndex,
-    indentation: usize,
-}
+#[derive(Clone, PartialEq, Eq)]
+pub struct LogicalLine(u64);
 
-impl LogicalLine {
-    pub fn new(start_index: NodeIndex, end_index: NodeIndex, indentation: usize) -> Self {
-        LogicalLine {
-            start_index,
-            end_index,
-            indentation,
-        }
+#[rustfmt::skip]
+mod logical_line_bit_consts {
+    pub const END_INDEX_OFFSET_MASK: u64 = 0xFFFF_0000_0000_0000;
+    pub const INDENTATION_MASK:      u64 = 0x0000_FF00_0000_0000;
+    pub const START_INDEX_MASK:      u64 = 0x0000_00FF_FFFF_FFFF;
+
+    pub const END_INDEX_OFFSET_SHIFT: u32 = END_INDEX_OFFSET_MASK.trailing_zeros();
+    pub const INDENTATION_SHIFT: u32 = INDENTATION_MASK.trailing_zeros();
+
+    pub const fn max_value_that_can_fit_in_mask(mask: u64) -> usize {
+        let num_bits_available = mask.count_ones();
+        let num_values = 1usize << num_bits_available;
+        num_values - 1
     }
 
-    pub fn start_index(&self) -> NodeIndex {
-        self.start_index
+    pub const MAX_END_INDEX_OFFSET: usize = max_value_that_can_fit_in_mask(END_INDEX_OFFSET_MASK);
+    pub const MAX_INDENTATION: usize = max_value_that_can_fit_in_mask(INDENTATION_MASK);
+    pub const MAX_START_INDEX: usize = max_value_that_can_fit_in_mask(START_INDEX_MASK);
+}
+
+use logical_line_bit_consts::*;
+
+impl LogicalLine {
+    pub const fn indentation(&self) -> usize {
+        ((self.0 & INDENTATION_MASK) >> INDENTATION_SHIFT) as usize
+    }
+
+    pub const fn start_index(&self) -> NodeIndex {
+        NodeIndex((self.0 & START_INDEX_MASK) as usize)
+    }
+
+    const fn end_index_offset(&self) -> u16 {
+        ((self.0 & END_INDEX_OFFSET_MASK) >> END_INDEX_OFFSET_SHIFT) as u16
     }
 
     pub fn end_index(&self) -> NodeIndex {
-        self.end_index
-    }
-
-    pub fn indentation(&self) -> usize {
-        self.indentation
+        let start_index = self.start_index();
+        let end_index_offset = self.end_index_offset() as usize;
+        start_index + end_index_offset
     }
 
     pub fn node_indexes(&self) -> impl DoubleEndedIterator<Item = NodeIndex> {
-        ((self.start_index.0)..=(self.end_index.0)).map(NodeIndex)
+        ((self.start_index().0)..=(self.end_index().0)).map(NodeIndex)
     }
 
     pub fn contains_node_index(&self, node_index: NodeIndex) -> bool {
-        self.start_index <= node_index && node_index <= self.end_index
+        self.start_index() <= node_index && node_index <= self.end_index()
+    }
+
+    fn new(start_index: NodeIndex, end_index: NodeIndex, indentation: usize) -> Self {
+        let indentation_bits = {
+            if indentation > MAX_INDENTATION {
+                panic!(
+                    "LogicalLine indentation is too large: {indentation}, max is {MAX_INDENTATION}"
+                );
+            }
+            Self::indentation_bits(indentation)
+        };
+        let end_index_offset_bits = {
+            let offset = end_index.0 - start_index.0;
+            if offset > MAX_END_INDEX_OFFSET {
+                panic!("LogicalLine spans too many nodes: {start_index:?}..={end_index:?} has offset {offset}, max is {MAX_END_INDEX_OFFSET}");
+            }
+            Self::end_index_offset_bits(offset as u16)
+        };
+        let start_index_bits = {
+            if start_index.0 > MAX_START_INDEX {
+                panic!("start_index of LogicalLine is too big: {start_index:?}, max is {MAX_START_INDEX}");
+            }
+            Self::start_index_bits(start_index)
+        };
+        let ll = LogicalLine(indentation_bits | end_index_offset_bits | start_index_bits);
+        dbg!(start_index, end_index, indentation, &ll);
+        ll
+    }
+
+    const fn indentation_bits(indentation: usize) -> u64 {
+        (indentation as u64) << INDENTATION_SHIFT
+    }
+
+    const fn end_index_offset_bits(end_index_offset: u16) -> u64 {
+        (end_index_offset as u64) << END_INDEX_OFFSET_SHIFT
+    }
+
+    const fn start_index_bits(start_index: NodeIndex) -> u64 {
+        start_index.0 as u64
+    }
+}
+
+impl fmt::Debug for LogicalLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("LogicalLine")
+            .field("start_index", &self.start_index().0)
+            .field("end_index", &self.end_index().0)
+            .field("indentation", &self.indentation())
+            .finish()
     }
 }
 
@@ -55,6 +121,8 @@ struct LayoutEngine<'a> {
     layout_state: LayoutState,
     current_line_indentation: usize,
     current_line_start_index: NodeIndex,
+    max_indentation: usize,
+    max_end_index_offset: usize,
 }
 
 #[derive(Copy, Clone)]
@@ -121,6 +189,8 @@ impl<'a> LayoutEngine<'a> {
             layout_state: LayoutState::StartOfLine { leading_parens: 0 },
             current_line_indentation: 0,
             current_line_start_index: node_index,
+            max_indentation: MAX_INDENTATION,
+            max_end_index_offset: MAX_END_INDEX_OFFSET,
         }
     }
 
@@ -200,7 +270,7 @@ impl<'a> LayoutEngine<'a> {
         self.lines.push(LogicalLine::new(
             self.current_line_start_index,
             end_index,
-            indentation,
+            usize::min(indentation, self.max_indentation),
         ));
 
         self.layout_state = new_layout_state;
@@ -224,6 +294,11 @@ impl<'a> LayoutEngine<'a> {
             if !matches!(self.next_token(), DocumentToken::EndOfList(_)) {
                 break;
             }
+
+            if self.next_index.0 - self.current_line_start_index.0 > self.max_end_index_offset {
+                break;
+            }
+
             self.put_next_token_on_current_line();
             let popped_indentation = self.list_contents_indentation.pop();
             debug_assert!(popped_indentation.is_some());
@@ -234,6 +309,11 @@ impl<'a> LayoutEngine<'a> {
         use SemanticTokenKind as STK;
 
         while self.next_index <= self.end_index_incl {
+            if self.next_index.0 - self.current_line_start_index.0 > self.max_end_index_offset {
+                self.end_line_and_reset_to_default_state();
+                continue;
+            }
+
             let (next_token_kind, is_sexp_commented_out) = {
                 let next_token = self.next_token();
                 (
@@ -519,7 +599,7 @@ pub mod tests {
         for logical_line in lines.into_iter() {
             let start_index = logical_line.start_index();
             let end_index = logical_line.end_index();
-            let indentation = logical_line.indentation();
+            let indentation = logical_line.indentation() as usize;
 
             let mut start_range = doc.node(start_index).data_range.clone();
             if doc.node(start_index).token.is_sexp_commented_out() {
@@ -1044,6 +1124,36 @@ pub mod tests {
         94..=99 :    (character_threshold 40)))
         100..=103 :  (separator Empty_line)
         104..=108 :  (sticky_comments After))
+        ");
+    }
+
+    #[test]
+    fn test_max_indentation() {
+        let doc = DocCore::from_bytes(b"(((a (((b (((c (((d (((e (((f))))))))))))))))))", true);
+        let mut layout_engine = LayoutEngine::new(&doc, NodeIndex(0));
+        layout_engine.max_indentation = 7;
+        layout_engine.run();
+        assert_snapshot!(show_logical_lines(&doc, layout_engine.lines), @r"
+         0..=5  : (((a ((
+         6..=9  :     (b ((
+        10..=13 :       (c ((
+        14..=17 :        (d ((
+        18..=41 :        (e (((f))))))))))))))))))
+        ");
+    }
+
+    #[test]
+    fn test_max_end_index_offset() {
+        let doc = DocCore::from_bytes(b"((((((((((((((((((f))))))))))))))))))", true);
+        let mut layout_engine = LayoutEngine::new(&doc, NodeIndex(0));
+        layout_engine.max_end_index_offset = 7;
+        layout_engine.run();
+        assert_snapshot!(show_logical_lines(&doc, layout_engine.lines), @r"
+         0..=7  : ((((((((
+         8..=15 :   ((((((((
+        16..=23 :     ((f)))))
+        24..=31 :   ))))))))
+        32..=36 : )))))
         ");
     }
 }
