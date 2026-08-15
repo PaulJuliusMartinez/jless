@@ -78,9 +78,7 @@ impl LogicalLine {
             }
             Self::start_index_bits(start_index)
         };
-        let ll = LogicalLine(indentation_bits | end_index_offset_bits | start_index_bits);
-        dbg!(start_index, end_index, indentation, &ll);
-        ll
+        LogicalLine(indentation_bits | end_index_offset_bits | start_index_bits)
     }
 
     const fn indentation_bits(indentation: usize) -> u64 {
