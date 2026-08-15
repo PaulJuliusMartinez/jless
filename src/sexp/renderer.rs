@@ -5,30 +5,25 @@ use std::rc::Rc;
 use crate::rendering::{Attrs, Compositor, StyledSegment, Text};
 use crate::search::SearchMatchHighlighter;
 use crate::sexp::color_scheme::ColorScheme;
-use crate::sexp::core::{
-    invariants, DocCore, DocumentToken, EndOfListMetadata, ListKind, NodeIndex,
-};
+use crate::sexp::core::{invariants, DocumentToken, EndOfListMetadata, ListKind, NodeIndex};
 use crate::sexp::document::{TypesetLine, TypesetLines};
 use crate::sexp::layout::LogicalLine;
 use crate::sexp::state::{CollapseState, DocState};
 
 #[derive(Clone, Debug)]
-pub struct TreeLineCell {
+pub struct FocusLineCell {
     parent: NodeIndex,
     indentation: usize,
-    last_collapsible_child: Option<LogicalLine>,
 }
 
 #[derive(Clone, Debug)]
-pub struct TreeLineInfo {
-    total_width: usize,
-    tree_line_cells: Vec<TreeLineCell>,
-    line_is_collapsible: bool,
+pub struct FocusLineInfo {
+    cells: Vec<FocusLineCell>,
 }
 
-impl TreeLineInfo {
+impl FocusLineInfo {
     fn new(state: &DocState, logical_line: &LogicalLine) -> Self {
-        let mut tree_line_cells = vec![];
+        let mut cells = vec![];
         let mut curr_line_start_node_index = logical_line.start_index();
         let mut curr_indentation = logical_line.indentation();
 
@@ -41,139 +36,18 @@ impl TreeLineInfo {
             let parent_logical_line = state.logical_line_of_node_index(parent_index);
             let parent_indentation = parent_logical_line.indentation();
 
-            let last_collapsible_child =
-                Self::compute_last_collapsible_child(state, &parent_logical_line);
-            tree_line_cells.push(TreeLineCell {
+            cells.push(FocusLineCell {
                 parent: parent_logical_line.start_index(),
                 indentation: parent_indentation,
-                last_collapsible_child,
             });
 
             curr_line_start_node_index = parent_logical_line.start_index();
             curr_indentation = parent_indentation;
         }
 
-        tree_line_cells.reverse();
+        cells.reverse();
 
-        TreeLineInfo {
-            total_width: logical_line.indentation(),
-            tree_line_cells,
-            line_is_collapsible: Self::line_is_collapsible(state, logical_line),
-        }
-    }
-
-    fn line_is_collapsible(state: &DocState, logical_line: &LogicalLine) -> bool {
-        state
-            .collapsible_nodes
-            .range(logical_line.start_index()..=logical_line.end_index())
-            .next()
-            .is_some()
-    }
-
-    // For a given line, we want to compute the last child where we'll *always* extend a tree line to.
-    //
-    // The difference here is that we always show tree lines to collapsible children,
-    // but only show tree lines to the non-collapsible lines if that line is currently focused.
-    //
-    // A couple of examples:
-    //
-    // ((a 1)
-    //  (b 2)
-    //  (c (Var     < last child we'll always extend a tree line to
-    //    y
-    //    z))
-    //  (d 4)
-    //  (e 5))
-    //
-    // ((a 1)
-    //  (b 2)
-    //  (c (Var     < last child we'll always extend a tree line to
-    //    x
-    //    (Var2
-    //      y
-    //      z))))
-    //
-    // We can calculate this by taking the start of line, and jumping to the line that contains
-    // the end of the list. Then, from there, we'll keep jumping back to the parents of the starts
-    // of these lines. The last time the parent is not the the line we started with, then that's
-    // the last child we'll *ever* extend a tree line to.
-    //
-    // If that line is also collapsible, great! That's also the last line we'll always extend
-    // a tree line to. But if it's not, we'll find the last collapsible node in between the end
-    // of the starting line, and the start of the end of that last line.
-    fn compute_last_collapsible_child(
-        state: &DocState,
-        logical_line: &LogicalLine,
-    ) -> Option<LogicalLine> {
-        let DocumentToken::StartOfList(list_metadata) =
-            state.core.token(logical_line.start_index())
-        else {
-            return None;
-        };
-
-        let Some(end_index) = list_metadata.end_index() else {
-            return None;
-        };
-
-        let start_of_line_below_start = logical_line.end_index() + 1;
-        let range = start_of_line_below_start..=end_index;
-
-        let mut iter = state.collapsible_nodes.range(range);
-        let (node_index_of_last_collapsible_line, _collapse_state) = iter.next_back()?;
-
-        let mut last_collapsible_child =
-            state.logical_line_of_node_index(*node_index_of_last_collapsible_line);
-
-        // Same as before, go up until we get to the starting line.
-        loop {
-            // THIS WILL BREAK
-            let parent_index = state
-                .core
-                .node(last_collapsible_child.start_index())
-                .parent_index()
-                .unwrap();
-            let parent_line = state.logical_line_of_node_index(parent_index);
-            if parent_line.start_index() == logical_line.start_index() {
-                break;
-            }
-
-            last_collapsible_child = parent_line;
-        }
-
-        Some(last_collapsible_child)
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-enum TreeLineState {
-    Hidden,
-    Visible,
-    Focused,
-}
-
-impl TreeLineState {
-    fn intersection_str(bottom_state: TreeLineState, right_state: TreeLineState) -> &'static str {
-        use TreeLineState::*;
-        match (bottom_state, right_state) {
-            (Hidden, Hidden) => " ",
-            (Hidden, Visible) => "└",
-            (Hidden, Focused) => "┗",
-            (Visible, Hidden) => "│",
-            (Visible, Visible) => "├",
-            (Visible, Focused) => "┡",
-            (Focused, Hidden) => "┃",
-            (Focused, Visible) => "┠",
-            (Focused, Focused) => "┣",
-        }
-    }
-
-    fn horizontal_str(right_state: TreeLineState) -> &'static str {
-        use TreeLineState::*;
-        match right_state {
-            Hidden => " ",
-            Visible => "─",
-            Focused => "━",
-        }
+        FocusLineInfo { cells }
     }
 }
 
@@ -181,7 +55,7 @@ impl TreeLineState {
 pub enum FragmentSource {
     // We use a OnceCell so that we can lazily compute this when we actually render
     // it, and don't have to do it when just typesetting the line.
-    Indentation(OnceCell<TreeLineInfo>),
+    Indentation(OnceCell<FocusLineInfo>),
     Cursor,
     Whitespace,
     Node(NodeIndex),
@@ -787,92 +661,99 @@ impl<'a> RenderContext<'a> {
     }
 }
 
-fn render_tree_line(
+fn render_focus_line(
     styled_segments: &mut Vec<StyledSegment>,
-    tree_line_info: &TreeLineInfo,
+    focus_line_info: &FocusLineInfo,
     context: &RenderContext<'_>,
     logical_line: &LogicalLine,
-    line_contains_cursor: bool,
 ) {
-    let width = tree_line_info.total_width;
-    let curr_line_start_index = logical_line.start_index();
-    let curr_line_end_index = logical_line.end_index();
-    let num_cells = tree_line_info.tree_line_cells.len();
+    let whitespace_attrs = context.color_scheme.whitespace.normal.not_a_match;
+    let focus_line_attrs = context.color_scheme.comment.normal.not_a_match;
 
-    let curr_line_contains_focus_ancestor = context
-        .focus_ancestors
-        .contains(&logical_line.start_index());
+    // If the focus is before the current line, then nothing to render.
+    if context.focus < logical_line.start_index() {
+        styled_segments.push(StyledSegment {
+            attrs: whitespace_attrs,
+            content: Text::spaces(logical_line.indentation()),
+        });
+        return;
+    }
 
-    let curr_line_is_focused = line_contains_cursor || curr_line_contains_focus_ancestor;
+    // INSIGHT: (???) As the focus moves down the page, the content of a cell will switch
+    // from ' ' to '└' to '│' and then to ' ' again. So there's a range of possible focus
+    // indexes where it'll be '└', and a range where it will be '│'. Could we just pre-compute
+    // those ranges?
 
-    // Compute deepest cell that is a parent to determine if earlier cells should be focused?
-    let mut last_cell_index_of_cell_that_is_in_focus_ancestor = None;
-    for (i, tree_line_cell) in tree_line_info.tree_line_cells.iter().enumerate() {
-        if context.focus_ancestors.contains(&tree_line_cell.parent) {
-            last_cell_index_of_cell_that_is_in_focus_ancestor = Some(i);
+    // The focused element is either in the current line, or below us, so we're going
+    // to need to draw something.
+    //
+    // The key idea here is that the line will be coming from right-most cell that is
+    // a focused ancestor. If the current line is focused, or also contains a focused
+    // ancestor, then the line will break right. We'll either have:
+    //
+    // (cell1_ ...       (focus ancestor)
+    // └──(cell2 ...     (focus ancestor)
+    //    │   (cell3 ... (not focus ancestor)
+    //
+    //  or
+    //
+    // (cell1_ ...       (focus ancestor)
+    // └──(cell2 ...     (focus ancestor)
+    //    └───(cell3 ... (focus ancestor)
+
+    // We'll initialize this to [None] for semantic reasons, but we should always find
+    // a value where the condition holds. (And `cells` should never be empty.)
+    let mut rightmost_cell_index_that_is_focus_ancestor = None;
+    for (i, focus_line_cell) in focus_line_info.cells.iter().rev().enumerate() {
+        if context.focus_ancestors.contains(&focus_line_cell.parent) {
+            rightmost_cell_index_that_is_focus_ancestor = Some(focus_line_info.cells.len() - 1 - i);
+            break;
         }
     }
 
-    for (i, tree_line_cell) in tree_line_info.tree_line_cells.iter().enumerate() {
-        let start_col = tree_line_cell.indentation;
-        let is_last_cell = i == num_cells - 1;
-        let end_col = if is_last_cell {
-            width
-        } else {
-            tree_line_info.tree_line_cells[i + 1].indentation
-        };
+    let rightmost_cell =
+        &focus_line_info.cells[rightmost_cell_index_that_is_focus_ancestor.unwrap()];
 
-        let is_last_cell_thats_focus_ancestor =
-            if let Some(last_cell_index) = last_cell_index_of_cell_that_is_in_focus_ancestor {
-                i == last_cell_index
-            } else {
-                false
-            };
+    let current_line_contains_focus_ancestor = context
+        .focus_ancestors
+        .contains(&logical_line.start_index());
 
-        let bottom_state = {
-            let is_focused = is_last_cell_thats_focus_ancestor
-                && !curr_line_contains_focus_ancestor
-                && !line_contains_cursor
-                && curr_line_end_index < context.focus;
+    // Push whitespace before that cell
+    if rightmost_cell.indentation > 0 {
+        styled_segments.push(StyledSegment {
+            attrs: whitespace_attrs,
+            content: Text::spaces(rightmost_cell.indentation),
+        });
+    }
 
-            if is_focused {
-                TreeLineState::Focused
-            } else {
-                match &tree_line_cell.last_collapsible_child {
-                    Some(last_collapsible_child) => {
-                        if curr_line_start_index < last_collapsible_child.start_index() {
-                            TreeLineState::Visible
-                        } else {
-                            TreeLineState::Hidden
-                        }
-                    }
-                    None => TreeLineState::Hidden,
-                }
-            }
-        };
+    // Push the intersection character
+    let intersection_str = if current_line_contains_focus_ancestor {
+        "└"
+    } else {
+        "│"
+    };
 
-        let right_state = if is_last_cell {
-            if curr_line_is_focused {
-                TreeLineState::Focused
-            } else if tree_line_info.line_is_collapsible {
-                TreeLineState::Visible
-            } else {
-                TreeLineState::Hidden
+    styled_segments.push(StyledSegment {
+        attrs: focus_line_attrs,
+        content: Text::Static(intersection_str),
+    });
+
+    // Fill remaining space with either spaces or "───"
+    let remaining_space = logical_line.indentation() - rightmost_cell.indentation - 1;
+
+    if remaining_space > 0 {
+        if current_line_contains_focus_ancestor {
+            // Awkward that we have to push a bunch of single characters here.
+            for _ in 0..remaining_space {
+                styled_segments.push(StyledSegment {
+                    attrs: focus_line_attrs,
+                    content: Text::Static("─"),
+                });
             }
         } else {
-            TreeLineState::Hidden
-        };
-
-        for col in start_col..end_col {
-            let col_str = if col == start_col {
-                TreeLineState::intersection_str(bottom_state, right_state)
-            } else {
-                TreeLineState::horizontal_str(right_state)
-            };
-
             styled_segments.push(StyledSegment {
-                attrs: context.color_scheme.comment.normal.not_a_match,
-                content: Text::Static(col_str),
+                attrs: whitespace_attrs,
+                content: Text::spaces(remaining_space),
             });
         }
     }
@@ -891,19 +772,11 @@ pub fn style_typeset_line<'l, 's, 'h>(
 
     for fragment in &fragments.0 {
         let (focused, token_color_scheme) = match &fragment.source {
-            FragmentSource::Indentation(tree_line_info) => {
-                let tree_line_info =
-                    tree_line_info.get_or_init(|| TreeLineInfo::new(&context.state, logical_line));
-                let line_contains_cursor = logical_line.contains_node_index(context.focus);
+            FragmentSource::Indentation(focus_line_info) => {
+                let focus_line_info = focus_line_info
+                    .get_or_init(|| FocusLineInfo::new(&context.state, logical_line));
 
-                let line_number = context.state.line_number(logical_line);
-                render_tree_line(
-                    &mut styled_segments,
-                    tree_line_info,
-                    context,
-                    logical_line,
-                    line_contains_cursor,
-                );
+                render_focus_line(&mut styled_segments, focus_line_info, context, logical_line);
 
                 continue;
             }
