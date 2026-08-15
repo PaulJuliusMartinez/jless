@@ -42,6 +42,7 @@ ocaml-sexplib = { version = "0.0.4", optional = true }
 # TODO: MOVE BACK TO dev-dependencies
 bstr = "1"
 wabi_tree = "0.1.2"
+base64 = "0.22.1"
 
 [dev-dependencies]
 bstr = "1"
