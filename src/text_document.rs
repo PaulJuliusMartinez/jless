@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::dimensions;
-use crate::document::{ContentRange, Document};
+use crate::document::{ContentRange, Document, YankResult};
 use crate::rendering::StyledSegment;
 use crate::search::SearchMatchHighlighter;
 
@@ -609,6 +609,22 @@ impl Document for TextDocument {
     fn closest_visible_cursor(&self, cursor: &Cursor) -> Cursor {
         // All lines are always visible
         *cursor
+    }
+
+    fn yank_content<W: std::io::Write>(
+        &self,
+        mut output: W,
+        cursor: &Cursor,
+        target: char,
+    ) -> std::io::Result<YankResult> {
+        if target != 'y' {
+            return Ok(Err(format!("Unknown yank target {target:?}")));
+        }
+
+        let current_line_content = &self.data[self.complete_line_ranges[*cursor].clone()];
+        output.write_all(current_line_content)?;
+
+        Ok(Ok(()))
     }
 
     // Soon: Uncomment this.

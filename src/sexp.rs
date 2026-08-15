@@ -1,3 +1,4 @@
+mod clipboard;
 mod color_scheme;
 mod core;
 pub mod document;

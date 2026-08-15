@@ -20,6 +20,7 @@ use termion::raw::IntoRawMode;
 
 mod action;
 mod app;
+mod clipboard;
 mod dimensions;
 mod document;
 mod document_viewer;

@@ -1,13 +1,15 @@
 use std::cmp::Ordering;
+use std::io;
 use std::iter::DoubleEndedIterator;
 use std::num::NonZeroUsize;
 use std::ops::{Index, Range, RangeInclusive};
 use std::rc::Rc;
 
 use crate::dimensions;
-use crate::document::{ContentRange, Document};
+use crate::document::{ContentRange, Document, YankResult};
 use crate::rendering::{Fragment, StyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters, SearchMatchHighlighter};
+use crate::sexp::clipboard::{self, CopyTarget};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocumentToken, ListKind, ListMetadata, NodeIndex,
@@ -1546,6 +1548,20 @@ impl Document for SexpDocument {
         let closest_visible_ancestor = self.closest_visible_ancestor(cursor);
         self.first_normal_focusable_node_to_left_of_node_or_node(closest_visible_ancestor)
     }
+
+    fn yank_content<W: io::Write>(
+        &self,
+        output: W,
+        cursor: &NodeIndex,
+        target: char,
+    ) -> io::Result<YankResult> {
+        let copy_target = match CopyTarget::from_char(target) {
+            Ok(target) => target,
+            Err(err) => return Ok(Err(err)),
+        };
+
+        clipboard::yank_content(output, &self.state, *cursor, copy_target)
+    }
 }
 
 #[cfg(test)]
@@ -1553,8 +1569,6 @@ pub(super) mod test_helpers {
     use super::*;
 
     use crate::document::Document;
-
-    const FAR_AWAY_CURSOR: NodeIndex = NodeIndex(usize::MAX);
 
     pub fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).unwrap()

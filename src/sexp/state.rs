@@ -94,6 +94,20 @@ impl DocState {
         }
     }
 
+    #[cfg(test)]
+    pub fn new_partial_doc_from_bytes(bytes: &'static [u8]) -> Self {
+        let mut doc = Self::new();
+        doc.append(bytes);
+        doc
+    }
+
+    #[cfg(test)]
+    pub fn new_from_bytes(bytes: &'static [u8]) -> Self {
+        let mut doc = Self::new_partial_doc_from_bytes(bytes);
+        doc.eof();
+        doc
+    }
+
     pub fn append(&mut self, data: &[u8]) {
         self.tokenizer.feed_more_data(data);
         self.process_additional_tokens(Some(data), false);
@@ -484,10 +498,7 @@ mod tests {
     use insta::{allow_duplicates, assert_snapshot};
 
     fn new_doc(bytes: &'static [u8]) -> DocState {
-        let mut doc = DocState::new();
-        doc.append(bytes);
-        doc.eof();
-        doc
+        DocState::new_from_bytes(bytes)
     }
 
     #[test]

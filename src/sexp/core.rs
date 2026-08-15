@@ -215,9 +215,7 @@ impl DocumentToken {
 
     pub fn list_end_index(&self) -> Option<NodeIndex> {
         match self {
-            DocumentToken::StartOfList(ListMetadata { list_end_index, .. }) => {
-                list_end_index.to_option()
-            }
+            DocumentToken::StartOfList(list_metadata) => list_metadata.end_index(),
             _ => None,
         }
     }
@@ -245,7 +243,7 @@ pub struct ListMetadata {
     // first_child_index is just our own index + 1.
     last_child_index: OptNodeIndex,
     list_end_index: OptNodeIndex,
-    sexp_commented_out: bool,
+    pub sexp_commented_out: bool,
     data_length: usize,
     contains_non_data: bool,
 }
@@ -270,9 +268,9 @@ impl ListMetadata {
 #[derive(Debug)]
 pub struct AtomMetadata {
     pub atom_kind: AtomKind,
-    sexp_commented_out: bool,
-    quoted: bool,
-    valid: bool,
+    pub sexp_commented_out: bool,
+    pub quoted: bool,
+    pub valid: bool,
     // printable_ascii: bool,
     // has_escapes: bool,
 }
@@ -495,6 +493,43 @@ impl DocCore {
 
     fn token_mut(&mut self, node_index: NodeIndex) -> &mut DocumentToken {
         &mut self.all_nodes[node_index.0].token
+    }
+
+    // Returns the value of a record field, i.e. the second data elem in a `RecordField`
+    // list. Returns `None` if the given node is the start of a `RecordField` list.
+    pub fn value_of_record_field(&self, node_index: NodeIndex) -> Option<NodeIndex> {
+        match &self.all_nodes[node_index.0].token {
+            DocumentToken::StartOfList(
+                list_metadata @ ListMetadata {
+                    list_kind: ListKind::RecordField,
+                    ..
+                },
+            ) => {
+                if !list_metadata.contains_non_data {
+                    // No comments or errors, so the value must be the last elem in the list. We
+                    // won't classify something as a `RecordField` if it has any commented out
+                    // elems, so we can be sure it's not a trailing commented out value.
+                    return list_metadata.last_child_index();
+                } else {
+                    let mut seen_key = false;
+                    let mut next_child_index = Some(node_index + 1);
+
+                    while let Some(child_index) = next_child_index {
+                        let node = self.node(child_index);
+                        if node.token.is_data() {
+                            if seen_key {
+                                return next_child_index;
+                            }
+                            seen_key = true;
+                        }
+                        next_child_index = node.next_sibling();
+                    }
+
+                    panic!("Didn't find the value of a record field");
+                }
+            }
+            _ => None,
+        }
     }
 
     // Creates a new `DocumentNode` for the given token, and updates all the bookkeeping
@@ -1085,6 +1120,16 @@ impl DocCore {
 
     pub fn raw_bytes_of_complete_content(&self) -> &[u8] {
         &self.pretty_printed.data()[..self.data_len_of_completed_sexps]
+    }
+
+    pub fn raw_bytes_for_node_range(&self, start: NodeIndex, end: NodeIndex) -> &[u8] {
+        let start = self.node(start).data_range.start;
+        let end = self.node(end).data_range.end;
+        &self.pretty_printed.data()[start..end]
+    }
+
+    pub fn raw_bytes_for_node(&self, node: NodeIndex) -> &[u8] {
+        self.raw_bytes_for_node_range(node, node)
     }
 
     pub fn closest_node_to_byte_index(&self, byte_index: usize) -> NodeIndex {

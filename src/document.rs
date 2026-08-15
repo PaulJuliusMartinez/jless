@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+use std::io;
 use std::num::NonZeroUsize;
 use std::ops::Range;
 
@@ -13,11 +15,17 @@ use crate::search::{InvertedPairedDelimeters, SearchMatchHighlighter};
 // TextDocument has `LineWrapping`; JsonDocument/SexpDocument might `ContainerWrapping`?,
 // and a `ContainerWrapping` can have a `LineWrapping` inside it.
 
+/// The result of a yank operation. The `Err` variant should be used for errors in
+/// user intent (e.g. trying to yank a key when focused on a number in a list). These
+/// errors will be displayed as warnings to the user. Errors in actually writing content
+/// to the clipboard should propagate as `io::Error`s.
+pub type YankResult = Result<(), String>;
+
 pub trait Document {
     // `Ord` implementation for `ScreenLine` may panic if we accidentally compare
     // values before/after a resize.
-    type ScreenLine: Clone + Eq + Ord + std::fmt::Debug;
-    type Cursor: Clone + Ord + std::fmt::Debug;
+    type ScreenLine: Clone + Eq + Ord + Debug;
+    type Cursor: Clone + Ord + Debug;
 
     fn new() -> Self;
     fn width(&self) -> usize;
@@ -234,6 +242,15 @@ pub trait Document {
     fn raw_byte_index_to_visible_cursor(&self, index: usize) -> Self::Cursor {
         self.closest_visible_cursor(&self.raw_byte_index_to_cursor(index))
     }
+
+    // Copying to clipboard
+
+    fn yank_content<W: io::Write>(
+        &self,
+        output: W,
+        cursor: &Self::Cursor,
+        target: char,
+    ) -> io::Result<YankResult>;
 
     // Rendering
 
