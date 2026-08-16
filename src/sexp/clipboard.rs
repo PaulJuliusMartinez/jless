@@ -5,11 +5,11 @@ use crate::sexp::core::{invariants, AtomMetadata, DocumentToken, ListKind, NodeI
 use crate::sexp::layout;
 use crate::sexp::state::DocState;
 
+#[derive(Copy, Clone, Debug)]
 pub enum CopyTarget {
-    PrettyPrintedValue,
-    MachineValue,
-    RecordField,
-    MachineRecordField,
+    Value { machine: bool },
+    RecordField { machine: bool },
+    Siblings { machine: bool },
     Key,
     Constructor,
     String,
@@ -20,10 +20,12 @@ pub enum CopyTarget {
 impl CopyTarget {
     pub fn from_char(ch: char) -> Result<Self, String> {
         let copy_target = match ch {
-            'y' => CopyTarget::PrettyPrintedValue,
-            'm' => CopyTarget::MachineValue,
-            't' | 'r' => CopyTarget::RecordField,
-            'T' | 'R' => CopyTarget::MachineRecordField,
+            'y' => CopyTarget::Value { machine: false },
+            'Y' | 'm' => CopyTarget::Value { machine: true },
+            't' | 'r' => CopyTarget::RecordField { machine: false },
+            'T' | 'R' => CopyTarget::RecordField { machine: true },
+            'a' => CopyTarget::Siblings { machine: false },
+            'A' => CopyTarget::Siblings { machine: true },
             'k' => CopyTarget::Key,
             'c' => CopyTarget::Constructor,
             's' => CopyTarget::String,
@@ -40,6 +42,37 @@ fn yank_err(s: &'static str) -> io::Result<YankResult> {
     Ok(Err(s.to_string()))
 }
 
+enum TrailingNewline {
+    WriteAlways,
+    DontWriteIfSingleLine,
+}
+
+enum RootSexpComment {
+    Write,
+    Ignore,
+}
+
+// We want slightly different behavior when yanking single values than when we
+// yank multiple values (i.e. `CopyTarget::Siblings`).
+//
+// Newlines:
+// When yanking a single big sexp, we want to include a trailing newline, because
+// the value will likely be pasted as a block comment somewhere. But if the value
+// is just a single atom, then the value will likely be pasted inline, so we don't
+// want a trailing newline. When we yank multiple siblings at once, however, we
+// definitely want a newline after each one.
+//
+// Root sexp comments:
+// When yanking a single value, you don't care if it's sexp-commented out; that only
+// matters in the context of the larger doc. But if you are yanking multiple siblings,
+// you do want to include the sexp comments so you know which nodes are included and
+// which ones aren't. (And when used at the top-level sexp, this means yanking the
+// whole document, so obviously you want to include them in that case.)
+struct YankPrettyOpts {
+    trailing_newline: TrailingNewline,
+    root_sexp_comment: RootSexpComment,
+}
+
 pub fn yank_content<W: io::Write>(
     mut output: W,
     doc: &DocState,
@@ -50,29 +83,50 @@ pub fn yank_content<W: io::Write>(
     let value_node_index = record_field_value_node_index.unwrap_or(node_index);
 
     match target {
-        CopyTarget::PrettyPrintedValue => yank_pretty_printed_node(output, doc, value_node_index)?,
-        CopyTarget::MachineValue => match doc.core.token(node_index) {
-            DocumentToken::LineComment | DocumentToken::BlockComment => {
-                return yank_err("Comments are not included in machine format");
+        CopyTarget::Value { machine } => {
+            if machine {
+                match doc.core.token(node_index) {
+                    DocumentToken::LineComment | DocumentToken::BlockComment => {
+                        return yank_err("Comments are not included in machine format");
+                    }
+                    DocumentToken::Error(_) => {
+                        return yank_err("Can't machine format an error");
+                    }
+                    _ => yank_machine_node(output, doc, value_node_index)?,
+                }
+            } else {
+                let opts = YankPrettyOpts {
+                    trailing_newline: TrailingNewline::DontWriteIfSingleLine,
+                    root_sexp_comment: RootSexpComment::Ignore,
+                };
+                yank_pretty_printed_node(output, doc, value_node_index, opts)?
             }
-            DocumentToken::Error(_) => {
-                return yank_err("Can't machine format an error");
-            }
-            _ => yank_machine_node(output, doc, value_node_index)?,
-        },
-        CopyTarget::RecordField | CopyTarget::MachineRecordField => {
+        }
+        CopyTarget::RecordField { machine } => {
             if matches!(
                 doc.core.token(node_index).list_kind(),
                 Some(ListKind::RecordField),
             ) {
-                if matches!(target, CopyTarget::MachineRecordField) {
+                if machine {
                     yank_machine_node(output, doc, node_index)?;
                 } else {
-                    yank_pretty_printed_node(output, doc, node_index)?;
+                    let opts = YankPrettyOpts {
+                        trailing_newline: TrailingNewline::DontWriteIfSingleLine,
+                        root_sexp_comment: RootSexpComment::Ignore,
+                    };
+                    yank_pretty_printed_node(output, doc, node_index, opts)?;
                 }
             } else {
                 return yank_err("Can't yank record field; not focused on record field");
             }
+        }
+        CopyTarget::Siblings { machine } => {
+            let first_sibling = match doc.core.parent_index(node_index) {
+                Some(parent_index) => parent_index + 1,
+                None => NodeIndex(0),
+            };
+
+            yank_siblings(output, doc, first_sibling, machine)?
         }
         CopyTarget::Key => {
             if matches!(
@@ -123,17 +177,47 @@ pub fn yank_content<W: io::Write>(
     Ok(Ok(()))
 }
 
+fn yank_siblings<W: io::Write>(
+    mut output: W,
+    doc: &DocState,
+    first_sibling: NodeIndex,
+    machine: bool,
+) -> io::Result<()> {
+    let mut next_sibling = Some(first_sibling);
+
+    while let Some(sibling) = next_sibling {
+        if machine {
+            let token = doc.core.token(sibling);
+            if token.is_data() && !token.is_sexp_commented_out() {
+                yank_machine_node(&mut output, doc, sibling)?;
+                write!(output, "\n")?;
+            }
+        } else {
+            let opts = YankPrettyOpts {
+                trailing_newline: TrailingNewline::WriteAlways,
+                root_sexp_comment: RootSexpComment::Write,
+            };
+            yank_pretty_printed_node(&mut output, doc, sibling, opts)?;
+        }
+
+        next_sibling = doc.core.node(sibling).next_sibling();
+    }
+
+    Ok(())
+}
+
 fn yank_pretty_printed_node<W: io::Write>(
     mut output: W,
     doc: &DocState,
     node_index: NodeIndex,
+    opts: YankPrettyOpts,
 ) -> io::Result<()> {
     let pretty_printed_logical_lines = layout::layout_fully_expanded_node(&doc.core, node_index);
     let doc_content = doc.core.raw_bytes_of_complete_content();
 
     let multiple_lines = pretty_printed_logical_lines.len() > 1;
 
-    // If we're yanking a value that is sexp-commented out, we want to format it as if it's
+    // If we're yanking a value that is sexp-commented out, we may want to format it as if it's
     // just a regular node, but `layout` will include extra indentation on all the subsequent
     // lines, so we need to remove that.
     //
@@ -146,13 +230,26 @@ fn yank_pretty_printed_node<W: io::Write>(
             .token(first_line.start_index())
             .is_sexp_commented_out()
         {
-            3
+            match opts.root_sexp_comment {
+                RootSexpComment::Write => {
+                    output.write_all(b"#; ")?;
+                    0
+                }
+                RootSexpComment::Ignore => 3,
+            }
         } else {
             0
         }
     };
 
-    for line in pretty_printed_logical_lines.into_iter() {
+    for (i, line) in pretty_printed_logical_lines.into_iter().enumerate() {
+        if i > 0 {
+            output.write_all(b"\n")?;
+        }
+
+        // Annoyingly, if we layout a sexp-commented out node, then every line will
+        // have an extra 3 indentation, *except* the first line, which is why we
+        // have the `saturating_sub` here.
         for _ in 0..(line.indentation().saturating_sub(indentation_offset)) {
             output.write_all(b" ")?;
         }
@@ -176,10 +273,10 @@ fn yank_pretty_printed_node<W: io::Write>(
 
         let line_content = doc.core.raw_bytes_for_node_range(start_index, end_index);
         output.write_all(line_content)?;
+    }
 
-        if multiple_lines {
-            output.write_all(b"\n")?;
-        }
+    if multiple_lines || matches!(opts.trailing_newline, TrailingNewline::WriteAlways) {
+        output.write_all(b"\n")?;
     }
 
     Ok(())
@@ -264,6 +361,13 @@ mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
+    const PRETTY_PRINTED_VALUE: CopyTarget = CopyTarget::Value { machine: false };
+    const MACHINE_VALUE: CopyTarget = CopyTarget::Value { machine: true };
+    const RECORD_FIELD: CopyTarget = CopyTarget::RecordField { machine: false };
+    const MACHINE_RECORD_FIELD: CopyTarget = CopyTarget::RecordField { machine: true };
+    const SIBLINGS: CopyTarget = CopyTarget::Siblings { machine: false };
+    const MACHINE_SIBLINGS: CopyTarget = CopyTarget::Siblings { machine: true };
+
     fn new_doc(bytes: &'static [u8]) -> DocState {
         DocState::new_from_bytes(bytes)
     }
@@ -296,37 +400,88 @@ mod tests {
         38..=44 :    (y 2))))
         "#);
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::PrettyPrintedValue), @"1");
-        assert_snapshot!(copy(&doc, 5, CopyTarget::PrettyPrintedValue), @r#""two two""#);
+        assert_snapshot!(copy(&doc, 1, PRETTY_PRINTED_VALUE), @"1");
+        assert_snapshot!(copy(&doc, 5, PRETTY_PRINTED_VALUE), @r#""two two""#);
 
-        assert_snapshot!(copy(&doc, 9, CopyTarget::PrettyPrintedValue), @r"
+        assert_snapshot!(copy(&doc, 9, PRETTY_PRINTED_VALUE), @r"
         (3
          4
          5)
         ");
-        assert_snapshot!(copy(&doc, 9, CopyTarget::MachineValue), @"(3 4 5)");
+        assert_snapshot!(copy(&doc, 9, MACHINE_VALUE), @"(3 4 5)");
 
-        assert_snapshot!(copy(&doc, 17, CopyTarget::PrettyPrintedValue), @r"
+        assert_snapshot!(copy(&doc, 17, PRETTY_PRINTED_VALUE), @r"
         ((m 1)
          (n 2))
         ");
-        assert_snapshot!(copy(&doc, 17, CopyTarget::MachineValue), @"((m 1) (n 2))");
+        assert_snapshot!(copy(&doc, 17, MACHINE_VALUE), @"((m 1) (n 2))");
 
-        assert_snapshot!(copy(&doc, 30, CopyTarget::PrettyPrintedValue), @r"
+        assert_snapshot!(copy(&doc, 30, PRETTY_PRINTED_VALUE), @r"
         (Variant
           (x 1)
           (y 2))
         ");
-        assert_snapshot!(copy(&doc, 30, CopyTarget::MachineValue), @"(Variant (x 1) (y 2))");
+        assert_snapshot!(copy(&doc, 30, MACHINE_VALUE), @"(Variant (x 1) (y 2))");
 
-        assert_snapshot!(copy(&doc, 34, CopyTarget::PrettyPrintedValue), @"1");
+        assert_snapshot!(copy(&doc, 34, PRETTY_PRINTED_VALUE), @"1");
+    }
+
+    #[test]
+    fn test_yank_siblings() {
+        let doc = new_doc(b"one #| two |# (three four) ; five\n #; six");
+        assert_snapshot!(doc.dump_all_logical_lines(), @r"
+        0..=0  : one
+        1..=1  : #| two |#
+        2..=5  : (three four)
+        6..=6  : ; five
+        7..=7  : #; six
+        ");
+
+        assert_snapshot!(copy(&doc, 0, SIBLINGS), @r"
+        one
+        #| two |#
+        (three four)
+        ; five
+        #; six
+        ");
+
+        assert_snapshot!(copy(&doc, 1, MACHINE_SIBLINGS), @r"
+        one
+        (three four)
+        ");
+
+        // Same doc, but in a list
+        let doc = new_doc(b"(one #| two |# (three four) ; five\n #; six)");
+
+        // Note also it doesn't matter which sibling we target.
+        assert_snapshot!(copy(&doc, 2, SIBLINGS), @r"
+        one
+        #| two |#
+        (three four)
+        ; five
+        #; six
+        ");
+
+        assert_snapshot!(copy(&doc, 3, MACHINE_SIBLINGS), @r"
+        one
+        (three four)
+        ");
+
+        let doc = new_doc(b"((a 1)(b 2)(c 3))");
+        // Yanking siblings of a record gives just a bunch of key-value
+        // pairs, which is a little strange, but seems fine.
+        assert_snapshot!(copy(&doc, 1, SIBLINGS), @r"
+        (a 1)
+        (b 2)
+        (c 3)
+        ");
     }
 
     #[test]
     fn test_yank_machine() {
         let doc = new_doc(b"(a \"b c\" \"e f\" g)");
         // "machine" is human machine, not like the `-machine` flag in the `sexp` tool.
-        assert_snapshot!(copy(&doc, 0, CopyTarget::MachineValue), @r#"(a "b c" "e f" g)"#);
+        assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @r#"(a "b c" "e f" g)"#);
     }
 
     #[test]
@@ -341,11 +496,11 @@ mod tests {
         10..=11 : ))
         ");
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::PrettyPrintedValue), @"value1");
-        assert_snapshot!(copy(&doc, 6, CopyTarget::PrettyPrintedValue), @"value2");
+        assert_snapshot!(copy(&doc, 1, PRETTY_PRINTED_VALUE), @"value1");
+        assert_snapshot!(copy(&doc, 6, PRETTY_PRINTED_VALUE), @"value2");
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::MachineValue), @"value1");
-        assert_snapshot!(copy(&doc, 6, CopyTarget::MachineValue), @"value2");
+        assert_snapshot!(copy(&doc, 1, MACHINE_VALUE), @"value1");
+        assert_snapshot!(copy(&doc, 6, MACHINE_VALUE), @"value2");
     }
 
     #[test]
@@ -371,11 +526,11 @@ mod tests {
 
         // Not fields
         assert_snapshot!(
-            copy(&doc, 2, CopyTarget::RecordField),
+            copy(&doc, 2, RECORD_FIELD),
             @"yank err: Can't yank record field; not focused on record field",
         );
         assert_snapshot!(
-            copy(&doc, 8, CopyTarget::MachineRecordField),
+            copy(&doc, 8, MACHINE_RECORD_FIELD),
             @"yank err: Can't yank record field; not focused on record field",
         );
 
@@ -389,35 +544,35 @@ mod tests {
             @"yank err: Can't yank key; not focused on record field",
         );
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::MachineRecordField), @"(a 1)");
+        assert_snapshot!(copy(&doc, 1, MACHINE_RECORD_FIELD), @"(a 1)");
         assert_snapshot!(copy(&doc, 1, CopyTarget::Key), @"a");
-        assert_snapshot!(copy(&doc, 5, CopyTarget::MachineRecordField), @"(b (2 3))");
-        assert_snapshot!(copy(&doc, 12, CopyTarget::MachineRecordField), @"(c ((d 4) (e 5)))");
-        assert_snapshot!(copy(&doc, 25, CopyTarget::MachineRecordField), @"(f (Var (g 6) (h 7)))");
-        assert_snapshot!(copy(&doc, 29, CopyTarget::MachineRecordField), @"(g 6)");
+        assert_snapshot!(copy(&doc, 5, MACHINE_RECORD_FIELD), @"(b (2 3))");
+        assert_snapshot!(copy(&doc, 12, MACHINE_RECORD_FIELD), @"(c ((d 4) (e 5)))");
+        assert_snapshot!(copy(&doc, 25, MACHINE_RECORD_FIELD), @"(f (Var (g 6) (h 7)))");
+        assert_snapshot!(copy(&doc, 29, MACHINE_RECORD_FIELD), @"(g 6)");
         assert_snapshot!(copy(&doc, 29, CopyTarget::Key), @"g");
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::RecordField), @"(a 1)");
+        assert_snapshot!(copy(&doc, 1, RECORD_FIELD), @"(a 1)");
 
-        assert_snapshot!(copy(&doc, 5, CopyTarget::RecordField), @r"
+        assert_snapshot!(copy(&doc, 5, RECORD_FIELD), @r"
         (b (
           2
           3))
         ");
 
-        assert_snapshot!(copy(&doc, 12, CopyTarget::RecordField), @r"
+        assert_snapshot!(copy(&doc, 12, RECORD_FIELD), @r"
         (c (
           (d 4)
           (e 5)))
         ");
 
-        assert_snapshot!(copy(&doc, 25, CopyTarget::RecordField), @r"
+        assert_snapshot!(copy(&doc, 25, RECORD_FIELD), @r"
         (f (Var
           (g 6)
           (h 7)))
         ");
 
-        assert_snapshot!(copy(&doc, 29, CopyTarget::RecordField), @"(g 6)");
+        assert_snapshot!(copy(&doc, 29, RECORD_FIELD), @"(g 6)");
     }
 
     #[test]
@@ -445,28 +600,28 @@ mod tests {
     fn test_yank_comments() {
         let doc = new_doc(b"; comment\n#| block comment |# (a #; (1 2 3) b)");
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::PrettyPrintedValue), @"; comment");
-        assert_snapshot!(copy(&doc, 0, CopyTarget::MachineValue), @"yank err: Comments are not included in machine format");
+        assert_snapshot!(copy(&doc, 0, PRETTY_PRINTED_VALUE), @"; comment");
+        assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @"yank err: Comments are not included in machine format");
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::PrettyPrintedValue), @"#| block comment |#");
-        assert_snapshot!(copy(&doc, 1, CopyTarget::MachineValue), @"yank err: Comments are not included in machine format");
+        assert_snapshot!(copy(&doc, 1, PRETTY_PRINTED_VALUE), @"#| block comment |#");
+        assert_snapshot!(copy(&doc, 1, MACHINE_VALUE), @"yank err: Comments are not included in machine format");
 
-        assert_snapshot!(copy(&doc, 2, CopyTarget::PrettyPrintedValue), @r"
+        assert_snapshot!(copy(&doc, 2, PRETTY_PRINTED_VALUE), @r"
         (a
          #; (1
              2
              3)
          b)
         ");
-        assert_snapshot!(copy(&doc, 2, CopyTarget::MachineValue), @"(a b)");
+        assert_snapshot!(copy(&doc, 2, MACHINE_VALUE), @"(a b)");
 
         // Don't include sexp comment when yanking a commented out value.
-        assert_snapshot!(copy(&doc, 4, CopyTarget::PrettyPrintedValue), @r"
+        assert_snapshot!(copy(&doc, 4, PRETTY_PRINTED_VALUE), @r"
         (1
          2
          3)
         ");
-        assert_snapshot!(copy(&doc, 4, CopyTarget::MachineValue), @"(1 2 3)");
+        assert_snapshot!(copy(&doc, 4, MACHINE_VALUE), @"(1 2 3)");
     }
 
     #[test]
@@ -479,14 +634,14 @@ mod tests {
         4..=4  :
         ");
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::PrettyPrintedValue), @r"
+        assert_snapshot!(copy(&doc, 0, PRETTY_PRINTED_VALUE), @r"
         (1
          2
          ; ERROR: Unexpected EOF while parsing list
         ");
-        assert_snapshot!(copy(&doc, 3, CopyTarget::PrettyPrintedValue), @"; ERROR: Unexpected EOF while parsing list");
+        assert_snapshot!(copy(&doc, 3, PRETTY_PRINTED_VALUE), @"; ERROR: Unexpected EOF while parsing list");
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::MachineValue), @"(1 2)");
-        assert_snapshot!(copy(&doc, 3, CopyTarget::MachineValue), @"yank err: Can't machine format an error");
+        assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @"(1 2)");
+        assert_snapshot!(copy(&doc, 3, MACHINE_VALUE), @"yank err: Can't machine format an error");
     }
 }
