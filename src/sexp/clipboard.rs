@@ -79,6 +79,10 @@ pub fn yank_content<W: io::Write>(
     node_index: NodeIndex,
     target: CopyTarget,
 ) -> io::Result<YankResult> {
+    if matches!(doc.core.token(node_index), DocumentToken::EndOfList(_)) {
+        return yank_err("Focused on closing paren");
+    }
+
     let record_field_value_node_index = doc.core.value_of_record_field(node_index);
     let value_node_index = record_field_value_node_index.unwrap_or(node_index);
 
@@ -643,5 +647,28 @@ mod tests {
 
         assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @"(1 2)");
         assert_snapshot!(copy(&doc, 3, MACHINE_VALUE), @"yank err: Can't machine format an error");
+    }
+
+    #[test]
+    fn test_yank_leading_parens() {
+        let doc = new_doc(b"((a 1) (b 2 #| x |#) (c (Var 3 4 #| y |#)) #| z |#)");
+        assert_snapshot!(doc.dump_all_logical_lines(), @r"
+         0..=4  : ((a 1)
+         5..=7  :  (b 2
+         8..=8  :   #| x |#
+         9..=9  :  )
+        10..=13 :  (c (Var
+        14..=14 :    3
+        15..=15 :    4
+        16..=16 :    #| y |#
+        17..=18 :  ))
+        19..=19 :  #| z |#
+        20..=20 : )
+        ");
+
+        assert_snapshot!(copy(&doc, 9, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
+        assert_snapshot!(copy(&doc, 9, RECORD_FIELD), @"yank err: Focused on closing paren");
+        assert_snapshot!(copy(&doc, 17, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
+        assert_snapshot!(copy(&doc, 20, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
     }
 }
