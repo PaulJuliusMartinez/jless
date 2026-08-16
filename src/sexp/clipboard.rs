@@ -24,8 +24,8 @@ impl CopyTarget {
         let copy_target = match ch {
             'y' => CopyTarget::Value { machine: false },
             'Y' | 'm' => CopyTarget::Value { machine: true },
-            't' | 'r' => CopyTarget::RecordField { machine: false },
-            'T' | 'R' => CopyTarget::RecordField { machine: true },
+            't' => CopyTarget::RecordField { machine: false },
+            'T' => CopyTarget::RecordField { machine: true },
             'a' => CopyTarget::Siblings { machine: false },
             'A' => CopyTarget::Siblings { machine: true },
             'k' => CopyTarget::Key,
