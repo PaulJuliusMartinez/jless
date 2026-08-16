@@ -5,6 +5,8 @@ use crate::sexp::core::{invariants, AtomMetadata, DocumentToken, ListKind, NodeI
 use crate::sexp::layout;
 use crate::sexp::state::DocState;
 
+use ocaml_sexplib::atom::PlausibleSerializedAtom;
+
 #[derive(Copy, Clone, Debug)]
 pub enum CopyTarget {
     Value { machine: bool },
@@ -157,17 +159,24 @@ pub fn yank_content<W: io::Write>(
             }
         }
         CopyTarget::String => match doc.core.token(value_node_index) {
-            DocumentToken::Atom(AtomMetadata { quoted, valid, .. }) => {
-                if *valid {
-                    if !*quoted {
-                        output.write_all(doc.core.raw_bytes_for_node(value_node_index))?;
-                    } else {
-                        return yank_err(
-                            "unimplemented: Don't know how to unescape quoted values yet",
-                        );
-                    }
-                } else {
+            DocumentToken::Atom(AtomMetadata { valid, .. }) => {
+                if !*valid {
                     return yank_err("Can't yank raw atom value; atom contains invalid escapes");
+                }
+
+                let raw_bytes = doc.core.raw_bytes_for_node(value_node_index);
+                let atom = PlausibleSerializedAtom::new(raw_bytes)
+                    .expect("doc content should always be valid-ish sexp");
+                let mut scratch = vec![];
+
+                // Someday: warn when escaping control characters, and also add yS for
+                // unsafe escape (i.e., the current implementation).
+                match atom.unescape(&mut scratch) {
+                    Ok(atom) => output.write_all(atom.bytes())?,
+                    Err(err) => {
+                        // This shouldn't really happen, since we check if it's valid above.
+                        return Ok(Err(format!("unable to escape atom: {err:?}")));
+                    }
                 }
             }
             _ => {
@@ -592,12 +601,26 @@ mod tests {
 
     #[test]
     fn test_yank_string_values() {
-        let doc = new_doc(b"zero \"quoted atom\" \"escaped\\natom\" \"invalid\\xxxatom\"");
+        let doc = new_doc(
+            b"zero \"quoted atom\" \"escaped\\natom\" \"invalid\\xxxatom\" \"control\\x01atom\"",
+        );
+        assert_snapshot!(doc.dump_all_logical_lines(), @r#"
+        0..=0  : zero
+        1..=1  : "quoted atom"
+        2..=2  : "escaped\natom"
+        3..=3  : ERR: Unable to unescape atom: InvalidHexadecimalEscape
+        4..=4  : "invalid\xxxatom"
+        5..=5  : "control\x01atom"
+        "#);
 
         assert_snapshot!(copy(&doc, 0, CopyTarget::String), @"zero");
-        assert_snapshot!(copy(&doc, 1, CopyTarget::String), @"yank err: unimplemented: Don't know how to unescape quoted values yet");
-        assert_snapshot!(copy(&doc, 2, CopyTarget::String), @"yank err: unimplemented: Don't know how to unescape quoted values yet");
-        assert_snapshot!(copy(&doc, 3, CopyTarget::String), @"yank err: Can't yank raw atom value; not focused on an atom");
+        assert_snapshot!(copy(&doc, 1, CopyTarget::String), @"quoted atom");
+        assert_snapshot!(copy(&doc, 2, CopyTarget::String), @r"
+        escaped
+        atom
+        ");
+        assert_snapshot!(copy(&doc, 4, CopyTarget::String), @"yank err: Can't yank raw atom value; atom contains invalid escapes");
+        assert_snapshot!(copy(&doc, 5, CopyTarget::String), @"control\u{1}atom");
     }
 
     #[test]
