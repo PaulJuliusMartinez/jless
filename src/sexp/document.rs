@@ -15,6 +15,7 @@ use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocumentToken, ListKind, ListMetadata, NodeIndex,
 };
 use crate::sexp::layout::LogicalLine;
+use crate::sexp::path::DataNodePath;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
 use crate::sexp::state::{CollapseState, DocState};
@@ -1387,7 +1388,8 @@ impl Document for SexpDocument {
     }
 
     fn path_to_cursor(&self, cursor: &NodeIndex) -> Option<String> {
-        self.state.core.sexp_get_style_path_to_node(*cursor)
+        let path = DataNodePath::build(&self.state.core, *cursor)?;
+        Some(path.format_for_status_bar(&self.state.core))
     }
 
     fn debug_text_content(&self, screen_line: &ScreenLine, cursor: &NodeIndex) -> Vec<u8> {
