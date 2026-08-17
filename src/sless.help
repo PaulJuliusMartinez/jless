@@ -111,6 +111,9 @@
 
   yc      When focused on a variant, yank the constructor.
 
+  yg      Yank a [sexp get]-style path to the current node, as seen in the
+          status bar.
+
                                      [1mSEARCH[0m
 
       sless supports full-text search over the input sexp.

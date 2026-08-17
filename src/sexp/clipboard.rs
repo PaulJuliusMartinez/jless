@@ -3,6 +3,7 @@ use std::io;
 use crate::document::YankResult;
 use crate::sexp::core::{invariants, AtomMetadata, DocumentToken, ListKind, NodeIndex};
 use crate::sexp::layout;
+use crate::sexp::path::DataNodePath;
 use crate::sexp::state::DocState;
 
 use ocaml_sexplib::atom::PlausibleSerializedAtom;
@@ -15,8 +16,8 @@ pub enum CopyTarget {
     Key,
     Constructor,
     String,
-    QueryPath,
     GetPath,
+    QueryPath,
 }
 
 impl CopyTarget {
@@ -183,8 +184,19 @@ pub fn yank_content<W: io::Write>(
                 return yank_err("Can't yank raw atom value; not focused on an atom");
             }
         },
+        CopyTarget::GetPath => {
+            if !doc.core.token(node_index).is_data() {
+                return yank_err("Cannot yank path to non-data");
+            }
+
+            let Some(path) = DataNodePath::build(&doc.core, node_index) else {
+                return yank_err("UNEXPECTED: Unable to build path to node");
+            };
+
+            let get_path = path.format_for_sexp_get(&doc.core);
+            output.write_all(get_path.as_bytes())?;
+        }
         CopyTarget::QueryPath => return yank_err("unimplemented: yanking sexp-query paths"),
-        CopyTarget::GetPath => return yank_err("unimplemented: yanking sexp-get paths"),
     };
 
     Ok(Ok(()))
@@ -693,5 +705,32 @@ mod tests {
         assert_snapshot!(copy(&doc, 9, RECORD_FIELD), @"yank err: Focused on closing paren");
         assert_snapshot!(copy(&doc, 17, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
         assert_snapshot!(copy(&doc, 20, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
+    }
+
+    #[test]
+    fn test_yank_paths() {
+        let doc =
+            new_doc(b"a #| comment |# #; b ((a 1) #; (x 0) (b (2 #; 2.5 #| inner comment |# 3)))");
+        assert_snapshot!(doc.dump_all_logical_lines(), @r"
+         0..=0  : a
+         1..=1  : #| comment |#
+         2..=2  : #; b
+         3..=7  : ((a 1)
+         8..=11 :  #; (x 0)
+        12..=14 :  (b (
+        15..=15 :    2
+        16..=16 :    #; 2.5
+        17..=17 :    #| inner comment |#
+        18..=21 :    3)))
+        ");
+
+        assert_snapshot!(copy(&doc, 0, CopyTarget::GetPath), @".");
+        assert_snapshot!(copy(&doc, 1, CopyTarget::GetPath), @"yank err: Cannot yank path to non-data");
+        assert_snapshot!(copy(&doc, 2, CopyTarget::GetPath), @".");
+        assert_snapshot!(copy(&doc, 4, CopyTarget::GetPath), @".a");
+        assert_snapshot!(copy(&doc, 8, CopyTarget::GetPath), @".x");
+        assert_snapshot!(copy(&doc, 16, CopyTarget::GetPath), @".b.[_]");
+        assert_snapshot!(copy(&doc, 17, CopyTarget::GetPath), @"yank err: Cannot yank path to non-data");
+        assert_snapshot!(copy(&doc, 18, CopyTarget::GetPath), @".b.[1]");
     }
 }

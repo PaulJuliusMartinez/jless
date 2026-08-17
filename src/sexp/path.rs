@@ -218,6 +218,16 @@ impl DataNodePath {
         s
     }
 
+    pub fn format_for_sexp_get(&self, doc: &DocCore) -> String {
+        if self.elems.is_empty() {
+            return ".".to_string();
+        };
+
+        let mut s = String::new();
+        self.write_elems_as_sexp_get_style_path(&mut s, doc);
+        s
+    }
+
     fn write_elems_as_sexp_get_style_path<W: std::fmt::Write>(&self, w: &mut W, doc: &DocCore) {
         for elem in self.elems.iter() {
             let _ = write!(w, ".");
@@ -302,6 +312,8 @@ mod tests {
             };
         }
 
+        let _ = write!(s, "\nget: {}", path.format_for_sexp_get(doc));
+
         s
     }
 
@@ -332,41 +344,56 @@ mod tests {
         let path = |i| show_path(&doc, NodeIndex(i));
 
         assert_snapshot!(path(0),  @"<empty path>");
-        assert_snapshot!(path(1),  @"[0].Index[0] in Plain");
-        assert_snapshot!(path(2),  @"[0].Index[1] in Plain");
+        assert_snapshot!(path(1),  @r"
+        [0].Index[0] in Plain
+        get: .[0]
+        ");
+        assert_snapshot!(path(2),  @r"
+        [0].Index[1] in Plain
+        get: .[1]
+        ");
         // Path to end of list should be same as path to start of list
         assert_snapshot!(path(6),  @r"
         (path to NodeIndex(2) instead of #NodeIndex(6)
         [0].Index[1] in Plain
+        get: .[1]
         ");
 
         // Paths to variant tuples
         assert_snapshot!(path(5),  @r"
         [0].Index[1] in Plain
            .VarIndex[Two, 1]
+        get: .[1].Two[1]
         ");
         // Path to constructor uses a regular index
         assert_snapshot!(path(3),  @r"
         [0].Index[1] in Plain
            .Index[0] in VariantTuple
+        get: .[1].[0]
         ");
 
-        assert_snapshot!(path(7),  @"[0].Index[2] in Plain");
+        assert_snapshot!(path(7),  @r"
+        [0].Index[2] in Plain
+        get: .[2]
+        ");
 
         // Path to record field and record value are the same
         assert_snapshot!(path(12),  @r"
         [0].Index[2] in Plain
            .Field[b]
+        get: .[2].b
         ");
         assert_snapshot!(path(14), @r"
         [0].Index[2] in Plain
            .Field[b]
+        get: .[2].b
         ");
         // Path to record key uses two indexes into record and then into record field.
         assert_snapshot!(path(13),  @r"
         [0].Index[2] in Plain
            .Index[1] in Record
            .Index[0] in RecordField
+        get: .[2].[1].[0]
         ");
 
         // Variant record field, path to field and value are the same
@@ -374,11 +401,13 @@ mod tests {
         [0].Index[2] in Plain
            .Field[c]
            .VarField[Var, d]
+        get: .[2].c.d
         ");
         assert_snapshot!(path(22), @r"
         [0].Index[2] in Plain
            .Field[c]
            .VarField[Var, d]
+        get: .[2].c.d
         ");
         // Key of variant record field
         assert_snapshot!(path(21), @r"
@@ -386,12 +415,14 @@ mod tests {
            .Field[c]
            .Index[1] in VariantRecord
            .Index[0] in RecordField
+        get: .[2].c.[1].[0]
         ");
         // Variant record constructor
         assert_snapshot!(path(19), @r"
         [0].Index[2] in Plain
            .Field[c]
            .Index[0] in VariantRecord
+        get: .[2].c.[0]
         ");
     }
 
@@ -434,21 +465,27 @@ mod tests {
         assert_snapshot!(path(10),  @r"
         (path to NodeIndex(9) instead of #NodeIndex(10)
         [0].Field[b]
+        get: .b
         ");
 
         // Path to commented out record field
-        assert_snapshot!(path(13),  @"[0].Field[c]");
+        assert_snapshot!(path(13),  @r"
+        [0].Field[c]
+        get: .c
+        ");
 
         // Path to value in commented out record field; still use field name
         assert_snapshot!(path(16),  @r"
         [0].Field[c]
            .Index[0] in Plain
+        get: .c.[0]
         ");
 
         // Path to commented out value in commented out record field
         assert_snapshot!(path(17),  @r"
         [0].Field[c]
            .Index[_] in Plain
+        get: .c.[_]
         ");
 
         // Path to value in commented out list in commented out record field
@@ -456,12 +493,14 @@ mod tests {
         [0].Field[c]
            .Index[_] in Plain
            .Index[0] in RecordField
+        get: .c.[_].[0]
         ");
 
         // Path to error
         assert_snapshot!(path(27),  @r"
         (path to NodeIndex(25) instead of #NodeIndex(27)
         [1].Index[0] in Singleton
+        get: .[0]
         ");
     }
 
