@@ -97,7 +97,7 @@ pub fn yank_content<W: io::Write>(
                         return yank_err("Comments are not included in machine format");
                     }
                     DocumentToken::Error(_) => {
-                        return yank_err("Can't machine format an error");
+                        return yank_err("Cannot machine format an error");
                     }
                     _ => yank_machine_node(output, doc, value_node_index)?,
                 }
@@ -124,7 +124,7 @@ pub fn yank_content<W: io::Write>(
                     yank_pretty_printed_node(output, doc, node_index, opts)?;
                 }
             } else {
-                return yank_err("Can't yank record field; not focused on record field");
+                return yank_err("Cannot yank record field; not focused on record field");
             }
         }
         CopyTarget::Siblings { machine } => {
@@ -144,7 +144,7 @@ pub fn yank_content<W: io::Write>(
                 let key_node_index = node_index + 1;
                 output.write_all(doc.core.raw_bytes_for_node(key_node_index))?;
             } else {
-                return yank_err("Can't yank key; not focused on record field");
+                return yank_err("Cannot yank key; not focused on record field");
             }
         }
         CopyTarget::Constructor => {
@@ -156,13 +156,13 @@ pub fn yank_content<W: io::Write>(
                 let constructor_node_index = value_node_index + 1;
                 output.write_all(doc.core.raw_bytes_for_node(constructor_node_index))?;
             } else {
-                return yank_err("Can't yank key; not focused on variant");
+                return yank_err("Cannot yank key; not focused on variant");
             }
         }
         CopyTarget::String => match doc.core.token(value_node_index) {
             DocumentToken::Atom(AtomMetadata { valid, .. }) => {
                 if !*valid {
-                    return yank_err("Can't yank raw atom value; atom contains invalid escapes");
+                    return yank_err("Cannot yank raw atom value; atom contains invalid escapes");
                 }
 
                 let raw_bytes = doc.core.raw_bytes_for_node(value_node_index);
@@ -181,7 +181,7 @@ pub fn yank_content<W: io::Write>(
                 }
             }
             _ => {
-                return yank_err("Can't yank raw atom value; not focused on an atom");
+                return yank_err("Cannot yank raw atom value; not focused on an atom");
             }
         },
         CopyTarget::GetPath => {
@@ -552,21 +552,21 @@ mod tests {
         // Not fields
         assert_snapshot!(
             copy(&doc, 2, RECORD_FIELD),
-            @"yank err: Can't yank record field; not focused on record field",
+            @"yank err: Cannot yank record field; not focused on record field",
         );
         assert_snapshot!(
             copy(&doc, 8, MACHINE_RECORD_FIELD),
-            @"yank err: Can't yank record field; not focused on record field",
+            @"yank err: Cannot yank record field; not focused on record field",
         );
 
         // Not keys
         assert_snapshot!(
             copy(&doc, 2, CopyTarget::Key),
-            @"yank err: Can't yank key; not focused on record field",
+            @"yank err: Cannot yank key; not focused on record field",
         );
         assert_snapshot!(
             copy(&doc, 8, CopyTarget::Key),
-            @"yank err: Can't yank key; not focused on record field",
+            @"yank err: Cannot yank key; not focused on record field",
         );
 
         assert_snapshot!(copy(&doc, 1, MACHINE_RECORD_FIELD), @"(a 1)");
@@ -606,9 +606,9 @@ mod tests {
 
         assert_snapshot!(copy(&doc, 1, CopyTarget::Constructor), @"Variant");
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::Constructor), @"yank err: Can't yank key; not focused on variant");
-        assert_snapshot!(copy(&doc, 2, CopyTarget::Constructor), @"yank err: Can't yank key; not focused on variant");
-        assert_snapshot!(copy(&doc, 3, CopyTarget::Constructor), @"yank err: Can't yank key; not focused on variant");
+        assert_snapshot!(copy(&doc, 0, CopyTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
+        assert_snapshot!(copy(&doc, 2, CopyTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
+        assert_snapshot!(copy(&doc, 3, CopyTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
     }
 
     #[test]
@@ -631,7 +631,7 @@ mod tests {
         escaped
         atom
         ");
-        assert_snapshot!(copy(&doc, 4, CopyTarget::String), @"yank err: Can't yank raw atom value; atom contains invalid escapes");
+        assert_snapshot!(copy(&doc, 4, CopyTarget::String), @"yank err: Cannot yank raw atom value; atom contains invalid escapes");
         assert_snapshot!(copy(&doc, 5, CopyTarget::String), @"control\u{1}atom");
     }
 
@@ -681,7 +681,7 @@ mod tests {
         assert_snapshot!(copy(&doc, 3, PRETTY_PRINTED_VALUE), @"; ERROR: Unexpected EOF while parsing list");
 
         assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @"(1 2)");
-        assert_snapshot!(copy(&doc, 3, MACHINE_VALUE), @"yank err: Can't machine format an error");
+        assert_snapshot!(copy(&doc, 3, MACHINE_VALUE), @"yank err: Cannot machine format an error");
     }
 
     #[test]
