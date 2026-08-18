@@ -75,6 +75,21 @@ impl MessageSeverity {
     }
 }
 
+enum Command {
+    ShowHelp,
+    Quit,
+}
+
+impl Command {
+    fn parse(s: &str) -> Option<Command> {
+        match s {
+            "h" | "help" => Some(Command::ShowHelp),
+            "q" | "quit" | "quit()" | "exit" | "exit()" => Some(Command::Quit),
+            _ => None,
+        }
+    }
+}
+
 impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     pub fn new(
         doc: D,
@@ -276,6 +291,25 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                                 self.show_help();
                                 None
                             }
+                            Key::Char(':') => {
+                                if let Some(command) = self.readline(":") {
+                                    match Command::parse(&command) {
+                                        Some(Command::ShowHelp) => {
+                                            self.show_help();
+                                        }
+                                        Some(Command::Quit) => {
+                                            return Some(Break);
+                                        }
+                                        None => {
+                                            self.set_warning_message(format!(
+                                                "Unknown command: {command}"
+                                            ));
+                                        }
+                                    }
+                                }
+
+                                None
+                            }
                             _ => None,
                         };
                         self.input_buffer.clear();
@@ -291,21 +325,6 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
 
         self.draw_screen();
         self.message = None;
-
-        /*
-        match tty_event {
-            TermionEvent::Key(Key::Char(':')) => {
-                // These [unwrap]s should be handled once this is moved out of
-                // a proof-of-concept phase.
-                write!(self.stdout, "{}", termion::cursor::Show).unwrap();
-                let result = self.readline_editor.readline("Enter command: ");
-                write!(self.stdout, "{}", termion::cursor::Hide).unwrap();
-                print!("\rGot command: {result:?}\r\n");
-                None
-            }
-            _ => None,
-        }
-        */
 
         None
     }
