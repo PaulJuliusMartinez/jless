@@ -11,6 +11,7 @@ homepage = "https://jless.io"
 documentation = "https://jless.io/user-guide.html"
 edition = "2021"
 rust-version = "1.87"
+build = "build.rs"
 
 [features]
 # Eventually [sexp] should be removed from the default.
@@ -36,13 +37,16 @@ memchr = "2.7.5"
 # clipboard = "0.5"
 
 # sexp dependencies
-# ocaml-sexplib = { path = "/Users/paul/rust-sexp-libs/ocaml-sexplib", optional = true }
 ocaml-sexplib = { version = "0.0.4", optional = true }
 
 # TODO: MOVE BACK TO dev-dependencies
 bstr = "1"
 wabi_tree = "0.1.2"
 base64 = "0.22.1"
+
+[build-dependencies]
+anyhow = "1.0.104"
+vergen = { version = "8.3.2", features = [ "git", "gitcl" ] }
 
 [dev-dependencies]
 bstr = "1"

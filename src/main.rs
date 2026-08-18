@@ -31,6 +31,7 @@ mod status_bar;
 mod text_document;
 // Someday: This is temporary, will probably want to rewrite this.
 mod terminal;
+mod version;
 
 #[cfg(feature = "sexp")]
 mod sexp;

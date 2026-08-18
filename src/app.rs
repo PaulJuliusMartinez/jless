@@ -78,6 +78,7 @@ impl MessageSeverity {
 enum Command {
     ShowHelp,
     Quit,
+    Version,
 }
 
 impl Command {
@@ -85,6 +86,7 @@ impl Command {
         match s {
             "h" | "help" => Some(Command::ShowHelp),
             "q" | "quit" | "quit()" | "exit" | "exit()" => Some(Command::Quit),
+            "version" => Some(Command::Version),
             _ => None,
         }
     }
@@ -299,6 +301,13 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                                         }
                                         Some(Command::Quit) => {
                                             return Some(Break);
+                                        }
+                                        Some(Command::Version) => {
+                                            let version = format!(
+                                                "Version: {}",
+                                                crate::version::for_version_command()
+                                            );
+                                            self.set_info_message(version);
                                         }
                                         None => {
                                             self.set_warning_message(format!(
