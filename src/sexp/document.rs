@@ -1564,6 +1564,16 @@ impl Document for SexpDocument {
 
         clipboard::yank_content(output, &self.state, *cursor, copy_target)
     }
+
+    fn write_to_file<W: io::Write>(&self, file: W) -> io::Result<()> {
+        clipboard::yank_content(
+            file,
+            &self.state,
+            NodeIndex(0),
+            CopyTarget::Siblings { machine: false },
+        )
+        .map(|_| ())
+    }
 }
 
 #[cfg(test)]
@@ -1633,7 +1643,9 @@ mod tests {
     use crate::document::Document;
     use crate::sexp::core::{invariants, NodeIndex};
 
+    use std::cell::RefCell;
     use std::fmt::Write;
+    use std::io;
 
     use bstr::ByteSlice;
     use insta::{assert_debug_snapshot, assert_snapshot};
@@ -2799,5 +2811,49 @@ mod tests {
         // These two should arguably return true
         assert_snapshot!(doc.is_raw_byte_range_visible(hidden_into_next_line), @"false");
         assert_snapshot!(doc.is_raw_byte_range_visible(hidden_into_next_line_into_hidden), @"false");
+    }
+
+    #[derive(Clone)]
+    struct SharedBuffer(Rc<RefCell<Vec<u8>>>);
+
+    impl SharedBuffer {
+        fn new() -> Self {
+            SharedBuffer(Rc::new(RefCell::new(vec![])))
+        }
+    }
+
+    impl io::Write for SharedBuffer {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.borrow_mut().write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.borrow_mut().flush()
+        }
+    }
+
+    #[test]
+    fn test_write_to_file() {
+        let doc = new_doc(b"apple banana");
+        let shared_buf = SharedBuffer::new();
+        doc.write_to_file(shared_buf.clone()).unwrap();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @r"
+        apple
+        banana
+        ");
+    }
+
+    #[test]
+    fn test_write_to_file_before_receiving_eof() {
+        let mut doc = new_partial_doc(b"apple banana");
+        let shared_buf = SharedBuffer::new();
+        doc.write_to_file(shared_buf.clone()).unwrap();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @"apple");
+        // TODO: Make this work.
+        doc.append(b" ");
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @"apple");
+        doc.append(b"cherry");
+        doc.eof();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @"apple");
     }
 }

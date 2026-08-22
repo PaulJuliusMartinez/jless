@@ -243,7 +243,7 @@ pub trait Document {
         self.closest_visible_cursor(&self.raw_byte_index_to_cursor(index))
     }
 
-    // Copying to clipboard
+    // Various write operations
 
     fn yank_content<W: io::Write>(
         &self,
@@ -251,6 +251,8 @@ pub trait Document {
         cursor: &Self::Cursor,
         target: char,
     ) -> io::Result<YankResult>;
+
+    fn write_to_file<W: io::Write>(&self, file: W) -> io::Result<()>;
 
     // Rendering
 

@@ -627,6 +627,11 @@ impl Document for TextDocument {
         Ok(Ok(()))
     }
 
+    fn write_to_file<W: std::io::Write>(&self, mut file: W) -> std::io::Result<()> {
+        // This doesn't handle streaming data; that's fine.
+        file.write_all(&self.data)
+    }
+
     // Soon: Uncomment this.
     // #[cfg(test)]
     fn debug_text_content(&self, screen_line: &ScreenLine, _cursor: &Cursor) -> Vec<u8> {

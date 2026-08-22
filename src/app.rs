@@ -79,15 +79,33 @@ enum Command {
     ShowHelp,
     Quit,
     Version,
+    WriteFile { filename: String, overwrite: bool },
 }
 
 impl Command {
-    fn parse(s: &str) -> Option<Command> {
-        match s {
-            "h" | "help" => Some(Command::ShowHelp),
-            "q" | "quit" | "quit()" | "exit" | "exit()" => Some(Command::Quit),
-            "version" => Some(Command::Version),
-            _ => None,
+    fn parse(s: &str) -> Result<Command, String> {
+        let s = s.trim();
+        let (command, args) = match s.split_once(" ") {
+            None => (s, ""),
+            Some((command, args)) => (command, args),
+        };
+
+        match command {
+            "h" | "help" => Ok(Command::ShowHelp),
+            "q" | "quit" | "quit()" | "exit" | "exit()" => Ok(Command::Quit),
+            "version" => Ok(Command::Version),
+            "w" | "w!" | "write" | "write!" => {
+                let filename = args.trim();
+                if filename.is_empty() {
+                    Err("No filename provided".to_string())
+                } else {
+                    Ok(Command::WriteFile {
+                        filename: filename.to_string(),
+                        overwrite: command.ends_with("!"),
+                    })
+                }
+            }
+            _ => Err(format!("Unknown command: {command}")),
         }
     }
 }
@@ -296,23 +314,27 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                             Key::Char(':') => {
                                 if let Some(command) = self.readline(":") {
                                     match Command::parse(&command) {
-                                        Some(Command::ShowHelp) => {
+                                        Ok(Command::ShowHelp) => {
                                             self.show_help();
                                         }
-                                        Some(Command::Quit) => {
+                                        Ok(Command::Quit) => {
                                             return Some(Break);
                                         }
-                                        Some(Command::Version) => {
+                                        Ok(Command::Version) => {
                                             let version = format!(
                                                 "Version: {}",
                                                 crate::version::for_version_command()
                                             );
                                             self.set_info_message(version);
                                         }
-                                        None => {
-                                            self.set_warning_message(format!(
-                                                "Unknown command: {command}"
-                                            ));
+                                        Ok(Command::WriteFile {
+                                            filename,
+                                            overwrite,
+                                        }) => {
+                                            self.start_writing_file(filename, overwrite);
+                                        }
+                                        Err(err) => {
+                                            self.set_warning_message(err);
                                         }
                                     }
                                 }
@@ -653,6 +675,39 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         match sink.finish_copy() {
             Ok(()) => (),
             Err(err) => self.set_error_message(err),
+        }
+    }
+
+    fn start_writing_file(&mut self, filename: String, overwrite: bool) {
+        use std::fs::File;
+        use std::io::ErrorKind;
+
+        let Some(viewer) = &self.viewer else {
+            self.set_warning_message(
+                "can't write to file yet; still waiting for input".to_string(),
+            );
+            return;
+        };
+
+        let file = if overwrite {
+            File::create(filename)
+        } else {
+            File::create_new(filename)
+        };
+
+        let Ok(file) = file else {
+            let err = file.unwrap_err();
+            if matches!(err.kind(), ErrorKind::AlreadyExists) {
+                self.set_warning_message("File already exists (use '!' to overwrite)".to_string());
+            } else {
+                self.set_error_message(format!("Error opening file: {err}"));
+            }
+            return;
+        };
+
+        match viewer.doc.write_to_file(file) {
+            Ok(()) => (),
+            Err(err) => self.set_error_message(format!("Error writing to file: {err}")),
         }
     }
 
