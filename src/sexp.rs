@@ -1,4 +1,3 @@
-mod clipboard;
 mod color_scheme;
 mod core;
 pub mod document;
@@ -7,3 +6,4 @@ mod path;
 mod pretty;
 mod renderer;
 mod state;
+mod writer;

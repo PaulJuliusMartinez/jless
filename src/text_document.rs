@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::dimensions;
-use crate::document::{ContentRange, Document, YankResult};
+use crate::document::{ContentRange, Document, WriteResult};
 use crate::rendering::StyledSegment;
 use crate::search::SearchMatchHighlighter;
 
@@ -616,7 +616,7 @@ impl Document for TextDocument {
         mut output: W,
         cursor: &Cursor,
         target: char,
-    ) -> std::io::Result<YankResult> {
+    ) -> std::io::Result<WriteResult> {
         if target != 'y' {
             return Ok(Err(format!("Unknown yank target {target:?}")));
         }

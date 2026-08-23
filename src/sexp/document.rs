@@ -6,10 +6,9 @@ use std::ops::{Index, Range, RangeInclusive};
 use std::rc::Rc;
 
 use crate::dimensions;
-use crate::document::{ContentRange, Document, YankResult};
+use crate::document::{ContentRange, Document, WriteResult};
 use crate::rendering::{Fragment, StyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters, SearchMatchHighlighter};
-use crate::sexp::clipboard::{self, CopyTarget};
 use crate::sexp::color_scheme::ColorScheme;
 use crate::sexp::core::{
     invariants, AtomKind, AtomMetadata, DocumentToken, ListKind, ListMetadata, NodeIndex,
@@ -19,6 +18,7 @@ use crate::sexp::path::DataNodePath;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
 use crate::sexp::state::{CollapseState, DocState};
+use crate::sexp::writer::{self, WriteTarget};
 
 use CollapseState::*;
 
@@ -1567,13 +1567,13 @@ impl Document for SexpDocument {
         output: W,
         cursor: &NodeIndex,
         target: char,
-    ) -> io::Result<YankResult> {
-        let copy_target = match CopyTarget::from_char(target) {
+    ) -> io::Result<WriteResult> {
+        let yank_target = match WriteTarget::for_yanking(target) {
             Ok(target) => target,
             Err(err) => return Ok(Err(err)),
         };
 
-        clipboard::yank_content(output, &self.state, *cursor, copy_target)
+        writer::yank_content(output, &self.state, *cursor, yank_target)
     }
 
     fn write_to_file<W: io::Write + 'static>(
@@ -1581,15 +1581,9 @@ impl Document for SexpDocument {
         filename: String,
         mut file: W,
     ) -> io::Result<()> {
-        let result = clipboard::yank_content(
-            &mut file,
-            &self.state,
-            NodeIndex(0),
-            CopyTarget::Siblings { machine: false },
-        )
-        .map(|_| ());
+        let result = writer::write_pretty_printed_doc(&mut file, &self.state);
 
-        if !self.seen_eof {
+        if result.is_ok() && !self.seen_eof {
             self.output_files.push(OutputFile {
                 filename,
                 file: Box::new(file),
@@ -1608,7 +1602,7 @@ impl Document for SexpDocument {
             if new_next_top_level_node_index == output_file.next_top_level_node_index {
                 !self.seen_eof
             } else {
-                let write_result = clipboard::write_additional_top_level_nodes_pretty_printed(
+                let write_result = writer::write_additional_top_level_nodes_pretty_printed(
                     &mut output_file.file,
                     &self.state,
                     output_file.next_top_level_node_index,

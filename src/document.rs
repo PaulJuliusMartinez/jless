@@ -15,11 +15,11 @@ use crate::search::{InvertedPairedDelimeters, SearchMatchHighlighter};
 // TextDocument has `LineWrapping`; JsonDocument/SexpDocument might `ContainerWrapping`?,
 // and a `ContainerWrapping` can have a `LineWrapping` inside it.
 
-/// The result of a yank operation. The `Err` variant should be used for errors in
+/// The result of a yank/print operation. The `Err` variant should be used for errors in
 /// user intent (e.g. trying to yank a key when focused on a number in a list). These
 /// errors will be displayed as warnings to the user. Errors in actually writing content
-/// to the clipboard should propagate as `io::Error`s.
-pub type YankResult = Result<(), String>;
+/// to the clipboard/stdout should propagate as `io::Error`s.
+pub type WriteResult = Result<(), String>;
 
 pub trait Document {
     // `Ord` implementation for `ScreenLine` may panic if we accidentally compare
@@ -250,7 +250,7 @@ pub trait Document {
         output: W,
         cursor: &Self::Cursor,
         target: char,
-    ) -> io::Result<YankResult>;
+    ) -> io::Result<WriteResult>;
 
     fn write_to_file<W: io::Write + 'static>(
         &mut self,

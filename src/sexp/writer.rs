@@ -1,6 +1,6 @@
 use std::io;
 
-use crate::document::YankResult;
+use crate::document::WriteResult;
 use crate::sexp::core::{invariants, AtomMetadata, DocumentToken, ListKind, NodeIndex};
 use crate::sexp::layout;
 use crate::sexp::path::DataNodePath;
@@ -9,7 +9,7 @@ use crate::sexp::state::DocState;
 use ocaml_sexplib::atom::PlausibleSerializedAtom;
 
 #[derive(Copy, Clone, Debug)]
-pub enum CopyTarget {
+pub enum WriteTarget {
     Value { machine: bool },
     RecordField { machine: bool },
     Siblings { machine: bool },
@@ -20,20 +20,20 @@ pub enum CopyTarget {
     QueryPath,
 }
 
-impl CopyTarget {
-    pub fn from_char(ch: char) -> Result<Self, String> {
+impl WriteTarget {
+    pub fn for_yanking(ch: char) -> Result<Self, String> {
         let copy_target = match ch {
-            'y' => CopyTarget::Value { machine: false },
-            'Y' | 'm' => CopyTarget::Value { machine: true },
-            't' => CopyTarget::RecordField { machine: false },
-            'T' => CopyTarget::RecordField { machine: true },
-            'a' => CopyTarget::Siblings { machine: false },
-            'A' => CopyTarget::Siblings { machine: true },
-            'k' => CopyTarget::Key,
-            'c' => CopyTarget::Constructor,
-            's' => CopyTarget::String,
-            'g' => CopyTarget::GetPath,
-            'q' => CopyTarget::QueryPath,
+            'y' => WriteTarget::Value { machine: false },
+            'Y' | 'm' => WriteTarget::Value { machine: true },
+            't' => WriteTarget::RecordField { machine: false },
+            'T' => WriteTarget::RecordField { machine: true },
+            'a' => WriteTarget::Siblings { machine: false },
+            'A' => WriteTarget::Siblings { machine: true },
+            'k' => WriteTarget::Key,
+            'c' => WriteTarget::Constructor,
+            's' => WriteTarget::String,
+            'g' => WriteTarget::GetPath,
+            'q' => WriteTarget::QueryPath,
             _ => return Err(format!("Unknown yank target {ch:?}")),
         };
 
@@ -41,7 +41,7 @@ impl CopyTarget {
     }
 }
 
-fn yank_err(s: &'static str) -> io::Result<YankResult> {
+fn yank_err(s: &'static str) -> io::Result<WriteResult> {
     Ok(Err(s.to_string()))
 }
 
@@ -56,7 +56,7 @@ enum RootSexpComment {
 }
 
 // We want slightly different behavior when yanking single values than when we
-// yank multiple values (i.e. `CopyTarget::Siblings`).
+// yank multiple values (i.e. `WriteTarget::Siblings`).
 //
 // Newlines:
 // When yanking a single big sexp, we want to include a trailing newline, because
@@ -71,13 +71,14 @@ enum RootSexpComment {
 // you do want to include the sexp comments so you know which nodes are included and
 // which ones aren't. (And when used at the top-level sexp, this means yanking the
 // whole document, so obviously you want to include them in that case.)
-struct YankPrettyOpts {
+struct WritePrettyOpts {
     trailing_newline: TrailingNewline,
     root_sexp_comment: RootSexpComment,
 }
 
-pub fn write_pretty_printed<W: io::Write>(output: W, doc: &DocState) -> io::Result<()> {
-    yank_siblings(output, doc, NodeIndex(0), false)
+pub fn write_pretty_printed_doc<W: io::Write>(output: W, doc: &DocState) -> io::Result<()> {
+    let machine = false;
+    write_node_and_subsequent_siblings(output, doc, NodeIndex(0), machine)
 }
 
 pub fn write_additional_top_level_nodes_pretty_printed<W: io::Write>(
@@ -85,15 +86,16 @@ pub fn write_additional_top_level_nodes_pretty_printed<W: io::Write>(
     doc: &DocState,
     next_top_level_node_index: NodeIndex,
 ) -> io::Result<()> {
-    yank_siblings(output, doc, next_top_level_node_index, false)
+    let machine = false;
+    write_node_and_subsequent_siblings(output, doc, next_top_level_node_index, machine)
 }
 
 pub fn yank_content<W: io::Write>(
     mut output: W,
     doc: &DocState,
     node_index: NodeIndex,
-    target: CopyTarget,
-) -> io::Result<YankResult> {
+    target: WriteTarget,
+) -> io::Result<WriteResult> {
     if matches!(doc.core.token(node_index), DocumentToken::EndOfList(_)) {
         return yank_err("Focused on closing paren");
     }
@@ -102,7 +104,7 @@ pub fn yank_content<W: io::Write>(
     let value_node_index = record_field_value_node_index.unwrap_or(node_index);
 
     match target {
-        CopyTarget::Value { machine } => {
+        WriteTarget::Value { machine } => {
             if machine {
                 match doc.core.token(node_index) {
                     DocumentToken::LineComment | DocumentToken::BlockComment => {
@@ -111,43 +113,43 @@ pub fn yank_content<W: io::Write>(
                     DocumentToken::Error(_) => {
                         return yank_err("Cannot machine format an error");
                     }
-                    _ => yank_machine_node(output, doc, value_node_index)?,
+                    _ => write_machine_node(output, doc, value_node_index)?,
                 }
             } else {
-                let opts = YankPrettyOpts {
+                let opts = WritePrettyOpts {
                     trailing_newline: TrailingNewline::DontWriteIfSingleLine,
                     root_sexp_comment: RootSexpComment::Ignore,
                 };
-                yank_pretty_printed_node(output, doc, value_node_index, opts)?
+                write_pretty_printed_node(output, doc, value_node_index, opts)?
             }
         }
-        CopyTarget::RecordField { machine } => {
+        WriteTarget::RecordField { machine } => {
             if matches!(
                 doc.core.token(node_index).list_kind(),
                 Some(ListKind::RecordField),
             ) {
                 if machine {
-                    yank_machine_node(output, doc, node_index)?;
+                    write_machine_node(output, doc, node_index)?;
                 } else {
-                    let opts = YankPrettyOpts {
+                    let opts = WritePrettyOpts {
                         trailing_newline: TrailingNewline::DontWriteIfSingleLine,
                         root_sexp_comment: RootSexpComment::Ignore,
                     };
-                    yank_pretty_printed_node(output, doc, node_index, opts)?;
+                    write_pretty_printed_node(output, doc, node_index, opts)?;
                 }
             } else {
                 return yank_err("Cannot yank record field; not focused on record field");
             }
         }
-        CopyTarget::Siblings { machine } => {
+        WriteTarget::Siblings { machine } => {
             let first_sibling = match doc.core.parent_index(node_index) {
                 Some(parent_index) => parent_index + 1,
                 None => NodeIndex(0),
             };
 
-            yank_siblings(output, doc, first_sibling, machine)?
+            write_node_and_subsequent_siblings(output, doc, first_sibling, machine)?
         }
-        CopyTarget::Key => {
+        WriteTarget::Key => {
             if matches!(
                 doc.core.token(node_index).list_kind(),
                 Some(ListKind::RecordField),
@@ -159,7 +161,7 @@ pub fn yank_content<W: io::Write>(
                 return yank_err("Cannot yank key; not focused on record field");
             }
         }
-        CopyTarget::Constructor => {
+        WriteTarget::Constructor => {
             if matches!(
                 doc.core.token(value_node_index).list_kind(),
                 Some(ListKind::VariantRecord | ListKind::VariantTuple),
@@ -171,7 +173,7 @@ pub fn yank_content<W: io::Write>(
                 return yank_err("Cannot yank key; not focused on variant");
             }
         }
-        CopyTarget::String => match doc.core.token(value_node_index) {
+        WriteTarget::String => match doc.core.token(value_node_index) {
             DocumentToken::Atom(AtomMetadata { valid, .. }) => {
                 if !*valid {
                     return yank_err("Cannot yank raw atom value; atom contains invalid escapes");
@@ -196,7 +198,7 @@ pub fn yank_content<W: io::Write>(
                 return yank_err("Cannot yank raw atom value; not focused on an atom");
             }
         },
-        CopyTarget::GetPath => {
+        WriteTarget::GetPath => {
             if !doc.core.token(node_index).is_data() {
                 return yank_err("Cannot yank path to non-data");
             }
@@ -208,33 +210,33 @@ pub fn yank_content<W: io::Write>(
             let get_path = path.format_for_sexp_get(&doc.core);
             output.write_all(get_path.as_bytes())?;
         }
-        CopyTarget::QueryPath => return yank_err("unimplemented: yanking sexp-query paths"),
+        WriteTarget::QueryPath => return yank_err("unimplemented: yanking sexp-query paths"),
     };
 
     Ok(Ok(()))
 }
 
-fn yank_siblings<W: io::Write>(
+fn write_node_and_subsequent_siblings<W: io::Write>(
     mut output: W,
     doc: &DocState,
-    first_sibling: NodeIndex,
+    node_index: NodeIndex,
     machine: bool,
 ) -> io::Result<()> {
-    let mut next_sibling = Some(first_sibling);
+    let mut next_sibling = Some(node_index);
 
     while let Some(sibling) = next_sibling {
         if machine {
             let token = doc.core.token(sibling);
             if token.is_data() && !token.is_sexp_commented_out() {
-                yank_machine_node(&mut output, doc, sibling)?;
+                write_machine_node(&mut output, doc, sibling)?;
                 write!(output, "\n")?;
             }
         } else {
-            let opts = YankPrettyOpts {
+            let opts = WritePrettyOpts {
                 trailing_newline: TrailingNewline::WriteAlways,
                 root_sexp_comment: RootSexpComment::Write,
             };
-            yank_pretty_printed_node(&mut output, doc, sibling, opts)?;
+            write_pretty_printed_node(&mut output, doc, sibling, opts)?;
         }
 
         next_sibling = doc.core.node(sibling).next_sibling();
@@ -243,11 +245,11 @@ fn yank_siblings<W: io::Write>(
     Ok(())
 }
 
-fn yank_pretty_printed_node<W: io::Write>(
+fn write_pretty_printed_node<W: io::Write>(
     mut output: W,
     doc: &DocState,
     node_index: NodeIndex,
-    opts: YankPrettyOpts,
+    opts: WritePrettyOpts,
 ) -> io::Result<()> {
     let pretty_printed_logical_lines = layout::layout_fully_expanded_node(&doc.core, node_index);
     let doc_content = doc.core.raw_bytes_of_complete_content();
@@ -319,7 +321,7 @@ fn yank_pretty_printed_node<W: io::Write>(
     Ok(())
 }
 
-fn yank_machine_node<W: io::Write>(
+fn write_machine_node<W: io::Write>(
     mut output: W,
     doc: &DocState,
     mut node_index: NodeIndex,
@@ -327,7 +329,7 @@ fn yank_machine_node<W: io::Write>(
     let end_node_index_incl = match doc.core.token(node_index) {
         DocumentToken::StartOfList(list_metadata) => list_metadata
             .end_index()
-            .expect("list that we're yanking to be complete"),
+            .expect("list that we're writing to be complete"),
         _ => node_index,
     };
 
@@ -398,20 +400,24 @@ mod tests {
     use bstr::ByteSlice;
     use insta::assert_snapshot;
 
-    const PRETTY_PRINTED_VALUE: CopyTarget = CopyTarget::Value { machine: false };
-    const MACHINE_VALUE: CopyTarget = CopyTarget::Value { machine: true };
-    const RECORD_FIELD: CopyTarget = CopyTarget::RecordField { machine: false };
-    const MACHINE_RECORD_FIELD: CopyTarget = CopyTarget::RecordField { machine: true };
-    const SIBLINGS: CopyTarget = CopyTarget::Siblings { machine: false };
-    const MACHINE_SIBLINGS: CopyTarget = CopyTarget::Siblings { machine: true };
+    const PRETTY_PRINTED_VALUE: WriteTarget = WriteTarget::Value { machine: false };
+    const MACHINE_VALUE: WriteTarget = WriteTarget::Value { machine: true };
+    const RECORD_FIELD: WriteTarget = WriteTarget::RecordField { machine: false };
+    const MACHINE_RECORD_FIELD: WriteTarget = WriteTarget::RecordField { machine: true };
+    const SIBLINGS: WriteTarget = WriteTarget::Siblings { machine: false };
+    const MACHINE_SIBLINGS: WriteTarget = WriteTarget::Siblings { machine: true };
 
     fn new_doc(bytes: &'static [u8]) -> DocState {
         DocState::new_from_bytes(bytes)
     }
 
-    fn copy(doc: &DocState, node_index: usize, copy_target: CopyTarget) -> String {
+    fn new_partial_doc(bytes: &'static [u8]) -> DocState {
+        DocState::new_partial_doc_from_bytes(bytes)
+    }
+
+    fn yank(doc: &DocState, node_index: usize, yank_target: WriteTarget) -> String {
         let mut output = vec![];
-        match yank_content(&mut output, doc, NodeIndex(node_index), copy_target) {
+        match yank_content(&mut output, doc, NodeIndex(node_index), yank_target) {
             Ok(Ok(())) => format!("{}", output.as_slice().as_bstr()),
             Ok(Err(err)) => format!("yank err: {err}"),
             Err(err) => format!("write err: {err}"),
@@ -437,30 +443,30 @@ mod tests {
         38..=44 :    (y 2))))
         "#);
 
-        assert_snapshot!(copy(&doc, 1, PRETTY_PRINTED_VALUE), @"1");
-        assert_snapshot!(copy(&doc, 5, PRETTY_PRINTED_VALUE), @r#""two two""#);
+        assert_snapshot!(yank(&doc, 1, PRETTY_PRINTED_VALUE), @"1");
+        assert_snapshot!(yank(&doc, 5, PRETTY_PRINTED_VALUE), @r#""two two""#);
 
-        assert_snapshot!(copy(&doc, 9, PRETTY_PRINTED_VALUE), @r"
+        assert_snapshot!(yank(&doc, 9, PRETTY_PRINTED_VALUE), @r"
         (3
          4
          5)
         ");
-        assert_snapshot!(copy(&doc, 9, MACHINE_VALUE), @"(3 4 5)");
+        assert_snapshot!(yank(&doc, 9, MACHINE_VALUE), @"(3 4 5)");
 
-        assert_snapshot!(copy(&doc, 17, PRETTY_PRINTED_VALUE), @r"
+        assert_snapshot!(yank(&doc, 17, PRETTY_PRINTED_VALUE), @r"
         ((m 1)
          (n 2))
         ");
-        assert_snapshot!(copy(&doc, 17, MACHINE_VALUE), @"((m 1) (n 2))");
+        assert_snapshot!(yank(&doc, 17, MACHINE_VALUE), @"((m 1) (n 2))");
 
-        assert_snapshot!(copy(&doc, 30, PRETTY_PRINTED_VALUE), @r"
+        assert_snapshot!(yank(&doc, 30, PRETTY_PRINTED_VALUE), @r"
         (Variant
           (x 1)
           (y 2))
         ");
-        assert_snapshot!(copy(&doc, 30, MACHINE_VALUE), @"(Variant (x 1) (y 2))");
+        assert_snapshot!(yank(&doc, 30, MACHINE_VALUE), @"(Variant (x 1) (y 2))");
 
-        assert_snapshot!(copy(&doc, 34, PRETTY_PRINTED_VALUE), @"1");
+        assert_snapshot!(yank(&doc, 34, PRETTY_PRINTED_VALUE), @"1");
     }
 
     #[test]
@@ -474,7 +480,7 @@ mod tests {
         7..=7  : #; six
         ");
 
-        assert_snapshot!(copy(&doc, 0, SIBLINGS), @r"
+        assert_snapshot!(yank(&doc, 0, SIBLINGS), @r"
         one
         #| two |#
         (three four)
@@ -482,7 +488,7 @@ mod tests {
         #; six
         ");
 
-        assert_snapshot!(copy(&doc, 1, MACHINE_SIBLINGS), @r"
+        assert_snapshot!(yank(&doc, 1, MACHINE_SIBLINGS), @r"
         one
         (three four)
         ");
@@ -491,7 +497,7 @@ mod tests {
         let doc = new_doc(b"(one #| two |# (three four) ; five\n #; six)");
 
         // Note also it doesn't matter which sibling we target.
-        assert_snapshot!(copy(&doc, 2, SIBLINGS), @r"
+        assert_snapshot!(yank(&doc, 2, SIBLINGS), @r"
         one
         #| two |#
         (three four)
@@ -499,7 +505,7 @@ mod tests {
         #; six
         ");
 
-        assert_snapshot!(copy(&doc, 3, MACHINE_SIBLINGS), @r"
+        assert_snapshot!(yank(&doc, 3, MACHINE_SIBLINGS), @r"
         one
         (three four)
         ");
@@ -507,7 +513,7 @@ mod tests {
         let doc = new_doc(b"((a 1)(b 2)(c 3))");
         // Yanking siblings of a record gives just a bunch of key-value
         // pairs, which is a little strange, but seems fine.
-        assert_snapshot!(copy(&doc, 1, SIBLINGS), @r"
+        assert_snapshot!(yank(&doc, 1, SIBLINGS), @r"
         (a 1)
         (b 2)
         (c 3)
@@ -515,10 +521,43 @@ mod tests {
     }
 
     #[test]
+    fn test_write_doc() {
+        let mut doc = new_partial_doc(b"(one two three)");
+        let mut output = vec![];
+        write_pretty_printed_doc(&mut output, &doc).unwrap();
+        assert_snapshot!(output.as_slice().as_bstr(), @r"
+        (one
+         two
+         three)
+        ");
+
+        doc.append(b"(four five)(six");
+        let mut output = vec![];
+        write_additional_top_level_nodes_pretty_printed(&mut output, &doc, NodeIndex(5)).unwrap();
+        assert_snapshot!(output.as_slice().as_bstr(), @"(four five)");
+
+        doc.append(b" seven)");
+        doc.eof();
+        let mut output = vec![];
+        write_additional_top_level_nodes_pretty_printed(&mut output, &doc, NodeIndex(9)).unwrap();
+        assert_snapshot!(output.as_slice().as_bstr(), @"(six seven)");
+
+        let mut output = vec![];
+        write_pretty_printed_doc(&mut output, &doc).unwrap();
+        assert_snapshot!(output.as_slice().as_bstr(), @r"
+        (one
+         two
+         three)
+        (four five)
+        (six seven)
+        ");
+    }
+
+    #[test]
     fn test_yank_machine() {
         let doc = new_doc(b"(a \"b c\" \"e f\" g)");
         // "machine" is human machine, not like the `-machine` flag in the `sexp` tool.
-        assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @r#"(a "b c" "e f" g)"#);
+        assert_snapshot!(yank(&doc, 0, MACHINE_VALUE), @r#"(a "b c" "e f" g)"#);
     }
 
     #[test]
@@ -533,11 +572,11 @@ mod tests {
         10..=11 : ))
         ");
 
-        assert_snapshot!(copy(&doc, 1, PRETTY_PRINTED_VALUE), @"value1");
-        assert_snapshot!(copy(&doc, 6, PRETTY_PRINTED_VALUE), @"value2");
+        assert_snapshot!(yank(&doc, 1, PRETTY_PRINTED_VALUE), @"value1");
+        assert_snapshot!(yank(&doc, 6, PRETTY_PRINTED_VALUE), @"value2");
 
-        assert_snapshot!(copy(&doc, 1, MACHINE_VALUE), @"value1");
-        assert_snapshot!(copy(&doc, 6, MACHINE_VALUE), @"value2");
+        assert_snapshot!(yank(&doc, 1, MACHINE_VALUE), @"value1");
+        assert_snapshot!(yank(&doc, 6, MACHINE_VALUE), @"value2");
     }
 
     #[test]
@@ -563,64 +602,64 @@ mod tests {
 
         // Not fields
         assert_snapshot!(
-            copy(&doc, 2, RECORD_FIELD),
+            yank(&doc, 2, RECORD_FIELD),
             @"yank err: Cannot yank record field; not focused on record field",
         );
         assert_snapshot!(
-            copy(&doc, 8, MACHINE_RECORD_FIELD),
+            yank(&doc, 8, MACHINE_RECORD_FIELD),
             @"yank err: Cannot yank record field; not focused on record field",
         );
 
         // Not keys
         assert_snapshot!(
-            copy(&doc, 2, CopyTarget::Key),
+            yank(&doc, 2, WriteTarget::Key),
             @"yank err: Cannot yank key; not focused on record field",
         );
         assert_snapshot!(
-            copy(&doc, 8, CopyTarget::Key),
+            yank(&doc, 8, WriteTarget::Key),
             @"yank err: Cannot yank key; not focused on record field",
         );
 
-        assert_snapshot!(copy(&doc, 1, MACHINE_RECORD_FIELD), @"(a 1)");
-        assert_snapshot!(copy(&doc, 1, CopyTarget::Key), @"a");
-        assert_snapshot!(copy(&doc, 5, MACHINE_RECORD_FIELD), @"(b (2 3))");
-        assert_snapshot!(copy(&doc, 12, MACHINE_RECORD_FIELD), @"(c ((d 4) (e 5)))");
-        assert_snapshot!(copy(&doc, 25, MACHINE_RECORD_FIELD), @"(f (Var (g 6) (h 7)))");
-        assert_snapshot!(copy(&doc, 29, MACHINE_RECORD_FIELD), @"(g 6)");
-        assert_snapshot!(copy(&doc, 29, CopyTarget::Key), @"g");
+        assert_snapshot!(yank(&doc, 1, MACHINE_RECORD_FIELD), @"(a 1)");
+        assert_snapshot!(yank(&doc, 1, WriteTarget::Key), @"a");
+        assert_snapshot!(yank(&doc, 5, MACHINE_RECORD_FIELD), @"(b (2 3))");
+        assert_snapshot!(yank(&doc, 12, MACHINE_RECORD_FIELD), @"(c ((d 4) (e 5)))");
+        assert_snapshot!(yank(&doc, 25, MACHINE_RECORD_FIELD), @"(f (Var (g 6) (h 7)))");
+        assert_snapshot!(yank(&doc, 29, MACHINE_RECORD_FIELD), @"(g 6)");
+        assert_snapshot!(yank(&doc, 29, WriteTarget::Key), @"g");
 
-        assert_snapshot!(copy(&doc, 1, RECORD_FIELD), @"(a 1)");
+        assert_snapshot!(yank(&doc, 1, RECORD_FIELD), @"(a 1)");
 
-        assert_snapshot!(copy(&doc, 5, RECORD_FIELD), @r"
+        assert_snapshot!(yank(&doc, 5, RECORD_FIELD), @r"
         (b (
           2
           3))
         ");
 
-        assert_snapshot!(copy(&doc, 12, RECORD_FIELD), @r"
+        assert_snapshot!(yank(&doc, 12, RECORD_FIELD), @r"
         (c (
           (d 4)
           (e 5)))
         ");
 
-        assert_snapshot!(copy(&doc, 25, RECORD_FIELD), @r"
+        assert_snapshot!(yank(&doc, 25, RECORD_FIELD), @r"
         (f (Var
           (g 6)
           (h 7)))
         ");
 
-        assert_snapshot!(copy(&doc, 29, RECORD_FIELD), @"(g 6)");
+        assert_snapshot!(yank(&doc, 29, RECORD_FIELD), @"(g 6)");
     }
 
     #[test]
     fn test_yanking_constructor() {
         let doc = new_doc(b"zero (Variant 1 2)");
 
-        assert_snapshot!(copy(&doc, 1, CopyTarget::Constructor), @"Variant");
+        assert_snapshot!(yank(&doc, 1, WriteTarget::Constructor), @"Variant");
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
-        assert_snapshot!(copy(&doc, 2, CopyTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
-        assert_snapshot!(copy(&doc, 3, CopyTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
+        assert_snapshot!(yank(&doc, 0, WriteTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
+        assert_snapshot!(yank(&doc, 2, WriteTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
+        assert_snapshot!(yank(&doc, 3, WriteTarget::Constructor), @"yank err: Cannot yank key; not focused on variant");
     }
 
     #[test]
@@ -637,42 +676,42 @@ mod tests {
         5..=5  : "control\x01atom"
         "#);
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::String), @"zero");
-        assert_snapshot!(copy(&doc, 1, CopyTarget::String), @"quoted atom");
-        assert_snapshot!(copy(&doc, 2, CopyTarget::String), @r"
+        assert_snapshot!(yank(&doc, 0, WriteTarget::String), @"zero");
+        assert_snapshot!(yank(&doc, 1, WriteTarget::String), @"quoted atom");
+        assert_snapshot!(yank(&doc, 2, WriteTarget::String), @r"
         escaped
         atom
         ");
-        assert_snapshot!(copy(&doc, 4, CopyTarget::String), @"yank err: Cannot yank raw atom value; atom contains invalid escapes");
-        assert_snapshot!(copy(&doc, 5, CopyTarget::String), @"control\u{1}atom");
+        assert_snapshot!(yank(&doc, 4, WriteTarget::String), @"yank err: Cannot yank raw atom value; atom contains invalid escapes");
+        assert_snapshot!(yank(&doc, 5, WriteTarget::String), @"control\u{1}atom");
     }
 
     #[test]
     fn test_yank_comments() {
         let doc = new_doc(b"; comment\n#| block comment |# (a #; (1 2 3) b)");
 
-        assert_snapshot!(copy(&doc, 0, PRETTY_PRINTED_VALUE), @"; comment");
-        assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @"yank err: Comments are not included in machine format");
+        assert_snapshot!(yank(&doc, 0, PRETTY_PRINTED_VALUE), @"; comment");
+        assert_snapshot!(yank(&doc, 0, MACHINE_VALUE), @"yank err: Comments are not included in machine format");
 
-        assert_snapshot!(copy(&doc, 1, PRETTY_PRINTED_VALUE), @"#| block comment |#");
-        assert_snapshot!(copy(&doc, 1, MACHINE_VALUE), @"yank err: Comments are not included in machine format");
+        assert_snapshot!(yank(&doc, 1, PRETTY_PRINTED_VALUE), @"#| block comment |#");
+        assert_snapshot!(yank(&doc, 1, MACHINE_VALUE), @"yank err: Comments are not included in machine format");
 
-        assert_snapshot!(copy(&doc, 2, PRETTY_PRINTED_VALUE), @r"
+        assert_snapshot!(yank(&doc, 2, PRETTY_PRINTED_VALUE), @r"
         (a
          #; (1
              2
              3)
          b)
         ");
-        assert_snapshot!(copy(&doc, 2, MACHINE_VALUE), @"(a b)");
+        assert_snapshot!(yank(&doc, 2, MACHINE_VALUE), @"(a b)");
 
         // Don't include sexp comment when yanking a commented out value.
-        assert_snapshot!(copy(&doc, 4, PRETTY_PRINTED_VALUE), @r"
+        assert_snapshot!(yank(&doc, 4, PRETTY_PRINTED_VALUE), @r"
         (1
          2
          3)
         ");
-        assert_snapshot!(copy(&doc, 4, MACHINE_VALUE), @"(1 2 3)");
+        assert_snapshot!(yank(&doc, 4, MACHINE_VALUE), @"(1 2 3)");
     }
 
     #[test]
@@ -685,15 +724,15 @@ mod tests {
         4..=4  :
         ");
 
-        assert_snapshot!(copy(&doc, 0, PRETTY_PRINTED_VALUE), @r"
+        assert_snapshot!(yank(&doc, 0, PRETTY_PRINTED_VALUE), @r"
         (1
          2
          ; ERROR: Unexpected EOF while parsing list
         ");
-        assert_snapshot!(copy(&doc, 3, PRETTY_PRINTED_VALUE), @"; ERROR: Unexpected EOF while parsing list");
+        assert_snapshot!(yank(&doc, 3, PRETTY_PRINTED_VALUE), @"; ERROR: Unexpected EOF while parsing list");
 
-        assert_snapshot!(copy(&doc, 0, MACHINE_VALUE), @"(1 2)");
-        assert_snapshot!(copy(&doc, 3, MACHINE_VALUE), @"yank err: Cannot machine format an error");
+        assert_snapshot!(yank(&doc, 0, MACHINE_VALUE), @"(1 2)");
+        assert_snapshot!(yank(&doc, 3, MACHINE_VALUE), @"yank err: Cannot machine format an error");
     }
 
     #[test]
@@ -713,10 +752,10 @@ mod tests {
         20..=20 : )
         ");
 
-        assert_snapshot!(copy(&doc, 9, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
-        assert_snapshot!(copy(&doc, 9, RECORD_FIELD), @"yank err: Focused on closing paren");
-        assert_snapshot!(copy(&doc, 17, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
-        assert_snapshot!(copy(&doc, 20, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
+        assert_snapshot!(yank(&doc, 9, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
+        assert_snapshot!(yank(&doc, 9, RECORD_FIELD), @"yank err: Focused on closing paren");
+        assert_snapshot!(yank(&doc, 17, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
+        assert_snapshot!(yank(&doc, 20, PRETTY_PRINTED_VALUE), @"yank err: Focused on closing paren");
     }
 
     #[test]
@@ -736,13 +775,13 @@ mod tests {
         18..=21 :    3)))
         ");
 
-        assert_snapshot!(copy(&doc, 0, CopyTarget::GetPath), @".");
-        assert_snapshot!(copy(&doc, 1, CopyTarget::GetPath), @"yank err: Cannot yank path to non-data");
-        assert_snapshot!(copy(&doc, 2, CopyTarget::GetPath), @".");
-        assert_snapshot!(copy(&doc, 4, CopyTarget::GetPath), @".a");
-        assert_snapshot!(copy(&doc, 8, CopyTarget::GetPath), @".x");
-        assert_snapshot!(copy(&doc, 16, CopyTarget::GetPath), @".b.[_]");
-        assert_snapshot!(copy(&doc, 17, CopyTarget::GetPath), @"yank err: Cannot yank path to non-data");
-        assert_snapshot!(copy(&doc, 18, CopyTarget::GetPath), @".b.[1]");
+        assert_snapshot!(yank(&doc, 0, WriteTarget::GetPath), @".");
+        assert_snapshot!(yank(&doc, 1, WriteTarget::GetPath), @"yank err: Cannot yank path to non-data");
+        assert_snapshot!(yank(&doc, 2, WriteTarget::GetPath), @".");
+        assert_snapshot!(yank(&doc, 4, WriteTarget::GetPath), @".a");
+        assert_snapshot!(yank(&doc, 8, WriteTarget::GetPath), @".x");
+        assert_snapshot!(yank(&doc, 16, WriteTarget::GetPath), @".b.[_]");
+        assert_snapshot!(yank(&doc, 17, WriteTarget::GetPath), @"yank err: Cannot yank path to non-data");
+        assert_snapshot!(yank(&doc, 18, WriteTarget::GetPath), @".b.[1]");
     }
 }
