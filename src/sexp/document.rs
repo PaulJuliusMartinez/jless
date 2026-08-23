@@ -29,6 +29,12 @@ enum FocusTargetKind {
     VariantSingletonValue,
 }
 
+struct OutputFile {
+    filename: String,
+    file: Box<dyn io::Write>,
+    next_top_level_node_index: NodeIndex,
+}
+
 pub struct SexpDocument {
     width: NonZeroUsize,
     pub state: DocState,
@@ -38,6 +44,8 @@ pub struct SexpDocument {
     // TODO: Probably put this in DocumentViewer; this only exists so I could set
     // it to false in tests and not update a bunch of them.
     include_cursor: bool,
+    seen_eof: bool,
+    output_files: Vec<OutputFile>,
 }
 
 #[derive(Clone, Debug)]
@@ -746,6 +754,8 @@ impl Document for SexpDocument {
             state: DocState::new(),
             adjacent_sibling_nav_depth: None,
             include_cursor: !cfg!(test),
+            seen_eof: false,
+            output_files: vec![],
         }
     }
 
@@ -764,6 +774,7 @@ impl Document for SexpDocument {
 
     fn eof(&mut self) {
         self.state.eof();
+        self.seen_eof = true;
     }
 
     fn top_screen_line_and_cursor(&self) -> Option<(ScreenLine, Self::Cursor)> {
@@ -1565,14 +1576,59 @@ impl Document for SexpDocument {
         clipboard::yank_content(output, &self.state, *cursor, copy_target)
     }
 
-    fn write_to_file<W: io::Write>(&self, file: W) -> io::Result<()> {
-        clipboard::yank_content(
-            file,
+    fn write_to_file<W: io::Write + 'static>(
+        &mut self,
+        filename: String,
+        mut file: W,
+    ) -> io::Result<()> {
+        let result = clipboard::yank_content(
+            &mut file,
             &self.state,
             NodeIndex(0),
             CopyTarget::Siblings { machine: false },
         )
-        .map(|_| ())
+        .map(|_| ());
+
+        if !self.seen_eof {
+            self.output_files.push(OutputFile {
+                filename,
+                file: Box::new(file),
+                next_top_level_node_index: self.state.next_top_level_node_index,
+            });
+        }
+
+        result
+    }
+
+    fn write_additional_data_to_files(&mut self) -> Vec<(String, io::Error)> {
+        let new_next_top_level_node_index = self.state.next_top_level_node_index;
+        let mut errs = vec![];
+
+        self.output_files.retain_mut(|output_file| {
+            if new_next_top_level_node_index == output_file.next_top_level_node_index {
+                !self.seen_eof
+            } else {
+                let write_result = clipboard::write_additional_top_level_nodes_pretty_printed(
+                    &mut output_file.file,
+                    &self.state,
+                    output_file.next_top_level_node_index,
+                );
+                let result = write_result.and(output_file.file.flush());
+
+                match result {
+                    Ok(()) => {
+                        output_file.next_top_level_node_index = new_next_top_level_node_index;
+                        !self.seen_eof
+                    }
+                    Err(err) => {
+                        errs.push((output_file.filename.clone(), err));
+                        false
+                    }
+                }
+            }
+        });
+
+        errs
     }
 }
 
@@ -2834,9 +2890,10 @@ mod tests {
 
     #[test]
     fn test_write_to_file() {
-        let doc = new_doc(b"apple banana");
+        let mut doc = new_doc(b"apple banana");
         let shared_buf = SharedBuffer::new();
-        doc.write_to_file(shared_buf.clone()).unwrap();
+        doc.write_to_file("file".to_string(), shared_buf.clone())
+            .unwrap();
         assert_snapshot!(shared_buf.0.borrow().as_bstr(), @r"
         apple
         banana
@@ -2844,16 +2901,44 @@ mod tests {
     }
 
     #[test]
-    fn test_write_to_file_before_receiving_eof() {
+    fn test_write_additional_data_to_files() {
         let mut doc = new_partial_doc(b"apple banana");
         let shared_buf = SharedBuffer::new();
-        doc.write_to_file(shared_buf.clone()).unwrap();
+        doc.write_to_file("file".to_string(), shared_buf.clone())
+            .unwrap();
         assert_snapshot!(shared_buf.0.borrow().as_bstr(), @"apple");
-        // TODO: Make this work.
+
+        // This results in a new top-level node
         doc.append(b" ");
-        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @"apple");
-        doc.append(b"cherry");
+        let _ = doc.write_additional_data_to_files();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @r"
+        apple
+        banana
+        ");
+
+        // This doesn't result in a new top-level node
+        doc.append(b" ");
+        let _ = doc.write_additional_data_to_files();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @r"
+        apple
+        banana
+        ");
+
+        doc.append(b"cherry date");
+        let _ = doc.write_additional_data_to_files();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @r"
+        apple
+        banana
+        cherry
+        ");
+
         doc.eof();
-        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @"apple");
+        let _ = doc.write_additional_data_to_files();
+        assert_snapshot!(shared_buf.0.borrow().as_bstr(), @r"
+        apple
+        banana
+        cherry
+        date
+        ");
     }
 }

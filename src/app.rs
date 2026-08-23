@@ -394,10 +394,18 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     }
 
     pub fn handle_document_data(&mut self, data: Option<&[u8]>) -> Option<InputWasEmpty> {
+        let mut set_error_message = false;
+
         if let Some(viewer) = &mut self.viewer {
             match data {
                 None => viewer.document_eof(),
                 Some(data) => viewer.append_document_data(data),
+            }
+
+            let file_write_errors = viewer.doc.write_additional_data_to_files();
+            if !file_write_errors.is_empty() {
+                set_error_message = true;
+                self.set_error_message(Self::writing_files_error_message(file_write_errors));
             }
         }
 
@@ -433,12 +441,35 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                 false
             };
 
-            if showing_matches || viewer.should_draw_screen_after_appended_data() {
+            if showing_matches
+                || viewer.should_draw_screen_after_appended_data()
+                || set_error_message
+            {
                 self.draw_screen();
             }
         }
 
         None
+    }
+
+    fn writing_files_error_message(results: Vec<(String, io::Error)>) -> String {
+        let num_errs = results.len();
+        let mut err_message = if num_errs == 1 {
+            "Error writing to file: "
+        } else {
+            "Error writing files: "
+        }
+        .to_string();
+
+        for (filename, err) in results.into_iter() {
+            if num_errs == 1 {
+                let _ = write!(err_message, "{err}");
+            } else {
+                let _ = write!(err_message, "{filename}: {err}");
+            }
+        }
+
+        err_message
     }
 
     fn suspend(&mut self) {
@@ -682,7 +713,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         use std::fs::File;
         use std::io::ErrorKind;
 
-        let Some(viewer) = &self.viewer else {
+        let Some(viewer) = &mut self.viewer else {
             self.set_warning_message(
                 "can't write to file yet; still waiting for input".to_string(),
             );
@@ -690,9 +721,9 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         };
 
         let file = if overwrite {
-            File::create(filename)
+            File::create(&filename)
         } else {
-            File::create_new(filename)
+            File::create_new(&filename)
         };
 
         let Ok(file) = file else {
@@ -705,7 +736,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             return;
         };
 
-        match viewer.doc.write_to_file(file) {
+        match viewer.doc.write_to_file(filename, file) {
             Ok(()) => (),
             Err(err) => self.set_error_message(format!("Error writing to file: {err}")),
         }

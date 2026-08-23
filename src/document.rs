@@ -252,7 +252,12 @@ pub trait Document {
         target: char,
     ) -> io::Result<YankResult>;
 
-    fn write_to_file<W: io::Write>(&self, file: W) -> io::Result<()>;
+    fn write_to_file<W: io::Write + 'static>(
+        &mut self,
+        filename: String,
+        file: W,
+    ) -> io::Result<()>;
+    fn write_additional_data_to_files(&mut self) -> Vec<(String, io::Error)>;
 
     // Rendering
 

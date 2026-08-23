@@ -627,9 +627,18 @@ impl Document for TextDocument {
         Ok(Ok(()))
     }
 
-    fn write_to_file<W: std::io::Write>(&self, mut file: W) -> std::io::Result<()> {
+    fn write_to_file<W: std::io::Write + 'static>(
+        &mut self,
+        _filename: String,
+        mut file: W,
+    ) -> std::io::Result<()> {
         // This doesn't handle streaming data; that's fine.
         file.write_all(&self.data)
+    }
+
+    fn write_additional_data_to_files(&mut self) -> Vec<(String, std::io::Error)> {
+        // We don't handle streaming data here.
+        vec![]
     }
 
     // Soon: Uncomment this.

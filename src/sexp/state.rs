@@ -20,7 +20,7 @@ use CollapseState::*;
 pub struct DocState {
     tokenizer: BasicTapeTokenizer,
     pub core: DocCore,
-    next_top_level_node_index: NodeIndex,
+    pub next_top_level_node_index: NodeIndex,
     logical_lines_by_start_index: OSBTreeMap<NodeIndex, LogicalLine>,
     pub collapsible_nodes: BTreeMap<NodeIndex, CollapseState>,
     initial_nested_collapse_state_for_top_level_nodes: InitialNestedCollapseStateForTopLevelNodes,

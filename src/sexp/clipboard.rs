@@ -76,6 +76,18 @@ struct YankPrettyOpts {
     root_sexp_comment: RootSexpComment,
 }
 
+pub fn write_pretty_printed<W: io::Write>(output: W, doc: &DocState) -> io::Result<()> {
+    yank_siblings(output, doc, NodeIndex(0), false)
+}
+
+pub fn write_additional_top_level_nodes_pretty_printed<W: io::Write>(
+    output: W,
+    doc: &DocState,
+    next_top_level_node_index: NodeIndex,
+) -> io::Result<()> {
+    yank_siblings(output, doc, next_top_level_node_index, false)
+}
+
 pub fn yank_content<W: io::Write>(
     mut output: W,
     doc: &DocState,
