@@ -16,6 +16,10 @@
 
   ^z               Suspend sless.
 
+  :w[write][!] <file>
+                   Write the document contents to a file. Use ! to overwrite an
+                   an existing file.
+
                                     [1mMOVING[0m
 
   j  DownArrow  *  Move focus down one line (or [4mN[0m lines).

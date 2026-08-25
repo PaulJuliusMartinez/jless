@@ -3,6 +3,7 @@ use std::io;
 use std::num::NonZeroUsize;
 use std::os::fd::AsFd;
 use std::rc::Rc;
+use std::sync::LazyLock;
 
 use rustyline::history::MemHistory;
 use rustyline::Editor;
@@ -28,6 +29,8 @@ const DEFAULT_SCROLLOFF: usize = 2;
 
 // Help contents that we pipe to less.
 const HELP: &str = std::include_str!("./sless.help");
+
+static HOME_DIR: LazyLock<Option<String>> = LazyLock::new(|| std::env::var("HOME").ok());
 
 pub struct App<W: std::io::Write + AsFd, D: Document> {
     doc_while_waiting_for_input: Option<D>,
@@ -87,25 +90,53 @@ impl Command {
         let s = s.trim();
         let (command, args) = match s.split_once(" ") {
             None => (s, ""),
-            Some((command, args)) => (command, args),
+            Some((command, args)) => (command, args.trim()),
         };
 
-        match command {
-            "h" | "help" => Ok(Command::ShowHelp),
-            "q" | "quit" | "quit()" | "exit" | "exit()" => Ok(Command::Quit),
-            "version" => Ok(Command::Version),
-            "w" | "w!" | "write" | "write!" => {
-                let filename = args.trim();
-                if filename.is_empty() {
-                    Err("No filename provided".to_string())
-                } else {
-                    Ok(Command::WriteFile {
-                        filename: filename.to_string(),
-                        overwrite: command.ends_with("!"),
-                    })
-                }
+        fn ensure_no_args(command: &str, args: &str) -> Result<(), String> {
+            if !args.is_empty() {
+                return Err(format!("{command} command doesn't take any args"));
             }
+
+            Ok(())
+        }
+
+        match command {
+            "h" | "help" => {
+                ensure_no_args(command, args)?;
+                Ok(Command::ShowHelp)
+            }
+            "q" | "q!" | "quit" | "quit()" | "exit" | "exit()" => {
+                ensure_no_args(command, args)?;
+                Ok(Command::Quit)
+            }
+            "version" => {
+                ensure_no_args(command, args)?;
+                Ok(Command::Version)
+            }
+            "w" | "w!" | "write" | "write!" => Ok(Command::WriteFile {
+                filename: Self::validate_and_expand_filename(args.trim())?,
+                overwrite: command.ends_with("!"),
+            }),
             _ => Err(format!("Unknown command: {command}")),
+        }
+    }
+
+    fn validate_and_expand_filename(filename: &str) -> Result<String, String> {
+        if filename.is_empty() {
+            Err("No filename provided".to_string())
+        } else if filename == "~" || filename == "." || filename == ".." || filename.ends_with("/")
+        {
+            Err("Cannot write to a directory".to_string())
+        } else {
+            match filename.strip_prefix("~/") {
+                None => Ok(filename.to_string()),
+                Some(path) => match HOME_DIR.as_deref() {
+                    None => Err("Can't resolve $HOME dir".to_string()),
+                    Some("") => Err("$HOME is empty".to_string()),
+                    Some(home_dir) => Ok(format!("{home_dir}/{path}")),
+                },
+            }
         }
     }
 }
