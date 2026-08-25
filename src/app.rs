@@ -698,10 +698,10 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         let _ = terminal.position_cursor(1, self.screen_dimensions.height as u16);
         let _ = terminal.flush_contents(&mut self.stdout);
 
-        let result = self.readline_editor.readline(prompt).ok()?;
+        let result = self.readline_editor.readline(prompt);
         let _ = write!(self.stdout, "{}", termion::cursor::Hide);
 
-        Some(result)
+        result.ok()
     }
 
     fn copy_to_clipboard(&mut self, ch: char) {
