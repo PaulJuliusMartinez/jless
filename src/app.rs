@@ -48,14 +48,22 @@ pub struct App<W: std::io::Write + AsFd, D: Document> {
     input_filename: Option<Rc<String>>,
     stdout: RawTerminal<W>,
     clipboard_access_method: Option<clipboard::AccessMethod>,
+    // When printing out values, we want there to be empty lines before and after
+    // them so they stand on their own. We always print the empty line after (before
+    // the "Press any key to continue" message), but we have a fencepost problem for
+    // the very first empty line. Note this gets reset after hitting ctrl-z and
+    // suspending jless.
+    should_print_newline_before_printing_to_terminal: bool,
 }
 
 // State to determine how to process the next event input.
 #[derive(PartialEq)]
 enum InputState {
     Default,
-    PendingZCommand,
+    PendingPCommand,
     PendingYCommand,
+    PendingZCommand,
+    WaitingForAnyKeyPress,
 }
 
 pub struct Break;
@@ -163,10 +171,20 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             input_filename: input_filename.map(Rc::new),
             stdout,
             clipboard_access_method: clipboard::default_access_method(),
+            should_print_newline_before_printing_to_terminal: true,
         }
     }
 
     pub fn handle_tty_event(&mut self, tty_event: TermionEvent) -> Option<Break> {
+        // Handle this state separately. Technically this will also trigger on any mouse events,
+        // but we disable mouse input when we enter this state, so it shouldn't be a problem.
+        if matches!(self.input_state, InputState::WaitingForAnyKeyPress) {
+            self.switch_back_to_jless_after_printing();
+            self.input_state = InputState::Default;
+            self.draw_screen();
+            return None;
+        }
+
         // Handle this separately.
         if matches!(tty_event, TermionEvent::Key(Key::Ctrl('z'))) {
             self.suspend();
@@ -185,15 +203,23 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                 }
             }
             TermionEvent::Key(key_event) => match self.input_state {
-                InputState::PendingZCommand => {
+                InputState::WaitingForAnyKeyPress => {
+                    // Shouldn't happen; handled above.
+                    None
+                }
+                InputState::PendingPCommand => {
                     self.input_state = InputState::Default;
                     self.input_buffer.clear();
-                    match key_event {
-                        Key::Char('t') => Some(Action::MoveFocusedElemToTop),
-                        Key::Char('z') => Some(Action::MoveFocusedElemToCenter),
-                        Key::Char('b') => Some(Action::MoveFocusedElemToBottom),
-                        _ => None,
+
+                    if let Key::Char(ch) = key_event {
+                        if self.print_to_terminal(ch) {
+                            self.input_state = InputState::WaitingForAnyKeyPress;
+                            // Exit right away; don't re-draw the screen.
+                            return None;
+                        }
                     }
+
+                    None
                 }
                 InputState::PendingYCommand => {
                     self.input_state = InputState::Default;
@@ -204,6 +230,16 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                     }
 
                     None
+                }
+                InputState::PendingZCommand => {
+                    self.input_state = InputState::Default;
+                    self.input_buffer.clear();
+                    match key_event {
+                        Key::Char('t') => Some(Action::MoveFocusedElemToTop),
+                        Key::Char('z') => Some(Action::MoveFocusedElemToCenter),
+                        Key::Char('b') => Some(Action::MoveFocusedElemToBottom),
+                        _ => None,
+                    }
                 }
                 InputState::Default => match key_event {
                     Key::Char('q') | Key::Ctrl('c') => {
@@ -218,16 +254,22 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
                             None
                         }
                     }
-                    Key::Char('z') => {
-                        self.input_state = InputState::PendingZCommand;
+                    Key::Char('p') => {
+                        self.input_state = InputState::PendingPCommand;
                         self.input_buffer.clear();
-                        self.buffer_input(b'z');
+                        self.buffer_input(b'p');
                         None
                     }
                     Key::Char('y') => {
                         self.input_state = InputState::PendingYCommand;
                         self.input_buffer.clear();
                         self.buffer_input(b'y');
+                        None
+                    }
+                    Key::Char('z') => {
+                        self.input_state = InputState::PendingZCommand;
+                        self.input_buffer.clear();
+                        self.buffer_input(b'z');
                         None
                     }
                     // These inputs always clear [input_buffer]. (Some of them may use it.)
@@ -515,6 +557,10 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             libc::kill(0, libc::SIGSTOP);
         }
 
+        // Now that there is more regular terminal output, we'll need to
+        // print a newline again before printing values to the terminal.
+        self.should_print_newline_before_printing_to_terminal = true;
+
         let _ = TerminalSettings::enable_jless_settings();
         let _ = self.stdout.activate_raw_mode();
         let _ = std::io::stdout().flush();
@@ -704,6 +750,64 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
         result.ok()
     }
 
+    fn print_to_terminal(&mut self, ch: char) -> bool {
+        use std::io::Write;
+
+        let Some(viewer) = &self.viewer else {
+            self.set_warning_message("can't print; still waiting for input".to_string());
+            return false;
+        };
+
+        let op = WriteOp::Print;
+        let print_target = match viewer
+            .doc
+            .validate_write_target(&viewer.current_focus, op, ch)
+        {
+            Ok(target) => target,
+            Err(err) => {
+                self.set_warning_message(err);
+                return false;
+            }
+        };
+
+        // Suspend raw mode and switch back to the main screen.
+        let _ = self.stdout.suspend_raw_mode();
+        let _ = TerminalSettings::disable_jless_settings();
+        let _ = std::io::stdout().flush();
+
+        if self.should_print_newline_before_printing_to_terminal {
+            let _ = write!(self.stdout, "\n");
+            self.should_print_newline_before_printing_to_terminal = false;
+        }
+
+        let success;
+        match viewer.doc.write_target(&mut self.stdout, op, print_target) {
+            Ok(()) => {
+                success = true;
+                let _ = write!(self.stdout, "\nPress any key to continue");
+            }
+            Err(err) => {
+                success = false;
+                let _ = TerminalSettings::enable_jless_settings();
+                self.set_error_message(format!("Error printing to terminal: {err}"));
+            }
+        }
+
+        let _ = self.stdout.activate_raw_mode();
+        let _ = std::io::stdout().flush();
+
+        success
+    }
+
+    fn switch_back_to_jless_after_printing(&mut self) {
+        use std::io::Write;
+        // \r to move cursor back to start of line, then ESC [ K to clear to end of line,
+        // clearing the "Press any key to continue" message.
+        let _ = write!(self.stdout, "\r\x1b[K");
+        let _ = TerminalSettings::enable_jless_settings();
+        let _ = std::io::stdout().flush();
+    }
+
     fn copy_to_clipboard(&mut self, ch: char) {
         let Some(access_method) = &self.clipboard_access_method else {
             self.set_error_message("Don't know how to access clipboard".to_string());
@@ -782,6 +886,12 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
     }
 
     fn draw_screen(&mut self) {
+        // It seems safer to guard against this here, than trying to make sure to remember
+        // to do it everywhere we call `draw_screen`.
+        if matches!(self.input_state, InputState::WaitingForAnyKeyPress) {
+            return;
+        }
+
         let mut terminal = AnsiTerminal::new(String::new());
 
         match &mut self.viewer {

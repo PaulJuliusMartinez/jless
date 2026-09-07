@@ -93,29 +93,36 @@
   zt               Move the focused node to the top of the screen.
   zb               Move the focused node to the bottom of the screen.
 
-                                     [1mCOPYING[0m
+                              [1mCOPYING AND PRINTING[0m
 
       You can copy various parts of the sexp file to your clipboard using
-      any one of a set of commands starting with 'y' ("yank").
+      any one of a set of commands starting with 'y' ("yank"). Alternatively,
+      you can print out values using 'p'. Values will still be visible in your
+      terminal history after you exit sless.
 
-  yy      Copy the currently focused sexp, pretty printed. When focused on
+  yy pp   Copy/print the currently focused sexp, pretty printed. When focused on
           record field, this will [4mnot[0m include the key.
-  ym yY   Copy the currently focused sexp, like yy, but on a single line,
-          similar to [sexp print -machine], but with spaces separating atoms.
-          Excludes comments.
-  ya yA   Copy the currently focused sexp and "all" its siblings either pretty
-          printed like yy (ya), or on one line per node like ym (yA).
-  yt yT   When focused on record field, copy the entire key-value tuple, either
-          pretty printed like yy (yt), or on a single line like ym (yT).
 
-  ys      When the currently focused value is an atom, copy the contents
+  ym pm   Copy/print the currently focused sexp, like yy/pp, but on a single
+  yY pP   line, similar to [sexp print -machine], but with spaces separating
+          atoms. Excludes comments.
+
+  ya pa   Copy/print the currently focused sexp and "all" its siblings either
+  yA pA   pretty printed like yy/pp (ya/pa), or on one line per node like
+          ym/pm (yA/pA).
+
+  yt pt   When focused on record field, copy/print the entire key-value tuple,
+  yT pT   either pretty printed like yy/pp (yt/pt), or on a single line like
+          ym/pm (yT/pT).
+
+  ys ps   When the currently focused value is an atom, copy/print the contents
           of the string, with all escape sequences unescaped.
 
-  yk      When focused on a record field, yank the key.
+  yk pk   When focused on a record field, copy/print the key.
 
-  yc      When focused on a variant, yank the constructor.
+  yc pc   When focused on a variant, copy/print the constructor.
 
-  yg      Yank a [sexp get]-style path to the current node, as seen in the
+  yg pg   Copy/print a [sexp get]-style path to the current node, as seen in the
           status bar.
 
                                      [1mSEARCH[0m
