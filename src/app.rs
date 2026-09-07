@@ -1013,6 +1013,7 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             };
         }
 
+        let _ = terminal.reset_style();
         let _ = terminal.clear_rest_of_line();
     }
 }
