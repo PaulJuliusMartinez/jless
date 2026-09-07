@@ -15,11 +15,20 @@ use crate::search::{InvertedPairedDelimeters, SearchMatchHighlighter};
 // TextDocument has `LineWrapping`; JsonDocument/SexpDocument might `ContainerWrapping`?,
 // and a `ContainerWrapping` can have a `LineWrapping` inside it.
 
-/// The result of a yank/print operation. The `Err` variant should be used for errors in
-/// user intent (e.g. trying to yank a key when focused on a number in a list). These
-/// errors will be displayed as warnings to the user. Errors in actually writing content
-/// to the clipboard/stdout should propagate as `io::Error`s.
-pub type WriteResult = Result<(), String>;
+#[derive(Copy, Clone, Debug)]
+pub enum WriteOp {
+    Yank,
+    Print,
+}
+
+impl std::fmt::Display for WriteOp {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            WriteOp::Yank => write!(f, "yank"),
+            WriteOp::Print => write!(f, "print"),
+        }
+    }
+}
 
 pub trait Document {
     // `Ord` implementation for `ScreenLine` may panic if we accidentally compare
@@ -245,12 +254,21 @@ pub trait Document {
 
     // Various write operations
 
-    fn yank_content<W: io::Write>(
+    type WriteTarget;
+
+    fn validate_write_target(
+        &self,
+        cursor: &Self::Cursor,
+        op: WriteOp,
+        target_ch: char,
+    ) -> Result<Self::WriteTarget, String>;
+
+    fn write_target<W: io::Write>(
         &self,
         output: W,
-        cursor: &Self::Cursor,
-        target: char,
-    ) -> io::Result<WriteResult>;
+        op: WriteOp,
+        target: Self::WriteTarget,
+    ) -> io::Result<()>;
 
     fn write_to_file<W: io::Write + 'static>(
         &mut self,

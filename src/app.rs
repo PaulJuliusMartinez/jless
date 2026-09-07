@@ -15,7 +15,7 @@ use termion::raw::RawTerminal;
 use crate::action::{Action, MovementMethod};
 use crate::clipboard;
 use crate::dimensions::Dimensions;
-use crate::document::Document;
+use crate::document::{Document, WriteOp};
 use crate::document_viewer::DocumentViewer;
 use crate::rendering::{AnsiColor, Attrs, StyledSegment};
 use crate::search::{JumpDirection, SearchDirection};
@@ -725,12 +725,20 @@ impl<W: std::io::Write + AsFd, D: Document> App<W, D> {
             }
         };
 
-        match viewer
+        let op = WriteOp::Yank;
+        let yank_target = match viewer
             .doc
-            .yank_content(&mut sink, &viewer.current_focus, ch)
+            .validate_write_target(&viewer.current_focus, op, ch)
         {
-            Ok(Ok(())) => (),
-            Ok(Err(err)) => self.set_warning_message(err),
+            Ok(target) => target,
+            Err(err) => {
+                self.set_warning_message(err);
+                return;
+            }
+        };
+
+        match viewer.doc.write_target(&mut sink, op, yank_target) {
+            Ok(()) => (),
             Err(err) => self.set_error_message(format!("Error writing to clipboard cmd: {err}")),
         }
 

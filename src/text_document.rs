@@ -4,7 +4,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use crate::dimensions;
-use crate::document::{ContentRange, Document, WriteResult};
+use crate::document::{ContentRange, Document, WriteOp};
 use crate::rendering::StyledSegment;
 use crate::search::SearchMatchHighlighter;
 
@@ -278,6 +278,7 @@ impl TextDocument {
 impl Document for TextDocument {
     type ScreenLine = ScreenLine;
     type Cursor = Cursor;
+    type WriteTarget = Cursor;
 
     fn new() -> Self {
         TextDocument {
@@ -611,20 +612,33 @@ impl Document for TextDocument {
         *cursor
     }
 
-    fn yank_content<W: std::io::Write>(
+    fn validate_write_target(
         &self,
-        mut output: W,
         cursor: &Cursor,
-        target: char,
-    ) -> std::io::Result<WriteResult> {
-        if target != 'y' {
-            return Ok(Err(format!("Unknown yank target {target:?}")));
+        op: WriteOp,
+        target_ch: char,
+    ) -> Result<Cursor, String> {
+        if target_ch != 'y' {
+            return Err(format!("Unknown {op} target {target_ch:?}"));
         }
 
-        let current_line_content = &self.data[self.complete_line_ranges[*cursor].clone()];
+        Ok(*cursor)
+    }
+
+    fn write_target<W: std::io::Write>(
+        &self,
+        mut output: W,
+        op: WriteOp,
+        target: Cursor,
+    ) -> std::io::Result<()> {
+        let current_line_content = &self.data[self.complete_line_ranges[target].clone()];
         output.write_all(current_line_content)?;
 
-        Ok(Ok(()))
+        if matches!(op, WriteOp::Print) {
+            write!(output, "\n")?;
+        }
+
+        Ok(())
     }
 
     fn write_to_file<W: std::io::Write + 'static>(

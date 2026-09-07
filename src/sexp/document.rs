@@ -6,7 +6,7 @@ use std::ops::{Index, Range, RangeInclusive};
 use std::rc::Rc;
 
 use crate::dimensions;
-use crate::document::{ContentRange, Document, WriteResult};
+use crate::document::{ContentRange, Document, WriteOp};
 use crate::rendering::{Fragment, StyledSegment, Text};
 use crate::search::{self, InvertedPairedDelimeters, SearchMatchHighlighter};
 use crate::sexp::color_scheme::ColorScheme;
@@ -18,7 +18,7 @@ use crate::sexp::path::DataNodePath;
 use crate::sexp::renderer;
 use crate::sexp::renderer::{style_typeset_line, FragmentSource, RenderContext};
 use crate::sexp::state::{CollapseState, DocState};
-use crate::sexp::writer::{self, WriteTarget};
+use crate::sexp::writer::{self, PhysicalWriteTarget};
 
 use CollapseState::*;
 
@@ -747,6 +747,7 @@ impl SexpDocument {
 impl Document for SexpDocument {
     type Cursor = NodeIndex;
     type ScreenLine = ScreenLine;
+    type WriteTarget = PhysicalWriteTarget;
 
     fn new() -> Self {
         SexpDocument {
@@ -1562,18 +1563,22 @@ impl Document for SexpDocument {
         self.first_normal_focusable_node_to_left_of_node_or_node(closest_visible_ancestor)
     }
 
-    fn yank_content<W: io::Write>(
+    fn validate_write_target(
+        &self,
+        cursor: &Self::Cursor,
+        op: WriteOp,
+        target_ch: char,
+    ) -> Result<PhysicalWriteTarget, String> {
+        writer::validate_write_target_ch(&self.state, *cursor, op, target_ch)
+    }
+
+    fn write_target<W: io::Write>(
         &self,
         output: W,
-        cursor: &NodeIndex,
-        target: char,
-    ) -> io::Result<WriteResult> {
-        let yank_target = match WriteTarget::for_yanking(target) {
-            Ok(target) => target,
-            Err(err) => return Ok(Err(err)),
-        };
-
-        writer::yank_content(output, &self.state, *cursor, yank_target)
+        op: WriteOp,
+        target: PhysicalWriteTarget,
+    ) -> io::Result<()> {
+        writer::write_physical_target(output, &self.state, op, target)
     }
 
     fn write_to_file<W: io::Write + 'static>(
