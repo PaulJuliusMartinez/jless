@@ -15,7 +15,7 @@ struct JsonParser<'a> {
 
 pub fn parse(json: String) -> Result<(Vec<Row>, String, usize), String> {
     let mut parser = JsonParser {
-        tokenizer: JsonToken::lexer(&json),
+        tokenizer: JsonToken::lexer(json.strip_prefix('\u{feff}').unwrap_or(&json)),
         parents: vec![],
         rows: vec![],
         pretty_printed: String::new(),
@@ -451,6 +451,36 @@ impl<'a> JsonParser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_leading_utf8_bom() {
+        for json in ["{}", " []\n", r#"{"é": [1, true, null]}"#, "1\n2"] {
+            let (rows, pretty, depth) = parse(json.to_owned()).unwrap();
+            let (bom_rows, bom_pretty, bom_depth) = parse(format!("\u{feff}{json}")).unwrap();
+            assert_eq!(bom_pretty, pretty);
+            assert_eq!(bom_depth, depth);
+            assert_eq!(bom_rows.len(), rows.len());
+            for (row, bom_row) in rows.iter().zip(bom_rows.iter()) {
+                assert_eq!(bom_row.range, row.range);
+                assert_eq!(bom_row.key_range, row.key_range);
+            }
+        }
+    }
+
+    #[test]
+    fn test_bom_is_only_ignored_at_start() {
+        for json in [
+            "\u{feff}",
+            "\u{feff}\u{feff}{}",
+            " \u{feff}{}",
+            "{}\u{feff}",
+        ] {
+            assert!(parse(json.to_owned()).is_err());
+        }
+        let json = "{\"\u{feff}\": \"\u{feff}\"}";
+        let (_, pretty, _) = parse(json.to_owned()).unwrap();
+        assert_eq!(pretty, "{ \"\u{feff}\": \"\u{feff}\" }");
+    }
 
     #[test]
     fn test_row_ranges() {
