@@ -5,7 +5,7 @@ use std::io::Write;
 
 use clipboard::{ClipboardContext, ClipboardProvider};
 use rustyline::error::ReadlineError;
-use rustyline::Editor;
+use rustyline::{Cmd, Config, Editor};
 use termion::event::Key;
 use termion::event::MouseButton::{Left, WheelDown, WheelUp};
 use termion::event::MouseEvent::Press;
@@ -126,8 +126,12 @@ impl App {
         let mut viewer = JsonViewer::new(flatjson, opt.mode);
         viewer.scrolloff_setting = opt.scrolloff;
 
+        // Distinguish a standalone Escape from arrow keys and other escape sequences.
+        let mut command_editor =
+            Editor::<()>::with_config(Config::builder().keyseq_timeout(100).build());
+        command_editor.bind_sequence(rustyline::KeyEvent::from('\x1b'), Cmd::Interrupt);
         let screen_writer =
-            ScreenWriter::init(opt, stdout, Editor::<()>::new(), TTYDimensions::default());
+            ScreenWriter::init(opt, stdout, command_editor, TTYDimensions::default());
 
         Ok(App {
             viewer,
@@ -615,12 +619,12 @@ impl App {
     }
 
     // Get user input via a readline prompt. May fail to return input if
-    // the user deliberately cancels the prompt via Ctrl-C or Ctrl-D, or
+    // the user deliberately cancels the prompt via Escape, Ctrl-C or Ctrl-D, or
     // if an actual error occurs, in which case an error message is set.
     fn readline(&mut self, prompt: &str, purpose: &str) -> Option<String> {
         match self.screen_writer.get_command(prompt) {
             Ok(s) => Some(s),
-            // User hit Ctrl-C or Ctrl-D to cancel prompt
+            // User hit Escape, Ctrl-C or Ctrl-D to cancel prompt
             Err(ReadlineError::Interrupted) | Err(ReadlineError::Eof) => None,
             Err(err) => {
                 self.set_error_message(format!("Error getting {purpose}: {err}"));
